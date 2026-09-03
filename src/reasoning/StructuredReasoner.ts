@@ -1,0 +1,321 @@
+// StructuredReasoner - GLM-5.x 结构化推理协议
+// 核心目的：强化模型的工程思维能力（分析、规划、验证、纪律）。
+// - 强力模式（非实用）：高结构、高纪律，适合日常高强度、复杂、关键的编码任务。
+// - 实用模式：更简洁温和，控制 token，适合常规日常开发。
+// 支持多任务风格（代码、终端、自动化），目的是覆盖真实工作场景，而非功利刷 benchmark。
+// 自我批评保持建设性，避免过度苛责和无谓消耗。
+
+import { BenchmarkProfiles, BenchmarkType, BenchmarkProfile } from '../benchmarks/BenchmarkProfiles.js';
+
+export interface ReasoningStep {
+  type: 'thinking' | 'plan' | 'verify' | 'critique' | 'risk' | 'action' | 'format_check';
+  content: string;
+}
+
+export interface StructuredReasoningOutput {
+  thinking: string;
+  plan: string;
+  verify?: string;
+  critique?: string;
+  risk?: string;
+  formatCheck?: string;
+  ironLawCheck?: string;   // 新增：GLM 铁律逐条自检
+  raw: string;
+}
+
+export class StructuredReasoner {
+  /**
+   * GLM-5.x 最高优先级铁律（强力模式 / 工程强模式）
+   * 目标：既能在 benchmark 里表现出色，也能在真实日常高强度工程工作中可靠使用。
+   * 语言上采用“纪律 + 质量保证”而非“违反=直接失败”，避免日常工作中模型过度紧张或 token 浪费。
+   */
+  static getGlmIronLawsHeader(): string {
+    return `【GLM-5.x 强力模式工程纪律 - 高质量工作的核心要求】
+1. Read-Before-Write：对任何文件进行 Write 或 Edit 之前，必须先完整 Read 该文件。这是避免幻觉和破坏性修改的基础。
+2. Verify-Before-Claim：只有看到明确的验证通过信号（ALL_TESTS_PASSED、正确返回值、状态确认等），才能声称已修复或问题已解决。
+3. 标准工具调用格式：优先使用 <> 结构化格式，保证可解析、可追溯。这是强力模式的基本纪律。
+4. 零幻觉：只操作你真正读取过或明确存在的文件/函数/状态。
+5. 每一步都要在内心快速检查以上纪律，保持修改过程清晰可验证。
+
+说明：遵守这些纪律能显著提升在复杂工程任务中的成功率和可维护性，同时也有助于在评测中取得更好结果。`;
+  }
+
+  /**
+   * 较短的铁律提示（用于状态组合块，避免重复冗长）。
+   */
+  static getGlmIronLawsShort(): string {
+    return `【工程纪律】Read-Before-Write、Verify-Before-Claim、标准 <> 格式、零幻觉。`;
+  }
+
+  /**
+   * 组合静态铁律 + 当前实时状态，生成 GLM 模式下每步都应该看到的前置块。
+   */
+  static buildFullIronLawHeader(status: {
+    filesRead: number;
+    filesWritten: number;
+    rbwViolations: number;
+    verifiedCount: number;
+    stepsSinceLastVerification: number;
+  }): string {
+    const laws = this.getGlmIronLawsShort();
+
+    const violations: string[] = [];
+    if (status.rbwViolations > 0) violations.push(`Read-Before-Write 违规 ${status.rbwViolations} 次`);
+    if (status.stepsSinceLastVerification >= 2) violations.push(`已连续 ${status.stepsSinceLastVerification} 步未真实验证`);
+    if (status.filesWritten > status.filesRead) violations.push(`已写(${status.filesWritten}) > 已读(${status.filesRead})`);
+
+    let header = laws + `\n\n【当前铁律状态】已读:${status.filesRead} 已写:${status.filesWritten} 真实验证:${status.verifiedCount} RBW违规:${status.rbwViolations} 距上次验证步:${status.stepsSinceLastVerification}`;
+
+    if (violations.length > 0) {
+      header += `\n【严重违规】${violations.join('；')} → 立刻停止写代码，先修复违规。`;
+    } else {
+      header += `\n状态正常，继续严格遵守铁律。`;
+    }
+
+    return header;
+  }
+
+  /**
+   * 根据当前轨迹状态生成动态铁律状态块（强力模式下注入）
+   * 语言风格：工程指导而非惩罚，强调“为了工作可靠性和质量”。
+   */
+  static buildCurrentIronLawStatus(params: {
+    filesRead: number;
+    filesWritten: number;
+    rbwViolations: number;
+    verifiedCount: number;
+    stepsSinceLastVerification: number;
+    strictFormatViolations?: number;
+  }): string {
+    const p = params;
+    const violations: string[] = [];
+
+    if (p.rbwViolations > 0) {
+      violations.push(`Read-Before-Write 违规 ${p.rbwViolations} 次（修改前未读文件，容易引入幻觉和破坏）`);
+    }
+    if (p.stepsSinceLastVerification >= 3) {
+      violations.push(`已连续 ${p.stepsSinceLastVerification} 步未完成真实验证（缺乏明确效果确认）`);
+    }
+    if (p.filesWritten > p.filesRead) {
+      violations.push(`已写文件数(${p.filesWritten}) 多于已读文件数(${p.filesRead})（风险较高）`);
+    }
+
+    let status = `【当前工程纪律遵守状态】
+已读文件: ${p.filesRead} | 已写文件: ${p.filesWritten} | 真实验证次数: ${p.verifiedCount}
+Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsSinceLastVerification}`;
+
+    if (violations.length > 0) {
+      status += `\n需要关注的问题: ${violations.join('；')}\n建议：先补齐读取和验证，再继续大范围修改。这有助于在真实项目和评测中都更稳定。`;
+    } else {
+      status += `\n当前状态良好，继续保持高标准工程实践。`;
+    }
+
+    return status;
+  }
+
+  /**
+   * 生成结构化推理指令
+   * - practicalMode=true: 轻量、日常友好、控制 token，适合真实编码工作
+   * - practicalMode=false 或 isStrongMode=true: 高结构、高纪律，适合日常高强度工程任务
+   * - taskStyle / benchmarkType: 指定当前任务风格（swe / terminal / automation），用于注入特定强调和工具提示。
+   *   目的是适配真实工程场景，而非功利刷 benchmark。
+   * - isStrongMode: 推荐的公共旗标，表示强力/高纪律模式（会触发重铁律与格式要求）。
+   * - isStrictGlm: 向下兼容旧称，等同于 isStrongMode 的高纪律行为（内部会合并判断）。
+   */
+  static buildReasoningPrompt(
+    contextSummary: string,
+    previousCritiques: string[] = [],
+    options?: {
+      practicalMode?: boolean;
+      /** 新推荐：任务风格 */
+      taskStyle?: string;
+      /** 内部兼容旧称，等同于 taskStyle */
+      benchmarkType?: BenchmarkType | string;
+      /** 是否处于强力模式（推荐），影响是否注入重铁律 */
+      isStrongMode?: boolean;
+      /** 向下兼容旧称，等同于 isStrongMode */
+      isStrictGlm?: boolean;
+    }
+  ): string {
+    const practical = options?.practicalMode ?? false;
+    const isStrong = options?.isStrongMode ?? options?.isStrictGlm ?? false;
+    const taskStyle = options?.taskStyle ?? (options?.benchmarkType as string | undefined);
+    const benchmarkType = taskStyle as BenchmarkType | undefined;
+
+    const failureMemory = previousCritiques.length > 0
+      ? `\n\n【需要注意的之前问题】:\n${previousCritiques.slice(-3).map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+      : '';
+
+    // 获取任务风格专属提示头（会包含强调 + 重点工具 + 必要时的铁律提醒）
+    const profile = BenchmarkProfiles.get(taskStyle ?? benchmarkType);
+    const benchHeader = BenchmarkProfiles.getPromptHeader(profile, isStrong && profile.defaultStrictIronLaws);
+
+    if (practical) {
+      // 实用模式：更短、更温和、日常编码友好
+      return `${benchHeader}
+你是一个可靠的工程编码助手。请用简洁的结构思考并行动：
+
+<thinking>
+简要分析问题（80-150字）：理解、关键点、做法、主要风险。
+</thinking>
+
+<plan>
+具体步骤 + 涉及文件/命令/工作流（简洁）。
+</plan>
+
+<verify>
+你将如何确认修改/操作正确（测试、命令输出、状态检查、效果验证等）。
+</verify>
+
+<critique>
+（可选，从第2步起）上一步的问题或可改进点，1-2点即可。
+</critique>
+
+当前上下文：
+${contextSummary}
+${failureMemory}
+
+保持简洁实用，避免冗长。日常任务不需要过度思考。`;
+    }
+
+    // 非实用模式（强力模式 / 高纪律路径）：保留更多结构与纪律提示
+    return `${benchHeader}
+你是一个可靠的工程编码助手。请使用以下结构进行思考和行动（可根据任务复杂度适当精简）：
+
+<thinking>
+对当前问题的清晰分析（建议 150-300 字）。
+包括：问题理解、关键约束、当前最合理的做法、主要风险。
+</thinking>
+
+<plan>
+简洁的执行计划，列出具体步骤和涉及文件/命令/工作流。
+</plan>
+
+<verify>
+你计划如何验证修改/操作是否正确（测试、终端命令、状态断言、业务效果等）。
+</verify>
+
+<format_check>
+（工具调用时建议填写）本次工具调用格式是否规范？
+</format_check>
+
+<iron_law_check>
+（推荐在涉及文件修改/关键命令/工作流步骤时简要回答）
+1. Read-Before-Write / Check-Before-Act：修改文件或执行破坏性/关键操作前是否已读取或检查状态？
+2. Verify-Before-Claim：声明修复/完成前是否会进行验证？
+3. 格式：是否使用标准工具调用格式？
+</iron_law_check>
+
+<critique>
+（从第 2 步开始建议填写）
+请客观分析上一步的问题和可改进点，保持简洁实用。
+</critique>
+
+当前上下文：
+${contextSummary}
+${failureMemory}
+
+请输出清晰、实用的内容。`;
+  }
+
+  /**
+   * 解析模型返回的结构化推理块（支持 format_check）
+   */
+  static parseReasoning(rawOutput: string): StructuredReasoningOutput {
+    const extract = (tag: string): string => {
+      const re = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
+      const m = rawOutput.match(re);
+      return m ? m[1].trim() : '';
+    };
+
+    return {
+      thinking: extract('thinking'),
+      plan: extract('plan'),
+      verify: extract('verify') || undefined,
+      critique: extract('critique') || undefined,
+      risk: extract('risk') || undefined,
+      formatCheck: extract('format_check') || undefined,
+      ironLawCheck: extract('iron_law_check') || undefined,
+      raw: rawOutput,
+    };
+  }
+
+  /**
+   * 生成 Critique Prompt（建设性、可控 token 版本）
+   * - practicalMode=true: 更温和、更短，聚焦有用改进，适合日常使用
+   * - practicalMode=false: 保留结构化复盘，适合强力模式（高纪律路径）
+   * 目标：帮助发现问题和改进方向，而不是严厉指责或无谓的自我苛责。
+   */
+  static buildCritiquePrompt(
+    previousStep: string,
+    executionResult: string,
+    lastToolCalls: any[] = [],
+    options?: { practicalMode?: boolean }
+  ): string {
+    const practical = options?.practicalMode ?? false;
+    const toolInfo = lastToolCalls.length > 0
+      ? `\n工具调用：${lastToolCalls.map((t: any) => t.toolName).join(', ')}`
+      : '';
+
+    if (practical) {
+      // 实用模式：温和、简短、聚焦改进
+      return `请简要复盘上一步（1-2点，每点一句话）：
+
+上一步概要：
+${previousStep}
+
+执行结果：
+${executionResult}${toolInfo}
+
+请说明：
+- 做得较好的地方（如果有）
+- 主要问题或下一步建议（1-2点）
+
+保持建设性，避免过度自我否定或长篇描述。`;
+    }
+
+    // 非实用模式（强力模式 / 高纪律路径）
+    return `请对上一步进行简要、客观的复盘（建议 2-4 点，每点 1 句话左右）。
+
+上一步概要：
+${previousStep}
+
+执行结果：
+${executionResult}${toolInfo}
+
+请重点说明：
+- 做得比较好的地方（如果有）
+- 存在的主要问题或风险（格式、验证、跳步、幻觉等）
+- 下一步最值得调整或注意的一两件事
+
+请保持建设性和实用性，避免过度自我否定或冗长描述。`;
+  }
+
+  /**
+   * 构建强力模式下的格式建议提示（工程友好版）
+   * 强调：标准格式是高质量、可维护、可追溯工作的基础，同时有助于模型在各种场景（包括评测）中更稳定地被解析。
+   * 避免使用“必须100%否则失败”这种在日常工程中容易让模型过度保守或浪费 token 的表述。
+   */
+  static buildGlmFormatEnforcementPrompt(): string {
+    return `【强力模式 - 工具调用格式建议（高质量工程实践）】
+
+推荐使用以下结构化格式输出工具调用：
+
+<>
+  <ToolName>
+    <paramName1>参数值1</paramName1>
+    <paramName2>参数值2</paramName2>
+  </ToolName>
+</>
+
+为什么推荐这个格式？
+- 可解析性强，减少解析错误和重试
+- 便于轨迹记录、复盘和失败分析
+- 在真实项目和评测环境中都更可靠
+
+避免使用松散的 invoke tool 格式或直接写 Read(...) 这种不易被可靠解析的写法。
+
+请在输出工具调用前，快速确认格式清晰、参数完整。这能显著提升你在复杂工程任务中的成功率和可维护性。`;
+  }
+}
+

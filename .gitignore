@@ -1,0 +1,21 @@
+.zorge.json
+.zorge.json.bak
+node_modules/
+dist/
+*.log
+.env
+
+# 临时审查目录(运行产物,不提交)
+.tmp-review/
+
+
+.sandbox-test/
+sandbox-test-*.cjs
+sandbox-test-runner.js
+sandbox-test-runner.cjs
+
+
+/test-*.mjs
+/test-*.cjs
+/probe-*.cjs
+

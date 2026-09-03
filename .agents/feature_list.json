@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "feature-2",
+      "title": "审查缺陷 5 批修复闭环 + 遗留补丁决策",
+      "status": "in-progress",
+      "evidence": "497 用例 496 pass 1 skip；commit 9cdfc5f..98d2e81；docs/REVIEW-2ND-AUDIT.md",
+      "nextStep": "人类决策 T-27/T-28(高危)是否追加 P0-1 补丁；若追加→编码 agent 修→一级验收→二级复审",
+      "updatedAt": 1788000000000
+    }
+  ]
+}

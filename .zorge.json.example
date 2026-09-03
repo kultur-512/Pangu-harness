@@ -1,0 +1,12 @@
+{
+  "model": "glm-4-plus",
+  "providers": {
+    "scnet": {
+      "type": "openai-compatible",
+      "baseUrl": "https://api.scnet.cn/api/llm/v1",
+      "apiKey": "sk-tp-***PUT_YOUR_KEY_HERE***",
+      "models": [],
+      "modelContexts": {}
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "zorge",
+  "version": "0.4.0",
+  "description": "Zorge: 零强依赖的工程 Agent CLI——真实工具执行、四档审批、会话资产（resume/branch/undo/rewind/compact）、MCP 生态接入。对标 Claude Code 的国产单体型 agent，六档强度体系。",
+  "type": "module",
+  "main": "dist/ZorgeChaser.js",
+  "bin": {
+    "zorge": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/cli.ts",
+    "cli": "tsx src/cli.ts",
+    "test": "node --test --import tsx \"tests/**/*.test.ts\"",
+    "simulate": "tsx src/cli.ts simulate --issue \"example issue\" --workspace .",
+    "dogfood": "zorge --headless run"
+  },
+  "keywords": ["zorge", "coding-agent", "engineering", "terminal", "automation", "verification-heavy", "strong-engineering", "cli", "mcp"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "react": "^18.3.0"
+  },
+  "optionalDependencies": {
+    "chalk": "^5.3.0",
+    "ora": "^8.0.1",
+    "prompts": "^2.4.2",
+    "ink": "^5.0.0",
+    "react": "^18.3.0"
+  }
+}

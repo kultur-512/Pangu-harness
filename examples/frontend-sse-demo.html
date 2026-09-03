@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Zorge SSE 流式演示</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #161a23;
+      --text: #e6e6e6;
+      --muted: #8a8f9a;
+      --accent: #4da3ff;
+      --success: #22c55e;
+      --warn: #eab308;
+      --error: #ef4444;
+      --tool: #a78bfa;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .header {
+      position: sticky;
+      top: 0;
+      background: #12151f;
+      border-bottom: 1px solid #242a38;
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      z-index: 10;
+    }
+    .header input, .header select, .header button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid #2a3140;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .header button {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .header button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 16px;
+      padding: 16px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .feed {
+      background: var(--panel);
+      border: 1px solid #242a38;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 520px;
+      max-height: 620px;
+      overflow-y: auto;
+    }
+    .feed .line {
+      padding: 4px 6px;
+      border-radius: 4px;
+      margin-bottom: 2px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .feed .step { color: #a5d8ff; }
+    .feed .critique { color: #fde047; }
+    .feed .tool { color: var(--tool); }
+    .feed .budget { color: #4ade80; }
+    .feed .error { color: var(--error); }
+    .feed .phase { color: var(--muted); font-weight: 600; opacity: .85; }
+
+    .side {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid #242a38;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .status {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .status.running { color: var(--warn); }
+    .status.done { color: var(--success); }
+    .status.error { color: var(--error); }
+
+    .card {
+      background: #1c2130;
+      border: 1px solid #2a3140;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+    }
+    .card .title {
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #c4d0ff;
+    }
+    .muted { color: var(--muted); font-size: 12px; }
+    .small { font-size: 11px; opacity: .85; }
+
+    .log {
+      font-size: 11px;
+      max-height: 160px;
+      overflow: auto;
+      background: #0c0f16;
+      padding: 6px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <strong>Zorge SSE 流式</strong>
+    <input id="task" placeholder="输入任务描述，例如：修复 calculator 的加法并加测试" style="width: 420px;" />
+    <select id="tier">
+      <option value="high">high</option>
+      <option value="max">max</option>
+      <option value="standard">standard</option>
+      <option value="quick">quick</option>
+    </select>
+    <input id="workspace" placeholder="工作区（默认 .）" style="width: 160px;" />
+    <button id="runBtn">开始运行 (SSE)</button>
+    <button id="stopBtn" disabled>中断</button>
+    <span id="status" class="status">就绪</span>
+  </div>
+
+  <div class="container">
+    <div>
+      <div class="feed" id="feed"></div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <div><strong>当前状态</strong></div>
+        <div id="phase" class="muted">—</div>
+        <div id="score" class="muted" style="margin-top:4px;">得分: —</div>
+        <div id="duration" class="muted" style="margin-top:2px;">耗时: —</div>
+      </div>
+
+      <div class="panel">
+        <div><strong>工具调用</strong></div>
+        <div id="tools"></div>
+      </div>
+
+      <div class="panel">
+        <div><strong>预算</strong></div>
+        <div id="budget" class="muted">—</div>
+      </div>
+
+      <div class="panel">
+        <div><strong>事件日志</strong></div>
+        <div class="log" id="log"></div>
+      </div>
+
+      <div class="panel small muted">
+        说明：此页面通过 POST /api/run 启动任务，并通过 SSE 实时接收事件。<br/>
+        后端命令：<code>zorge serve</code>（默认 127.0.0.1:3456）
+      </div>
+    </div>
+  </div>
+
+<script>
+const feedEl = document.getElementById('feed');
+const toolsEl = document.getElementById('tools');
+const budgetEl = document.getElementById('budget');
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const phaseEl = document.getElementById('phase');
+const scoreEl = document.getElementById('score');
+const durationEl = document.getElementById('duration');
+
+let currentController = null;
+let startTime = 0;
+
+function addLine(text, cls = '') {
+  const div = document.createElement('div');
+  div.className = 'line ' + cls;
+  div.textContent = text;
+  feedEl.appendChild(div);
+  feedEl.scrollTop = feedEl.scrollHeight;
+}
+
+function addLog(text) {
+  const line = document.createElement('div');
+  line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+  logEl.appendChild(line);
+  if (logEl.children.length > 60) logEl.removeChild(logEl.children[0]);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearUI() {
+  feedEl.innerHTML = '';
+  toolsEl.innerHTML = '';
+  budgetEl.textContent = '—';
+  phaseEl.textContent = '—';
+  scoreEl.textContent = '得分: —';
+  durationEl.textContent = '耗时: —';
+  logEl.innerHTML = '';
+}
+
+function setStatus(text, cls = '') {
+  statusEl.textContent = text;
+  statusEl.className = 'status ' + cls;
+}
+
+function renderToolCard(ev) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = `⚙ ${ev.tool || ev.name || 'tool'}`;
+  card.appendChild(title);
+
+  if (ev.target || ev.file || ev.path) {
+    const t = document.createElement('div');
+    t.className = 'small muted';
+    t.textContent = ev.target || ev.file || ev.path;
+    card.appendChild(t);
+  }
+  if (ev.argsSummary) {
+    const a = document.createElement('div');
+    a.className = 'small muted';
+    a.textContent = ev.argsSummary;
+    card.appendChild(a);
+  }
+  if (ev.status) {
+    const s = document.createElement('div');
+    s.className = 'small';
+    s.style.color = ev.status === 'ok' ? 'var(--success)' : ev.status === 'fail' ? 'var(--error)' : 'var(--warn)';
+    s.textContent = ev.status;
+    card.appendChild(s);
+  }
+  toolsEl.appendChild(card);
+  toolsEl.scrollTop = toolsEl.scrollHeight;
+}
+
+async function runSSE() {
+  const task = document.getElementById('task').value.trim();
+  if (!task) {
+    alert('请输入任务描述');
+    return;
+  }
+
+  const tier = document.getElementById('tier').value;
+  const workspace = document.getElementById('workspace').value.trim() || undefined;
+
+  clearUI();
+  setStatus('连接中...', 'running');
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('stopBtn').disabled = false;
+
+  startTime = Date.now();
+
+  const body = { task, tier, workspace, simulate: false };
+
+  try {
+    const res = await fetch('http://127.0.0.1:3456/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error('HTTP ' + res.status);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    currentController = { abort: () => reader.cancel() };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE is line-based: we split on double newlines
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+
+        // Parse SSE fields
+        const lines = chunk.split('\n');
+        let event = 'message';
+        let data = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            data += line.slice(5).trim();
+          }
+        }
+
+        if (!data) continue;
+
+        let parsed;
+        try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
+
+        handleEvent(event, parsed);
+      }
+    }
+
+    setStatus('已结束', 'done');
+  } catch (e) {
+    addLine('连接或读取失败: ' + (e?.message || e), 'error');
+    setStatus('错误', 'error');
+  } finally {
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    currentController = null;
+    const dur = Date.now() - startTime;
+    if (!durationEl.textContent.includes('ms')) {
+      durationEl.textContent = `耗时: ${dur}ms`;
+    }
+  }
+}
+
+function handleEvent(event, data) {
+  // data may be the raw event from onStep or our wrapper
+  addLog(`${event} ${JSON.stringify(data).slice(0, 120)}`);
+
+  switch (event) {
+    case 'start':
+      phaseEl.textContent = '开始';
+      addLine(`开始: ${data.task || ''}`, 'phase');
+      break;
+
+    case 'phase':
+      phaseEl.textContent = data.phase || data;
+      addLine(`── ${data.phase || data} ──`, 'phase');
+      break;
+
+    case 'step':
+      addLine(`[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`, 'step');
+      if (Array.isArray(data.toolCalls)) {
+        data.toolCalls.forEach(tc => renderToolCard(tc));
+      }
+      break;
+
+    case 'critique':
+      addLine(`Critique: ${data.critique || data}`, 'critique');
+      break;
+
+    case 'tool':
+      renderToolCard(data);
+      break;
+
+    case 'progress':
+      // lightweight progress
+      break;
+
+    case 'budget':
+    case 'softLimit':
+      const ratio = data.usedRatio ?? data.ratio ?? 0;
+      budgetEl.textContent = `预算使用: ${(ratio * 100).toFixed(1)}%`;
+      addLine(`[budget ${(ratio * 100).toFixed(0)}%]`, 'budget');
+      break;
+
+    case 'result':
+      scoreEl.textContent = `得分: ${data.score ?? '—'}`;
+      if (data.durationMs) durationEl.textContent = `耗时: ${data.durationMs}ms`;
+      addLine(`完成 (得分 ${data.score ?? '—'})`, data.success ? '' : 'error');
+      break;
+
+    case 'done':
+      setStatus('完成', 'done');
+      if (data.score != null) scoreEl.textContent = `得分: ${data.score}`;
+      if (data.durationMs) durationEl.textContent = `耗时: ${data.durationMs}ms`;
+      addLine('任务结束', 'phase');
+      break;
+
+    case 'error':
+      addLine('错误: ' + (data.message || data), 'error');
+      setStatus('错误', 'error');
+      break;
+
+    default:
+      // Fallback: show raw
+      if (data && typeof data === 'object') {
+        if (data.type === 'step') return handleEvent('step', data);
+        if (data.type === 'critique') return handleEvent('critique', data);
+        if (data.type === 'tool') return handleEvent('tool', data);
+        if (data.type === 'budget' || data.type === 'softLimit') return handleEvent('budget', data);
+      }
+      addLine(JSON.stringify(data));
+  }
+}
+
+document.getElementById('runBtn').addEventListener('click', runSSE);
+
+document.getElementById('stopBtn').addEventListener('click', () => {
+  if (currentController) {
+    currentController.abort();
+    addLine('已请求中断', 'warn');
+    setStatus('已中断', 'error');
+  }
+});
+
+// Allow Enter in task input
+document.getElementById('task').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !document.getElementById('runBtn').disabled) {
+    runSSE();
+  }
+});
+
+// Prefill a sample task
+document.getElementById('task').value = '写一个简单的加法函数并加上单元测试';
+</script>
+</body>
+</html>
