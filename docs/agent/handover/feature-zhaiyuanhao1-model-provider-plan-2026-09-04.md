@@ -90,3 +90,15 @@
 1. **密钥轮换**：`probe-scnet-real.mjs` 硬编码的 scnet 密钥已进 git 历史，需服务侧轮换（kultur/控制人处理，不在 git 流程内）
 2. `UniversalMaoyulinClient.ts` 头注释"客户端不做限流（按用户要求）"约定——确认删除后该约定不适用于唯一客户端路径 `openai-compatible.ts`（其现状本就无限流，语义一致）
 3. 迭代 2 后 `complete()` 返回类型拓宽，外部若有按 `string` 强断言的调用方需同步（当前仓内消费方均已兼容双形态）
+
+---
+
+## 追加声明（2026-09-04 晚，迭代 1+2 已落，等评审）
+
+- **迭代 1 完成**：死代码 5 文件已删（含 probe-scnet-real.mjs，**密钥轮换提醒不变**）；`PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL` 三件套生效（env-only provider 可用；SCNET_* 保留为 scnet 历史别名，行为不变）；`providers.<name>.apiKeyCmd` 落地（execFileSync+shell，stdout 首行，成功缓存，显式 apiKey 优先）；`getModelContextLength` 跨 provider 遍历；`verify-scnet.mjs` 改配置驱动任意 provider（`node scripts/verify-scnet.mjs [providerName]`）。
+- **迭代 2 完成**：`openai-compatible.complete` 返回 `string | OpenAICompatOutput`（detectedFormat:'openai-json'，tool_calls 元素为内部 ToolCall 形状：toolName/params/rawBlock）；SSE `delta.tool_calls` 按 index 增量拼接（修复 [DONE] 早退跳过拼装的 bug）；chaser 流式 wrapper 聚合 toolCalls 后返回结构化对象；`VerifyCritiqueLoop` 消费通道零改动（已验证 preParsedToolCalls 路径兼容）。
+- **契约提示（给王浩宇）**：`ModelClientOutput`（types.ts）结构不变；toolCalls 元素为 `{ toolName, params: {name,value}[], rawBlock, format }`——ContextCompiler/接口契约 v2 可直接依赖。
+- **新增契约字段**：`ProviderConfig.apiKeyCmd`、`ProviderConfig.headers`；`ModelStreamChunk` 增 `{type:'toolCalls', toolCalls}` 变体（旧消费者按"无 text 字段即跳过"兼容）。
+- 验证：tsc EXIT=0；tests/model/* + ModelProvider* + ModelCommandKeyLeak 44/44 绿。迭代 3（env 块 + /model list 通用化）仍排 U3-U4。
+
+> 二次追加（同日深夜）：上下文/记忆 v3 已随本分支落地（AgentEvent/Assertion/TaskState 契约、markInjected/markVerified、compact generation/coveredTurnIds、rollout compact/context 事件、[M1] 卡号）。与模型接入无冲突；评测防线清单见 tasks/context-memory-proposals-2026-09-04.md 终稿章节。
