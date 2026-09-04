@@ -9,7 +9,7 @@ reviewed: 2026-09-04
 
 本报告审查以下内容：
 
-- Pangu 当前计划：`WORK-PLAN-2DAY-UNITS.md`、`WORK-PLAN-MAIN-LEARN.md`；
+- Pangu 当前计划：`WORK-PLAN-2DAY-UNITS.md`；
 - Pangu 路线和设计：`docs/panshalach/ROADMAP-NEXT.md`、`MEMORY-DESIGN.md`、`ARCHITECTURE.md`、`EVALUATION.md`、`REFACTOR-ASSESSMENT.md`；
 - Pangu 现有运行时：`RefinedMemoryCard/RefinedMemoryStore`、`PromptBuilder`、`compactService`、`Session/SessionStore/rolloutStore`、trajectory 与评测脚本；
 - 参考项目：`P:/MY_codes/learn-harness-engineering-main` 中的 harness-creator 设计、状态模板、session handoff、context engineering 和项目示例。
@@ -383,7 +383,7 @@ D  全能力
 ### Pangu
 
 - `WORK-PLAN-2DAY-UNITS.md:13-18,28-40`：9/24 MVP 和 U1-U9 任务矩阵；
-- `WORK-PLAN-MAIN-LEARN.md:38-76,104-115`：W1-W4 owner、接口契约和 gates；
+- `tasks/agents/`：4 主力注册卡（owner 与接口协调）；
 - `docs/panshalach/ROADMAP-NEXT.md:9-22`：P1-P8 路线和完成条件；
 - `docs/panshalach/ROADMAP-NEXT.md:60-224`：P2-P6 具体记忆、摘要和评测计划；
 - `docs/panshalach/MEMORY-DESIGN.md:13-23,61-91,112-147`：分层记忆、读写链路和已知差距；

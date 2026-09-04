@@ -41,7 +41,7 @@
 ## 审查 #2 进展（未完成，上游 503 中断）
 - 已在做："Now let me examine the actual implementation state of the key memory modules to verify claims in the plans."
 - 未交付：A) 功能完备性核对表 B) 记忆/上下文主线偏差点 C) 可砍项 D) 9/24 最可能失败点
-- **待重启**：重启时让它对照 `docs/panshalach/ROADMAP-NEXT.md` + `ARCHITECTURE.md` + `EVALUATION.md` + `MEMORY-DESIGN.md` + `WORK-PLAN-2DAY-UNITS.md` + `WORK-PLAN-MAIN-LEARN.md` + `REFACTOR-ASSESSMENT.md`，核 7 项技术路径（记忆增强/长文本优化/上下文压缩/结构化记忆/向量检索/事件日志/任务状态）哪些真做哪些空提、A/B/C 三档能否出对比数据、9 单位派工功能黑洞。
+- **待重启**：重启时让它对照 `docs/panshalach/ROADMAP-NEXT.md` + `ARCHITECTURE.md` + `EVALUATION.md` + `MEMORY-DESIGN.md` + `WORK-PLAN-2DAY-UNITS.md` + `REFACTOR-ASSESSMENT.md`，核 7 项技术路径（记忆增强/长文本优化/上下文压缩/结构化记忆/向量检索/事件日志/任务状态）哪些真做哪些空提、A/B/C 三档能否出对比数据、9 单位派工功能黑洞。
 
 ## 待落库的修订动作（等 #2 补全后执行）
 1. 把 GLM 严格规范放宽（见上表）落到代码：`tiers/TierConfig.ts` default(high) 参数、去 terminal/automation profile、去 format 加分、重命名 isGlmTarget/strictGlmOnly。

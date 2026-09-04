@@ -1,7 +1,7 @@
 # WORK-PLAN-2DAY-UNITS.md — 9/7–9/24 18 天 4 主力并行计划
 
-> 配套：`WORK-PLAN-MAIN-LEARN.md`（4 主力 + K 学习位人力模型）/ `AGENT-CONTRIBUTION.md`（规范）/ `docs/panshalach/ROADMAP-NEXT.md`（P1–P8 路线）。
-> 基线：翟苑皓（Leader）做的 `docs/agent/handover/feature-zhaiyuanhao-long-context-memory-review.md` 修订报告（READY-FOR-REVIEW）—**记忆卡降级为 prompt 投影，事件 / 状态 / 投影 三层事实源分离**。
+> 配套：`AGENT-CONTRIBUTION.md`（规范）/ `docs/panshalach/ROADMAP-NEXT.md`（P0–P5 技术路线）/ `tasks/agents/`（4 主力注册卡）。
+> 基线：翟苑皓（Leader）的 `docs/agent/handover/feature-zhaiyuanhao-long-context-memory-review.md` 修订报告（READY-FOR-REVIEW）—**记忆卡降级为 prompt 投影，事件 / 状态 / 投影 三层事实源分离**。
 
 ## 0. 时间线与硬约束
 
@@ -95,7 +95,7 @@ Model Run
 
 | 时间 | 行动 |
 |---|---|
-| **D1 上午** | `git fetch origin master develop` + `cat docs/agent/handover/feature-*.md` + 写 `docs/agent/handover/feature-<pinyin>-handover.md`（如果有未 resolved 项指向我，先解决） |
+| **D1 上午** | `git fetch origin master develop` + `cat docs/agent/handover/*.md`（有未 resolved 项指向我先解决） |
 | **D1 下午** | 写代码 + 当日工作日志第一条 |
 | **D1 晚** | 自查：`npx tsc --noEmit` + `npm test`（相关子集）+ `verify-panshalach-cleanup.mjs` |
 | **D2 上午** | commit + 追加日志 + push + 提 PR + PR 描述引用 handover |
@@ -126,7 +126,7 @@ Model Run
 
 ## 7. 提交后动作（9/24 后）
 
-- 各主力删除 `feature/<pinyin>1` 分支归档到 `feature/<pinyin>1.submission-v0.6.0` tag
+- 各主力删除自己的工作分支并打 `<pinyin>1.submission-v0.6.0` tag 归档
 - kultur 在仓库内打 `v0.6.0-submission-mvp` tag
 - 复盘会：4 主力 + kultur，写 `tasks/postmortem/2026-09-24-submission.md`
 - 项目书 SUBMISSION.md 与 3 份交付物保留在 `docs/panshalach/`，作为后续 1.x 迭代基线

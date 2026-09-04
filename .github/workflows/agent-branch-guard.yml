@@ -1,11 +1,10 @@
 name: agent-branch-guard
 
-# 触发条件：所有 push + 所有 PR（覆盖 master / develop / feature/*）
+# 触发条件：所有 push + 所有 PR
+# 工作分支命名：<pinyin>1（如 zhaiyuanhao1 / wanghaoyu1）
 on:
   push:
-    branches: [master, develop, 'feature/**']
   pull_request:
-    branches: [master, develop, 'feature/**']
 
 jobs:
   branch-ownership:
@@ -34,16 +33,14 @@ jobs:
             exit 0
           fi
 
-          # 2) feature/* 必有对应注册卡
-          if [[ "$current" == feature/* ]]; then
-            pinyin="${current#feature/}"
-            pinyin="${pinyin%%/*}"
-            if [[ ! -f "tasks/agents/${pinyin}.md" ]]; then
-              echo "✗ feature 分支 $current 缺少注册卡 tasks/agents/${pinyin}.md"
-              exit 1
-            fi
-            echo "✓ feature 分支 $current 注册卡存在"
+          # 2) 工作分支 <pinyin>1 必有对应注册卡
+          pinyin="${current%1}"
+          pinyin="${pinyin%%/*}"
+          if [[ ! -f "tasks/agents/${pinyin}.md" ]]; then
+            echo "✗ 工作分支 $current 缺少注册卡 tasks/agents/${pinyin}.md"
+            exit 1
           fi
+          echo "✓ $current 注册卡存在"
 
       - name: PR references handover
         if: github.event_name == 'pull_request'
@@ -52,15 +49,15 @@ jobs:
           body="${{ github.event.pull_request.body }}"
           current="${{ github.ref_name }}"
 
-          # 仅 feature/* PR 强制引用 handover；master / develop 由 kultur 手动合
-          if [[ "$current" != feature/* ]]; then
+          # master / develop PR 由 kultur 手动合，不强制
+          if [[ "$current" == "master" || "$current" == "develop" ]]; then
             echo "✓ master/develop PR 不强制引用 handover"
             exit 0
           fi
 
-          # 必须引用 docs/agent/handover/feature-*.md 中任意一个
-          if ! echo "$body" | grep -qE 'docs/agent/handover/feature-[a-z0-9-]+\.md'; then
-            echo "✗ feature PR 未引用 docs/agent/handover/feature-*.md —— 必须先 cat 别人 handover 后在 PR 描述里写引用"
+          # 必须引用 docs/agent/handover/ 中任意一个
+          if ! echo "$body" | grep -qE 'docs/agent/handover/[a-z0-9-]+\.md'; then
+            echo "✗ PR 未引用 docs/agent/handover/*.md —— 必须先 cat 别人 handover 后在 PR 描述里写引用"
             exit 1
           fi
           echo "✓ PR 描述包含 handover 引用"
@@ -73,12 +70,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Each feature branch must have a current-day log
+      - name: Each working branch must have a current-day log
         run: |
           set -euo pipefail
           current="${{ github.ref_name }}"
-          if [[ "$current" != feature/* ]]; then
-            echo "✓ 非 feature 分支，跳过日志 gate"
+
+          if [[ "$current" == "master" || "$current" == "develop" ]]; then
+            echo "✓ 保护分支，跳过日志 gate"
             exit 0
           fi
 
@@ -86,7 +84,7 @@ jobs:
           today="$(date -u +%Y-%m-%d)"
           log_path="docs/agent/logs/${current}/${current}-${today}.md"
           if [[ ! -f "$log_path" ]]; then
-            echo "✗ 缺少当日日志: $log_path —— 参见 AGENT-CONTRIBUTION.md §6.1.1"
+            echo "✗ 缺少当日日志: $log_path —— 参见 AGENT-CONTRIBUTION.md §10.1-B"
             exit 1
           fi
           echo "✓ 当日日志存在: $log_path"

@@ -2,8 +2,9 @@
 # 远端 pre-receive hook —— kultur 部署在 server-side hooks dir
 # 作用：
 #   1) 拒绝非 kultur 对 master / develop 的 push
-#   2) 拒绝未注册（无 tasks/agents/<pinyin>.md）的 feature 分支 push
-# 配合 docs/agent/ 与 AGENT-CONTRIBUTION.md §B.7 使用
+#   2) 拒绝未注册（无 tasks/agents/<pinyin>.md）的工作分支 push
+# 工作分支命名：<pinyin>1（如 zhaiyuanhao1 / wanghaoyu1）
+# 配合 docs/agent/ 与 AGENT-CONTRIBUTION.md 附录 B 使用
 #
 # 部署方法（kultur 在远端仓库）：
 #   $GIT_DIR/hooks/pre-receive.d/protect-protected-branches.sh
@@ -35,23 +36,15 @@ while read -r oldrev newrev refname; do
       fi
       echo "✓ $branch 由 kultur 推送"
       ;;
-    feature/*)
-      pinyin="${branch#feature/}"
-      # 兼容 branch 含 / 的子路径，取第一段
+    *)
+      # 工作分支：<pinyin>1（拼音 + 世代号）。注册卡必须存在于推送的 tree。
+      pinyin="${branch%1}"
       pinyin="${pinyin%%/*}"
-      # 注册卡必须存在（commit 内容里）
-      # pre-receive hook 在 push 时只能拿到推送的 revision，但能查 $newrev 的 tree
       if ! git cat-file -e "$newrev:tasks/agents/${pinyin}.md" 2>/dev/null; then
-        echo "✗ 拒绝：feature 分支 '$branch' 缺少注册卡 tasks/agents/${pinyin}.md —— 参见 AGENT-CONTRIBUTION.md §B.2"
+        echo "✗ 拒绝：工作分支 '$branch' 缺少注册卡 tasks/agents/${pinyin}.md —— 参见 AGENT-CONTRIBUTION.md 附录 B.2"
         exit 1
       fi
       echo "✓ $branch 注册卡存在"
-      ;;
-    *)
-      # 其它分支（如 fix/*、hotfix/*、release/*）一律由 kultur 单独决定
-      # 默认拒绝（除 master/develop/feature/* 之外），kultur 手动 push 时可临时注释本 exit
-      echo "✗ 拒绝：分支 '$branch' 不在白名单（仅允许 master/develop/feature/*）"
-      exit 1
       ;;
   esac
 done

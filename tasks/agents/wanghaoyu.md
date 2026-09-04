@@ -4,20 +4,25 @@
 - 拼音:   wanghaoyu
 - agent-id: <待填写>
 - 注册日期: 2026-09-04
-- 工作分支: feature/wanghaoyu
+- 工作分支: wanghaoyu1
 - 角色:  **Doer（实干）**
-- 任务块: W2 — P2 记忆写入闭环 + markUsed + P6 eval runner 骨架
+- 任务线: P0 记忆拆解 + ContextCompiler + P4 eval runner
 
-## 工作内容
+## 工作内容（按 U1-U9 矩阵）
 
-- `src/memory/RefinedMemoryStore.ts`：新增 `markUsed`（注释兑现）。
-- `src/PanshalachChaser.ts`：落定路径调 `refine({trajectory, taskStyle, attemptCount, userFeedback})` + `save(cards)`；返回 `refined: { added, merged }`。
-- `src/cli/repl/PromptBuilder.ts`：注入前 markUsed。
-- `src/server/runAgentTask.ts` + `src/cli/repl/sseInteractive.ts`：`done` 事件下发 `refined`。
-- `scripts/eval/{run-eval,smoke-eval}.mjs` 骨架：A/B/C 三档 + T1-T5 task 注册表。
-- m1-acceptance.mjs 升级到真 openPangu 路径。
+- U1 `MemoryCard` 兼容 v2：保留 `RefinedMemoryCard` API，加 `provenance/sourceEventIds/sourceTurnIds/refs/evidence/status` 字段。
+- U1 `markUsed` 拆三态：`markInjected` / `markCited` / `markVerified(cardIds, evidenceEventIds)`——注入、引用、验证分开记账，杜绝自激励循环。
+- U2 5 维评分：`priority/confidence/validity/utility/freshness`；`weight × decay` 改 `priority × freshness`。
+- U3 `ContextCompiler`：统一预算装箱，替代 `PromptBuilder` 拼接逻辑；`ContextSnapshot` 每次模型调用产出。
+- U4 `scripts/eval/run-eval.mjs` 骨架：A/B/C/C1-C4 五档 + T1-T5 stub；U5 `smoke-eval.mjs` mock 模式。
+- U6-U7 真 openPangu 端点跑评测出 `scripts/eval/results/<date>.json`；U8 评测 CSV + 报告。
+
+## 接口协调
+
+- 与翟苑皓（U1）协调 `ModelClientOutput` 类型签名。
+- 与王佐（U1）协调 `MemoryEventStore` schema（runner 抓事件）。
+- 与赵天昂（U1）协调 `Assertion` schema。
 
 ## 备注
 
-- 阶段交付见 `WORK-PLAN-MAIN-LEARN.md` §5.2
-- 与翟源昊（W1）协调 `ModelClientOutput` 接口签名（W1.1 接口契约 PR）
+- 分工矩阵见 `WORK-PLAN-2DAY-UNITS.md`；技术路线见 `docs/panshalach/ROADMAP-NEXT.md` P0.4/P2/P3/P4。
