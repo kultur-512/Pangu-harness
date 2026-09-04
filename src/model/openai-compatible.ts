@@ -195,7 +195,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
     /**
      * P1.1: token-level streaming via SSE (stream:true).
-     * Yields {type:'thinking'} for delta.reasoning_content (GLM/DeepSeek style)
+     * Yields {type:'thinking'} for delta.reasoning_content (OpenAI-compatible style)
      * and {type:'text'} for delta.content. Falls back to a single text chunk
      * built from complete() when the endpoint does not support streaming.
      */

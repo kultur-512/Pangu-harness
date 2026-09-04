@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ExtremeGlmToolCallAdapter } from '../src/adapter/ExtremeGlmToolCallAdapter.js';
+import { StrictStructuredToolAdapter } from '../src/adapter/StrictStructuredToolAdapter.js';
 
-describe('ExtremeGlmToolCallAdapter - 30-round debug target', () => {
-  const adapter = new ExtremeGlmToolCallAdapter();
+describe('StrictStructuredToolAdapter - 30-round debug target', () => {
+  const adapter = new StrictStructuredToolAdapter();
 
   it('must parse exact user sample with <Bash><command>', () => {
     const input = `<>

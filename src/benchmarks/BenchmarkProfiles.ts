@@ -15,7 +15,7 @@ export interface BenchmarkProfile {
   verificationStyle: 'test-suite' | 'terminal-command' | 'state-assertion' | 'workflow-effect';
   /** 是否强烈推荐“先验证再声称” */
   verifyFirstBias: boolean;
-  /** 是否默认走严格铁律 */
+  /** 是否默认走严格纪律规则 */
   defaultStrictIronLaws: boolean;
   /** prompt 中要强调的核心原则（简短） */
   emphasis: string;
@@ -72,7 +72,7 @@ export class BenchmarkProfiles {
 
   /**
    * 生成任务风格特定的 prompt 前缀/强调块（用于注入到 reasoning prompt）
-   * highRigor: 是否处于高纪律模式，用于决定是否注入严格铁律提示。
+   * highRigor: 是否处于高纪律模式，用于决定是否注入严格纪律规则提示。
    */
   static getPromptHeader(profile: BenchmarkProfile, highRigor: boolean): string {
     const base = `【当前任务风格: ${profile.displayName}】\n${profile.emphasis}\n`;

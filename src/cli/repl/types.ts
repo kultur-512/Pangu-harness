@@ -182,7 +182,7 @@ export interface StepCallback {
 }
 
 // ==================== P3: ModelProvider abstraction (per ModelProvider blueprint) ====================
-/** 流式 chunk（P1.1）：reasoning 对应 GLM/DeepSeek 风格 delta.reasoning_content */
+/** 流式 chunk（P1.1）：reasoning 对应 reasoning_content 风格的思考增量 */
 export type ModelStreamChunk =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string };
@@ -235,7 +235,7 @@ export interface ModelProvider {
   getModelContextLength?(name: string): number;
 
   /**
-   * For GLM shorthand ("glm", "glm-5", etc.), returns the concrete model id that will be used.
+   * For provider shorthand names ("a6", "scnet", etc.), returns the concrete model id that will be used.
    * For normal names returns the input as-is.
    */
   getEffectiveModel?(name: string): string;

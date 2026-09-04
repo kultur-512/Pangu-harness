@@ -37,8 +37,8 @@ describe('openai-compatible client (mocked)', () => {
           ok: true,
           json: {
             data: [
-              { id: 'glm-4-plus' },
-              { id: 'glm-4-long' },
+              { id: 'openPangu-7B' },
+              { id: 'openPangu-1B' },
             ],
           },
         };
@@ -52,7 +52,7 @@ describe('openai-compatible client (mocked)', () => {
     });
 
     const models = await client.listModels();
-    assert.deepEqual(models, ['glm-4-plus', 'glm-4-long']);
+    assert.deepEqual(models, ['openPangu-7B', 'openPangu-1B']);
   });
 
   it('complete extracts choices[0].message.content', async () => {
@@ -73,7 +73,7 @@ describe('openai-compatible client (mocked)', () => {
       apiKey: 'sk-test',
     });
 
-    const out = await client.complete('hi', { model: 'glm-4-plus' });
+    const out = await client.complete('hi', { model: 'openPangu-7B' });
     assert.equal(out, 'Hello from mock');
   });
 

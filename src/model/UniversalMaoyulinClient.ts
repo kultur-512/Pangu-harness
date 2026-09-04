@@ -17,9 +17,9 @@ import { ToolCall } from '../types/toolCall.js';
 export interface UniversalClientOptions {
   apiKey: string;
   baseUrl?: string;                 // default: https://api.maoyulin.xyz
-  defaultModel?: string;            // default: glm-5.2
-  /** If true, force strict GLM <> only parsing */
-  strictGlmOnly?: boolean;
+  defaultModel?: string;
+  /** If true, force strict structured <> only parsing */
+  strictStructured?: boolean;
 }
 
 export interface UniversalCompletionResponse {
@@ -42,7 +42,7 @@ export class UniversalMaoyulinClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly defaultModel: string;
-  private readonly strictGlmOnly: boolean;
+  private readonly strictStructured: boolean;
 
   private readonly adapter = new UniversalToolCallAdapter();
 
@@ -52,8 +52,8 @@ export class UniversalMaoyulinClient {
     }
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl || 'https://api.maoyulin.xyz';
-    this.defaultModel = options.defaultModel || 'glm-5.2';
-    this.strictGlmOnly = !!options.strictGlmOnly;
+    this.defaultModel = options.defaultModel || 'openPangu-7B';
+    this.strictStructured = !!options.strictStructured;
   }
 
   /**
@@ -76,7 +76,7 @@ export class UniversalMaoyulinClient {
     const rawContent = await this.doRequest(url, body);
 
     const parseRes: UniversalParseResult = this.adapter.parse(rawContent, {
-      strictGlmOnly: this.strictGlmOnly,
+      strictStructured: this.strictStructured,
       tolerant: opts.tolerant ?? true,
     });
 

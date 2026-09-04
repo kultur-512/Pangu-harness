@@ -20,7 +20,7 @@ export interface StartReplOptions {
 
 /**
  * fix-a6-routing: PANSHA_MODEL env seeds a session's model (headless one-shot
- * multi-provider, e.g. PANSHA_MODEL="a6:glm-5.3-flash"). Testable unit.
+ * multi-provider, e.g. PANSHA_MODEL="a6:openPangu-7B"). Testable unit.
  */
 export function applyEnvModel(session: Session): Session {
   const envModel = process.env.PANSHA_MODEL;

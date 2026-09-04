@@ -70,7 +70,7 @@ describe('S1 /model list key-leak regression', () => {
   it('never prints key material when the workspace config contains a key', async () => {
     // Workspace with a config that DOES contain a scnet key (worst case).
     writeFileSync(join(ws, '.panshalach.json'), JSON.stringify({
-      model: 'GLM-5.1',
+      model: 'openPangu-7B',
       providers: {
         scnet: {
           type: 'openai-compatible',

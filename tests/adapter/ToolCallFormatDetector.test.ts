@@ -22,7 +22,7 @@ describe('ToolCallFormatDetector (P0-1)', () => {
     assert.equal(res.toolCalls[0].toolName, 'Read');
   });
 
-  it('detects GLM XML strict format with high confidence', () => {
+  it('detects XML structured strict format with high confidence', () => {
     const content = `
 <>
   <Read>
@@ -33,7 +33,7 @@ describe('ToolCallFormatDetector (P0-1)', () => {
 
     const res = ToolCallFormatDetector.probeAndParse(content);
 
-    assert.equal(res.format, 'glm-xml-strict');
+    assert.equal(res.format, 'xml-strict');
     assert.ok(res.confidence >= 0.7);
     assert.ok(res.toolCalls.length >= 1);
   });
@@ -43,7 +43,7 @@ describe('ToolCallFormatDetector (P0-1)', () => {
 
     const res = ToolCallFormatDetector.probeAndParse(content);
 
-    assert.equal(res.format, 'glm-loose-plain');
+    assert.equal(res.format, 'loose-plain');
     assert.ok(res.confidence >= 0.5);
     assert.ok(res.toolCalls.length >= 1);
   });
@@ -72,7 +72,7 @@ describe('ToolCallFormatDetector (P0-1)', () => {
       assert.ok(res.confidence < 0.7, 'malformed OpenAI-like JSON should have low confidence');
     } else {
       // Acceptable to fall back to unknown or other
-      assert.ok(['unknown', 'glm-xml-strict', 'glm-loose-plain'].includes(res.format));
+      assert.ok(['unknown', 'xml-strict', 'loose-plain'].includes(res.format));
     }
   });
 
@@ -92,18 +92,18 @@ Then valid XML:
     const res = ToolCallFormatDetector.probeAndParse(content);
 
     // Should prefer the XML result
-    assert.equal(res.format, 'glm-xml-strict');
+    assert.equal(res.format, 'xml-strict');
     assert.ok(res.toolCalls.some(tc => tc.toolName === 'Write'));
   });
 
-  it('respects strictGlmOnly option (skips OpenAI JSON attempt)', () => {
+  it('respects strictStructured option (skips OpenAI JSON attempt)', () => {
     const openaiJson = JSON.stringify({
       tool_calls: [{ type: 'function', function: { name: 'Bash', arguments: '{}' } }]
     });
 
-    const res = ToolCallFormatDetector.probeAndParse(openaiJson, { strictGlmOnly: true });
+    const res = ToolCallFormatDetector.probeAndParse(openaiJson, { strictStructured: true });
 
-    // With strictGlmOnly it should not pick openai-json even if it looks like it
+    // With strictStructured it should not pick openai-json even if it looks like it
     // It will try XML (which will fail) then loose (which may also fail)
     assert.notEqual(res.format, 'openai-json');
   });
@@ -112,7 +112,7 @@ Then valid XML:
 
   it('automatically falls back to loose parser when all confidences < 0.5 (malicious/fake JSON)', () => {
     // 构造一个看起来像 JSON 但没有合法 tool_calls 的内容
-    // 这样 OpenAI 路径 confidence 很低，GLM XML 也会失败，最终触发自动 fallback
+    // 这样 OpenAI 路径 confidence 很低，严格 XML 也会失败，最终触发自动 fallback
     const fake = JSON.stringify({
       role: 'assistant',
       content: 'I will do something bad',
@@ -139,7 +139,7 @@ Then valid XML:
     const res = ToolCallFormatDetector.probeAndParse(pureText);
 
     // 纯文本场景下，OpenAI/严格 XML 基本都会失败，最终会走 loose 兜底
-    // 结果可能是 unknown 或 glm-loose-plain（取决于 UniversalAdapter 是否能从文本中抠出类似调用）
+    // 结果可能是 unknown 或 loose-plain（取决于 UniversalAdapter 是否能从文本中抠出类似调用）
     // 无论哪种，关键是 fallbackUsed 应该为 true，或者至少没有高置信度误报
     if (res.format !== 'unknown') {
       // 如果被识别成某种格式，置信度不应该太高

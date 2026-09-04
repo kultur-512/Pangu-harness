@@ -1,13 +1,13 @@
 // src/adapter/ToolCallFormatDetector.ts
 // P0-1: Format detection layer with confidence scoring.
-// Strategy: Try OpenAI JSON first (high confidence threshold), then GLM XML strict, then loose plain.
-// Never modifies the original ExtremeGlmToolCallAdapter or UniversalToolCallAdapter.
+// Strategy: Try OpenAI JSON first (high confidence threshold), then XML structured strict, then loose plain.
+// Never modifies the original StrictStructuredToolAdapter or UniversalToolCallAdapter.
 
 import type { ToolCall } from '../types/toolCall.js';
-import { ExtremeGlmToolCallAdapter } from './ExtremeGlmToolCallAdapter.js';
+import { StrictStructuredToolAdapter } from './StrictStructuredToolAdapter.js';
 import { UniversalToolCallAdapter } from './UniversalToolCallAdapter.js';
 
-export type DetectedFormat = 'openai-json' | 'glm-xml-strict' | 'glm-loose-plain' | 'unknown';
+export type DetectedFormat = 'openai-json' | 'xml-strict' | 'loose-plain' | 'unknown';
 
 export interface FormatProbeResult {
   format: DetectedFormat;
@@ -24,7 +24,7 @@ export interface FormatProbeResult {
   }>;
 }
 
-const extremeAdapter = new ExtremeGlmToolCallAdapter();
+const extremeAdapter = new StrictStructuredToolAdapter();
 const universalAdapter = new UniversalToolCallAdapter();
 
 function safeJsonParse(text: string): any | null {
@@ -118,7 +118,7 @@ function normalizeOpenAiToToolCalls(obj: any): ToolCall[] {
 export class ToolCallFormatDetector {
   static probeAndParse(
     content: string,
-    options: { strictGlmOnly?: boolean } = {}
+    options: { strictStructured?: boolean } = {}
   ): FormatProbeResult {
     const start = Date.now();
     const attempts: FormatProbeResult['attempts'] = [];
@@ -131,12 +131,12 @@ export class ToolCallFormatDetector {
       remaining: content,
     };
 
-    const { strictGlmOnly = false } = options;
+    const { strictStructured = false } = options;
 
-    // Attempt 1: OpenAI JSON (unless strictGlmOnly)
+    // Attempt 1: OpenAI JSON (unless strictStructured)
     // Rule A (generalized): a zero-call attempt is recorded but NEVER becomes
     // a candidate — no calls means no format.
-    if (!strictGlmOnly) {
+    if (!strictStructured) {
       const parsed = safeJsonParse(content);
       if (parsed && isOpenAiToolCallShape(parsed)) {
         const calls = normalizeOpenAiToToolCalls(parsed);
@@ -157,45 +157,45 @@ export class ToolCallFormatDetector {
       }
     }
 
-    // Attempt 2: GLM XML strict
+    // Attempt 2: XML strict
     // Rule A: only calls.length > 0 may update best (zero-call attempts are
     // recorded in attempts and never become candidates).
     try {
       const res = extremeAdapter.parse(content);
       const calls = res.toolCalls || [];
 
-      attempts.push({ format: 'glm-xml-strict', success: calls.length > 0 });
+      attempts.push({ format: 'xml-strict', success: calls.length > 0 });
 
       if (calls.length > 0 && 0.9 > best.confidence) {
         best = {
-          format: 'glm-xml-strict',
+          format: 'xml-strict',
           confidence: 0.9,
           toolCalls: calls,
           remaining: res.remainingText || '',
         };
       }
     } catch (e: any) {
-      attempts.push({ format: 'glm-xml-strict', success: false, reason: e?.message || 'parse error' });
+      attempts.push({ format: 'xml-strict', success: false, reason: e?.message || 'parse error' });
     }
 
-    // Attempt 3: GLM loose plain (lowest priority)
+    // Attempt 3: loose plain (lowest priority)
     // Rule A: same zero-call guard as Attempt 2.
     try {
       const res = universalAdapter.parse(content);
       const calls = res.toolCalls || [];
 
-      attempts.push({ format: 'glm-loose-plain', success: calls.length > 0 });
+      attempts.push({ format: 'loose-plain', success: calls.length > 0 });
 
       if (calls.length > 0 && 0.6 > best.confidence) {
         best = {
-          format: 'glm-loose-plain',
+          format: 'loose-plain',
           confidence: 0.6,
           toolCalls: calls,
           remaining: res.remainingText || '',
         };
       }
     } catch (e: any) {
-      attempts.push({ format: 'glm-loose-plain', success: false, reason: e?.message || 'parse error' });
+      attempts.push({ format: 'loose-plain', success: false, reason: e?.message || 'parse error' });
     }
 
     // P0.5-B (v2): Automatic fallback chain
@@ -208,11 +208,11 @@ export class ToolCallFormatDetector {
         // Give the fallback a minimum floor if it actually produced something
         const conf = calls.length > 0 ? Math.max(best.confidence, 0.5) : 0.3;
 
-        attempts.push({ format: 'glm-loose-plain', success: calls.length > 0, reason: 'auto-fallback' });
+        attempts.push({ format: 'loose-plain', success: calls.length > 0, reason: 'auto-fallback' });
 
         if (calls.length > 0 || conf > best.confidence) {
           best = {
-            format: calls.length > 0 ? 'glm-loose-plain' : best.format,
+            format: calls.length > 0 ? 'loose-plain' : best.format,
             confidence: conf,
             toolCalls: calls.length > 0 ? calls : best.toolCalls,
             remaining: res.remainingText || best.remaining,
@@ -220,7 +220,7 @@ export class ToolCallFormatDetector {
           fallbackUsed = true;
         }
       } catch (e: any) {
-        attempts.push({ format: 'glm-loose-plain', success: false, reason: 'auto-fallback failed: ' + (e?.message || '') });
+        attempts.push({ format: 'loose-plain', success: false, reason: 'auto-fallback failed: ' + (e?.message || '') });
       }
     }
 

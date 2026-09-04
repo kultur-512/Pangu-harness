@@ -22,7 +22,7 @@ export interface StaticAnalysisResult {
 }
 
 export interface ReviewReport {
-  /** 铁律遵守情况 */
+  /** 纪律规则遵守情况 */
   ironLawCompliance: {
     readBeforeWriteViolations: number;
     verifyBeforeClaimMissing: number;

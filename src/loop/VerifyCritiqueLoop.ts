@@ -1,17 +1,17 @@
-// VerifyCritiqueLoop - GLM-5.x Verify-Heavy + Critique Loop
-// 目的：打造一个**既在工程里强，也在跑分里强**的强力模式核心循环。
+// VerifyCritiqueLoop - 验证密集 + 复盘循环
+// 目的：长程任务中保持验证密度与建设性复盘的核心循环。
 // 
-// 强力模式（highRigor / !practicalMode）设计原则：
+// 高纪律路径（highRigor / !practicalMode）设计原则：
 // - 严谨可靠：保留 Read-Before-Write、Verify-Before-Claim、标准格式、高验证密度。
 // - 工程可用：在真实日常高强度项目中能长时间运行，不会因为过于严苛导致 token 爆炸、模型疲劳或工作流卡死。
-// - 分数友好：通过高密度验证、建设性复盘、铁律遵守，在 benchmark / 评测中仍能保持竞争力。
+// - 分数友好：通过高密度验证、建设性复盘、纪律规则遵守，在 benchmark / 评测中仍能保持竞争力。
 // 
 // 实用模式：更温和、token 高效，适合常规开发。
 // 
-// 自我批评保持建设性。铁律主要在强力模式下高强度执行，但频率和语气都经过工程化调优。
+// 自我批评保持建设性。纪律规则主要在高纪律模式下高强度执行，但频率和语气都经过工程化调优。
 
 import { StructuredReasoner, StructuredReasoningOutput } from '../reasoning/StructuredReasoner.js';
-import { ExtremeGlmToolCallAdapter } from '../adapter/ExtremeGlmToolCallAdapter.js';
+import { StrictStructuredToolAdapter } from '../adapter/StrictStructuredToolAdapter.js';
 import { UniversalToolCallAdapter, ToolCallFormat } from '../adapter/UniversalToolCallAdapter.js';
 import { ToolCall, inferToolCategory } from '../types/toolCall.js';
 import { FailureMemory } from '../memory/FailureMemory.js';
@@ -53,7 +53,7 @@ export interface LoopStep {
 }
 
 export interface VerifyCritiqueLoopOptions {
-  strictGlmOnly?: boolean; // parser/format strictness flag (legacy); combined with !practicalMode yields high-rigor behavior
+  strictStructured?: boolean; // parser/format strictness flag (legacy); combined with !practicalMode yields high-rigor behavior
   useUniversalAdapter?: boolean;
   maxSteps?: number;
   maxConsecutiveFailures?: number;
@@ -68,11 +68,11 @@ export interface VerifyCritiqueLoopOptions {
   taskStyle?: string;
   /** 内部兼容旧称 benchmarkType，等同于 taskStyle。仅作为别名使用。 */
   benchmarkType?: BenchmarkType | string;
-  /** 是否强力模式（新名），等同于 !practicalMode 的高纪律路径。 */
+  /** 是否高纪律模式（新名），等同于 !practicalMode 的高纪律路径。 */
   isStrongMode?: boolean;
   /** 六档体系新增：critique 频率配置 */
   critiqueFrequency?: CritiqueFrequencySpec;
-  /** 六档体系新增：铁律注入强度 */
+  /** 六档体系新增：纪律规则注入强度 */
   ironLawInjectionLevel?: IronLawInjectionLevel;
   /** 六档体系新增：tier 名称 */
   tier?: string;
@@ -101,12 +101,12 @@ export interface VerifyCritiqueLoopOptions {
 
 export class VerifyCritiqueLoop {
   private steps: LoopStep[] = [];
-  private extremeAdapter = new ExtremeGlmToolCallAdapter();
+  private extremeAdapter = new StrictStructuredToolAdapter();
   private universalAdapter = new UniversalToolCallAdapter();
   private consecutiveFailures = 0;
 
   private useUniversal: boolean;
-  private strictGlm: boolean; // legacy internal: when true, prefer strict GLM <> parser + high-rigor behaviors (combined with !practicalMode)
+  private strictStructured: boolean; // legacy internal: when true, prefer the strict <> parser + high-rigor behaviors (combined with !practicalMode)
   private failureMemory?: FailureMemory;
   private verifyFirstBias: boolean;
   private practicalMode: boolean;
@@ -135,21 +135,21 @@ export class VerifyCritiqueLoop {
     options: VerifyCritiqueLoopOptions = {}
   ) {
     this.useUniversal = options.useUniversalAdapter ?? false;
-    this.strictGlm = options.strictGlmOnly ?? true;
+    this.strictStructured = options.strictStructured ?? true;
     this.maxSteps = options.maxSteps ?? 25;
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
     this.failureMemory = options.failureMemory;
-    this.verifyFirstBias = options.verifyFirstBias ?? this.strictGlm;
-    // 强力模式判定（behavioral）：优先 isStrongMode，其次 !practicalMode，再次 strictGlmOnly（legacy）
+    this.verifyFirstBias = options.verifyFirstBias ?? this.strictStructured;
+    // 高纪律模式判定（behavioral）：优先 isStrongMode，其次 !practicalMode，再次 strictStructured（legacy）
     const explicitStrong = options.isStrongMode;
     const explicitPractical = options.practicalMode;
-    this.isStrongMode = explicitStrong ?? (explicitPractical === undefined ? this.strictGlm : !explicitPractical);
+    this.isStrongMode = explicitStrong ?? (explicitPractical === undefined ? this.strictStructured : !explicitPractical);
     this.practicalMode = explicitPractical ?? !this.isStrongMode;
     // 任务风格：优先 taskStyle，其次 benchmarkType（legacy alias）
     this.taskStyle = options.taskStyle ?? (options.benchmarkType as string | undefined);
     this.benchmarkType = options.benchmarkType ?? this.taskStyle;
     this.profile = BenchmarkProfiles.get(this.taskStyle ?? this.benchmarkType);
-    // 六档体系新增：接收 critique 频率、铁律注入强度、tier 名称
+    // 六档体系新增：接收 critique 频率、纪律规则注入强度、tier 名称
     this.critiqueFrequency = options.critiqueFrequency;
     this.ironLawInjectionLevel = options.ironLawInjectionLevel;
     this.tierName = options.tier;
@@ -167,7 +167,7 @@ export class VerifyCritiqueLoop {
   private maxSteps: number;
   private maxConsecutiveFailures: number;
 
-  // GLM-5.x Iron Law tracking (Read-Before-Write + Verification density)
+  // 结构化 Iron Law tracking (Read-Before-Write + Verification density)
   private hasPerformedRealVerification = false;
   private stepsSinceLastRealVerification = 0;
   private verificationAttempts = 0;
@@ -190,10 +190,10 @@ export class VerifyCritiqueLoop {
     // This represents the "strong mode" execution path (high-rigor discipline) regardless of underlying model.
     // Computed from:
     // - explicit isStrongMode (preferred public flag), or
-    // - strictGlm (legacy high-discipline parser intent) + !practicalMode.
-    const highRigor = ((this.isStrongMode ?? this.strictGlm) && !this.practicalMode) && !this.useUniversal;
+    // - strictStructured (legacy high-discipline parser intent) + !practicalMode.
+    const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode) && !this.useUniversal;
 
-    // 任务风格相关元信息（用于 prompt 注入和铁律策略）
+    // 任务风格相关元信息（用于 prompt 注入和纪律规则策略）
     const benchHeader = BenchmarkProfiles.getPromptHeader(this.profile, highRigor && this.profile.defaultStrictIronLaws);
     const verificationHint = BenchmarkProfiles.getVerificationHint(this.profile);
 
@@ -208,17 +208,17 @@ export class VerifyCritiqueLoop {
         prompt = benchHeader + '\n' + prompt;
       }
 
-      // 构建 prompt 时根据 practicalMode + 任务风格调整铁律/格式注入强度
-      // 强力模式设计目标：工程强 + 分数强
+      // 构建 prompt 时根据 practicalMode + 任务风格调整纪律规则/格式注入强度
+      // 高纪律模式设计目标：工程强 + 分数强
       // - 保留核心纪律（Read-Before-Write、Verify-Before-Claim、标准格式）
       // - 但只在“有风险或早期”时才重度注入，避免每步塞大段规则导致 token 爆炸和日常工程不可用
       if (highRigor) {
-        // === 强力模式（高纪律，工程可用） ===
+        // === 高纪律模式（高纪律，工程可用） ===
         // P2-3 修复：完全按 ironLawInjectionLevel 差异化
         // - 'minimal' / 'low'：几乎不注入（只保留格式/任务风格提醒）
         // - 'medium'：常规注入
         // - 'medium_high' / 'high'：重度注入
-        // - 'highest'：始终注入完整铁律头
+        // - 'highest'：始终注入完整纪律规则头
         const injectionLevel = this.ironLawInjectionLevel ?? 'medium';
 
         // minimal: 极轻量；low: 轻量；medium: 标准；medium_high/high: 较重；highest: 最重
@@ -228,7 +228,7 @@ export class VerifyCritiqueLoop {
           || (injectionLevel === 'medium' && (this.readBeforeWriteViolations > 0 || stepNum <= 1));
 
         if (shouldInjectIronHeader) {
-          const ironHeader = StructuredReasoner.getGlmIronLawsHeader();
+          const ironHeader = StructuredReasoner.getEngineeringIronLawsHeader();
           const ironStatus = StructuredReasoner.buildCurrentIronLawStatus({
             filesRead: this.filesReadThisTrajectory.size,
             filesWritten: this.filesWrittenThisTrajectory.size,
@@ -249,7 +249,7 @@ export class VerifyCritiqueLoop {
         if ((injectionLevel === 'minimal' || injectionLevel === 'low') && !hasFormatIssue) {
           // 跳过格式提示
         } else if (stepNum <= formatEarlyBound || hasFormatIssue) {
-          prompt += `\n\n${StructuredReasoner.buildGlmFormatEnforcementPrompt()}`;
+          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
         }
 
         // 验证提醒更实用
@@ -265,7 +265,7 @@ export class VerifyCritiqueLoop {
           prompt += `\n\n【Automation 实践】动作后请用 CheckStatus / VerifyEffect 确认业务效果。`;
         }
         if (this.readBeforeWriteViolations > 0) {
-          prompt += `\n\n【Read-Before-Write】修改前先完整读文件，这是强力模式保证质量的核心纪律。`;
+          prompt += `\n\n【Read-Before-Write】修改前先完整读文件，这是高纪律模式保证质量的核心纪律。`;
         }
       } else {
         // === 实用 / 日常模式：轻量纪律提示（避免无谓消耗）===
@@ -282,10 +282,10 @@ export class VerifyCritiqueLoop {
       }
 
       // P0-2 修复：旧 FailureMemory 注入加 tier 门控
-      // 强力模式（!practicalMode）才允许注入旧 FailureMemory；
+      // 高纪律模式（!practicalMode）才允许注入旧 FailureMemory；
       // 实用模式完全不注入（避免双记忆污染和 token 爆炸）。
       // 最终目标：完全收敛到 RefinedMemoryStore（旧路径下线）。
-      if (!this.practicalMode && this.failureMemory && (this.isStrongMode ?? this.strictGlm)) {
+      if (!this.practicalMode && this.failureMemory && (this.isStrongMode ?? this.strictStructured)) {
         const mem = this.failureMemory.toPromptInjection();
         if (mem) prompt += '\n' + mem;
       }
@@ -309,32 +309,32 @@ export class VerifyCritiqueLoop {
 
       const reasoning = StructuredReasoner.parseReasoning(rawContent);
 
-      // 解析工具调用（GLM 严格模式走 Extreme）
+      // 解析工具调用（严格结构化模式走 StrictStructuredToolAdapter）
       let toolCalls: ToolCall[] = preParsedToolCalls ?? [];
 
       if (toolCalls.length === 0) {
-        if (this.useUniversal && !this.strictGlm) {
+        if (this.useUniversal && !this.strictStructured) {
           const res = this.universalAdapter.parse(rawContent, {
-            strictGlmOnly: this.strictGlm,
-            tolerant: !this.strictGlm,
+            strictStructured: this.strictStructured,
+            tolerant: !this.strictStructured,
           });
           toolCalls = res.toolCalls;
           detectedFormat = res.detectedFormat ?? detectedFormat;
         } else {
-          const res = this.extremeAdapter.parse(rawContent, { strict: this.strictGlm });
+          const res = this.extremeAdapter.parse(rawContent, { strict: this.strictStructured });
           toolCalls = res.toolCalls;
         }
       }
 
-      // 确保每个工具调用都有 category（用于多任务风格铁律跟踪）
+      // 确保每个工具调用都有 category（用于多任务风格纪律规则跟踪）
       for (const c of toolCalls) {
         if (!c.category) {
           c.category = inferToolCategory(c.toolName);
         }
       }
 
-      // === 多任务风格铁律实时跟踪 ===
-      // 强力模式下执行更严格的跟踪；实用模式下也做轻量统计以便提示
+      // === 多任务风格纪律规则实时跟踪 ===
+      // 高纪律模式下执行更严格的跟踪；实用模式下也做轻量统计以便提示
       // 注意：verificationResult 在此处尚未声明，必须使用局部占位以避免 TDZ 崩溃
       const pendingVerificationResult = ''; // 本步执行前的验证结果占位（执行后会被覆盖）
       if (highRigor || true) {  // 始终统计，提示和打分会按模式使用
@@ -426,7 +426,7 @@ export class VerifyCritiqueLoop {
       }
 
       // 决定是否进行 critique（控制 token 消耗）
-      // - 强力模式（!practicalMode）：从第2步起高频 critique，以保持高纪律自我检查
+      // - 高纪律模式（!practicalMode）：从第2步起高频 critique，以保持高纪律自我检查
       // - 实用/日常模式：降低频率，避免无谓 token 消耗；只在必要时触发
       let critique: string | undefined;
       const shouldCritique = this.decideShouldCritique(stepNum, signal, highRigor);
@@ -507,7 +507,6 @@ export class VerifyCritiqueLoop {
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
       };
-      };
 
       this.steps.push(step);
 
@@ -516,7 +515,7 @@ export class VerifyCritiqueLoop {
         this.failureMemory.autoExtractFromTrajectory([step]);
       }
 
-      // 失败保护（强力模式更宽松，允许更多探索）
+      // 失败保护（高纪律模式更宽松，允许更多探索）
       if (signal === 'FAIL' || signal === 'ERROR') {
         this.consecutiveFailures++;
         // 多任务风格失败记忆增强
@@ -543,7 +542,7 @@ export class VerifyCritiqueLoop {
       }
 
       // 成功条件：必须基于真实验证信号，不能仅凭 critique 文本判定
-      // Verify-Before-Claim 铁律：只有看到明确的 PASS / ALL_TESTS_PASSED 信号才能终止
+      // Verify-Before-Claim 纪律规则：只有看到明确的 PASS / ALL_TESTS_PASSED 信号才能终止
       if (signal === 'PASS' || verificationResult.includes('ALL_TESTS_PASSED')) {
         done = true;
       }
@@ -626,7 +625,7 @@ export class VerifyCritiqueLoop {
 
   private buildHistoryPrompt(): string {
     const isPractical = this.practicalMode;
-    // P2-2 修复：保留 <plan> 和 <verify> 的完整结构（GLM 长上下文利用）
+    // P2-2 修复：保留 <plan> 和 <verify> 的完整结构（长上下文利用）
     // 之前 plan.slice(150) / result.slice(160) 破坏了结构化信息
     // 现在按 tier + practical 给出合理上限，但确保结构化块完整
     const planLimit = isPractical ? 200 : 300;
@@ -655,7 +654,7 @@ export class VerifyCritiqueLoop {
           ? s.critique.slice(0, critiqueLimit)
           : 'N/A';
 
-        // 包含完整的结构化块（plan + verify + result）便于 GLM 长链推理
+        // 包含完整的结构化块（plan + verify + result）便于长链推理
         const base = `Step ${s.stepNumber} [${s.verificationSignal}]${iron ? ' ['+iron+']' : ''}:
 Thinking: ${thinking}
 Plan: ${plan}
@@ -669,7 +668,7 @@ Critique: ${critique}`;
   }
 
   /**
-   * Expose current GLM Iron Law compliance state + multi-task-style signals.
+   * Expose current Iron Law compliance state + multi-task-style signals.
    * Used by orchestrator / chaser for scoring and dynamic prompt injection.
    */
   getIronLawStatus() {

@@ -217,7 +217,7 @@ export class PromptBuilder {
 
     // === Tier runtime contract (iron-law strength, memory, critique cadence) ===
     // Regression guard: buildForTask output must carry the tier contract details
-    // (tests assert 铁律强度 presence in the task prompt, not only the header).
+    // (tests assert 纪律规则强度 presence in the task prompt, not only the header).
     this.tryInject('tier-runtime-contract', `\n【档位契约】\n${this.buildTierContract()}`, lines);
 
     // === fix-#9-①: negative tool list — names in the prompt are NOT tools ===
@@ -229,7 +229,7 @@ export class PromptBuilder {
       '',
       '<negative_tool_list>',
       '以下名称出现在本提示词中，但它们【不是】工具，禁止调用：',
-      '· iron_law_check（铁律强度是配置说明，不是工具）',
+      '· iron_law_check（纪律规则强度是配置说明，不是工具）',
       '· thinking / plan / critique / reasoning（思维链描述是内部过程，不是工具）',
       '· read / write / edit / bash / glob / grep（正确拼写见可用工具列表）',
       '· 任何未在【可用工具】列表中的名称',
@@ -263,7 +263,7 @@ export class PromptBuilder {
 
     // === P1.5a: Thinking-budget ladder (Claude Code-inspired) ===
     // Map tier → thinking depth directive. Mirrors CC's think/think hard/ultrathink
-    // ladder; for OpenAI-compatible GLM-style endpoints this acts as an explicit
+    // ladder; for OpenAI-compatible endpoints this acts as an explicit
     // reasoning-depth instruction (no native thinking param today).
     const thinkKey = TIER_THINKING_DIRECTIVE[this.session.tier] ?? '';
     if (thinkKey) {
@@ -548,7 +548,7 @@ export class PromptBuilder {
     const crit = this.describeCritique(t.critiqueFrequency);
 
     const parts: string[] = [];
-    parts.push(`铁律强度: ${iron}`);
+    parts.push(`纪律规则强度: ${iron}`);
     parts.push(`记忆加载: ${mem}`);
     parts.push(`Critique: ${crit}`);
     parts.push(`探索深度: ${t.explorationDepth}，并行度: ${t.parallelRollouts}，锚点上限: ${t.anchorMax}`);
@@ -559,7 +559,7 @@ export class PromptBuilder {
       parts.push('偏好先验证后修改（Verify-Before-Claim）。');
     }
     // Core immutable engineering laws (always present, strength varies by iron level)
-    parts.push('核心铁律（强度随档位变化）：Read-Before-Write、标准 <> 工具调用格式、变更需可验证、可回滚。');
+    parts.push('核心纪律规则（强度随档位变化）：Read-Before-Write、标准 <> 工具调用格式、变更需可验证、可回滚。');
 
     return parts.join('；');
   }
@@ -569,10 +569,10 @@ export class PromptBuilder {
       case 'none': return '无（快速模式，极简纪律）';
       case 'minimal': return '极简（仅关键节点提醒）';
       case 'low': return '轻量（基础格式与顺序检查）';
-      case 'medium': return '中等（常规铁律 + 格式 + 证据要求）';
+      case 'medium': return '中等（常规纪律规则 + 格式 + 证据要求）';
       case 'medium_high': return '中高（强格式 + 证据 + 边界覆盖）';
-      case 'high': return '高（严格铁律 + 多轮自查 + 证据链）';
-      case 'highest': return '极高（终极长程记忆级，全面铁律 + 最高证据密度）';
+      case 'high': return '高（严格纪律规则 + 多轮自查 + 证据链）';
+      case 'highest': return '极高（终极长程记忆级，全面纪律规则 + 最高证据密度）';
       default: return String(level);
     }
   }

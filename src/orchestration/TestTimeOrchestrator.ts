@@ -1,5 +1,5 @@
 // Test-Time Compute + Trajectory System (Panshalach 记忆增强引擎)
-// 打分以"长程记忆保持 + 验证密度"为核心，去掉 GLM 时代 format 加分/扣分与 terminal/automation 风格专属惩罚。
+// 打分以"长程记忆保持 + 验证密度"为核心，去掉旧版打分 format 加分/扣分与 terminal/automation 风格专属惩罚。
 // 保留 RBW 惩罚（通用安全价值）与早验证奖励（轻量）。
 
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
@@ -24,8 +24,7 @@ export interface Trajectory {
   steps: TrajectoryStep[];
   finalPatch?: string;
   score: number;
-  /** @deprecated 使用 isStrongTarget 替代 */
-  isGlmTarget?: boolean;
+  /** 是否高纪律/验证密集目标 */
   isStrongTarget?: boolean;
   benchmarkType?: string;
   taskStyle?: string;
@@ -36,7 +35,7 @@ export class TrajectoryRecorder {
   private trajectories = new Map<string, Trajectory>();
 
   create(id: string, isStrongTarget = false, benchmarkType?: string, taskStyle?: string): Trajectory {
-    const t: Trajectory = { id, steps: [], score: 0, isStrongTarget, isGlmTarget: isStrongTarget, benchmarkType, taskStyle: taskStyle ?? benchmarkType };
+    const t: Trajectory = { id, steps: [], score: 0, isStrongTarget, benchmarkType, taskStyle: taskStyle ?? benchmarkType };
     this.trajectories.set(id, t);
     return t;
   }
@@ -62,7 +61,7 @@ export class TrajectoryRecorder {
 
 export class TrajectoryScorer {
   /**
-   * GLM-5.x 极致强化打分
+   * 长程记忆增强打分
    * 核心指标：
    * - 真实验证次数（最高权重）
    * - 严格 <> 格式纯度
@@ -72,7 +71,7 @@ export class TrajectoryScorer {
   static score(trajectory: Trajectory): number {
     let score = 0;
     // isStrongTarget: 高纪律模式下的验证密度奖励
-    const isStrongTarget = !!trajectory.isStrongTarget || !!trajectory.isGlmTarget;
+    const isStrongTarget = !!trajectory.isStrongTarget;
     const taskStyle = (trajectory.taskStyle ?? trajectory.benchmarkType) as BenchmarkType | undefined;
     const profile = BenchmarkProfiles.get(taskStyle);
 
@@ -147,10 +146,10 @@ export class TestTimeOrchestrator {
     runOne: (rolloutId: string) => Promise<Trajectory>,
     count: number = 5,
     budget: { maxTokens?: number } = {},
-    options: { isStrongTarget?: boolean; isGlmTarget?: boolean; benchmarkType?: string; taskStyle?: string; parallel?: boolean } = {}
+    options: { isStrongTarget?: boolean; benchmarkType?: string; taskStyle?: string; parallel?: boolean } = {}
   ): Promise<Trajectory> {
     // D-parallel: quick/standard stay SERIAL; high+ tiers run parallel
-    const isStrongTarget = !!options.isStrongTarget || !!options.isGlmTarget;
+    const isStrongTarget = !!options.isStrongTarget;
     const taskStyle = options.taskStyle ?? options.benchmarkType;
     const parallel = (options as any).parallel === true;
 
@@ -160,7 +159,6 @@ export class TestTimeOrchestrator {
       try {
         const traj = await runOne(id);
         traj.isStrongTarget = isStrongTarget;
-        traj.isGlmTarget = isStrongTarget;
         traj.benchmarkType = taskStyle;
         traj.taskStyle = taskStyle;
         // D-parallel (declared tweak): a caller-provided score is respected

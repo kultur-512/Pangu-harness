@@ -1,11 +1,11 @@
 // src/adapter/UniversalToolCallAdapter.ts
-// Universal Tool Call Adapter for the GLM-5.x Strong Engineering Agent Framework
+// Universal Tool Call Adapter for the Panshalach Memory-Augmented Agent Framework
 //
 // Design principles:
-// - GLM-5.x strict <> format must be PERFECT in strong/high-rigor mode
+// - XML structured format strictness in high-rigor mode
 // - Other models via same relay must also work reasonably
 // - Support formats actually observed on relays:
-//     1. Strict GLM: <> <ToolName> <p>v</p> </ToolName> </>
+//     1. Strict XML structured: <> <ToolName> <p>v</p> </ToolName> </>
 //     2. Loose plain: Read(file_path="..."), Write(file_path=..., content=...)
 //     3. invoke tool XXX with param is value
 //     4. OpenAI tool_calls (if relay ever returns them in content)
@@ -15,8 +15,8 @@
 import { ToolCall, ToolCallParam, ParseResult, ParseOptions, inferToolCategory } from '../types/toolCall.js';
 
 export type ToolCallFormat =
-  | 'glm-xml-strict'
-  | 'glm-loose-plain'
+  | 'xml-strict'
+  | 'loose-plain'
   | 'openai-tool_calls'
   | 'unknown';
 
@@ -29,11 +29,11 @@ export interface UniversalParseResult extends ParseResult {
 }
 
 export interface UniversalParseOptions extends ParseOptions {
-  /** Parser/format strictness: only accept strict GLM <> XML. Legacy flag.
+  /** Parser/format strictness: only accept strict XML structured <> blocks. Legacy flag.
    *  When combined with high-rigor/strong mode at higher layers, this yields strict format enforcement.
    *  Not the same as the agent's high-level "strong mode" (heavy verification + iron laws).
    */
-  strictGlmOnly?: boolean;
+  strictStructured?: boolean;
   /** Be extra tolerant (good for weak/other models) */
   tolerant?: boolean;
 }
@@ -56,27 +56,27 @@ export class UniversalToolCallAdapter {
 
     const trimmed = content.trim();
 
-    // Strategy 1: Strict GLM <> (best for GLM-5.x strong/high-rigor mode)
-    attempts.push('glm-xml-strict');
+    // Strategy 1: Strict XML (best for high-rigor mode)
+    attempts.push('xml-strict');
     if (trimmed.includes(UniversalToolCallAdapter.ROOT_OPEN)) {
-      const strictCalls = this.parseStrictGlmXml(trimmed, options, warnings);
+      const strictCalls = this.parseStrictXmlStructured(trimmed, options, warnings);
       if (strictCalls.length > 0) {
         return {
           toolCalls: strictCalls,
           remainingText: this.extractRemaining(trimmed, strictCalls),
           warnings,
-          detectedFormat: 'glm-xml-strict',
+          detectedFormat: 'xml-strict',
           diagnostics: { attempts, warnings: [...warnings] },
         };
       }
     }
 
-    if (options.strictGlmOnly) {
+    if (options.strictStructured) {
       return {
         toolCalls: [],
         remainingText: trimmed,
-        warnings: [...warnings, 'STRICT_GLM_ONLY_NO_MATCH'],
-        detectedFormat: 'glm-xml-strict',
+        warnings: [...warnings, 'STRICT_XML_ONLY_NO_MATCH'],
+        detectedFormat: 'xml-strict',
         diagnostics: { attempts, warnings: [...warnings] },
       };
     }
@@ -94,15 +94,15 @@ export class UniversalToolCallAdapter {
       };
     }
 
-    // Strategy 3: Loose plain-text (Maoyulin non-GLM reality)
-    attempts.push('glm-loose-plain');
+    // Strategy 3: Loose plain-text (models that do not emit strict XML)
+    attempts.push('loose-plain');
     const loose = this.parseLoosePlainText(trimmed, warnings, !!options.tolerant);
     if (loose.length > 0) {
       return {
         toolCalls: loose,
         remainingText: trimmed,
         warnings,
-        detectedFormat: 'glm-loose-plain',
+        detectedFormat: 'loose-plain',
         diagnostics: { attempts, warnings: [...warnings] },
       };
     }
@@ -116,7 +116,7 @@ export class UniversalToolCallAdapter {
     };
   }
 
-  private parseStrictGlmXml(content: string, options: UniversalParseOptions, warnings: string[]): ToolCall[] {
+  private parseStrictXmlStructured(content: string, options: UniversalParseOptions, warnings: string[]): ToolCall[] {
     const calls: ToolCall[] = [];
     const ROOT_OPEN = UniversalToolCallAdapter.ROOT_OPEN;
     const ROOT_CLOSE = UniversalToolCallAdapter.ROOT_CLOSE;
@@ -137,7 +137,7 @@ export class UniversalToolCallAdapter {
       let toolMatch = /^<([A-Za-z_][A-Za-z0-9_-]*)>/.exec(inner);
       if (!toolMatch) toolMatch = /<([A-Za-z_][A-Za-z0-9_-]*)>/.exec(inner);
       if (!toolMatch) {
-        warnings.push('NO_TOOL_NAME_IN_GLM_XML');
+        warnings.push('NO_TOOL_NAME_IN_XML_BLOCK');
         continue;
       }
 
@@ -283,8 +283,8 @@ export class UniversalToolCallAdapter {
    */
   generateFormatHint(detected: ToolCallFormat | undefined, model?: string): string {
     const m = (model || '').toLowerCase();
-    if (detected === 'glm-xml-strict' || m.includes('glm')) {
-      return `请严格使用 GLM 标准格式：\n<>\n  <ToolName>\n    <paramName>value</paramName>\n  </ToolName>\n</>`;
+    if (detected === 'xml-strict' || m.includes('xml')) {
+      return `请严格使用标准结构化 XML 格式：\n<>\n  <ToolName>\n    <paramName>value</paramName>\n  </ToolName>\n</>`;
     }
     return `请使用以下格式之一：\n` +
            `Read(file_path="src/xx.js")\n` +

@@ -1,9 +1,9 @@
 import { ParseOptions, ParseResult, ToolCall, ToolCallParam } from '../types/toolCall.js';
 
 /**
- * GLM-5.3 Tool Call Parser
+ * XML Structured Tool Call Parser
  *
- * Expected format (observed in real GLM-5.3 output):
+ * Expected format (XML structured tool-call protocol):
  *
  * <>
  *   <Bash>
@@ -23,9 +23,9 @@ const ROOT_OPEN = '<>';
 const ROOT_CLOSE = '</>';
 const TOOL_TAG_REGEX = /<([A-Za-z_][A-Za-z0-9_-]*)>/g;
 
-export class GlmToolCallParser {
+export class XmlStructuredToolParser {
   /**
-   * Parse a full model response (or accumulated content) for GLM-5.3 style tool calls.
+   * Parse a full model response (or accumulated content) for XML structured tool calls.
    */
   parse(content: string, options: ParseOptions = {}): ParseResult {
     const warnings: string[] = [];
@@ -117,7 +117,7 @@ export class GlmToolCallParser {
     if (!firstTagMatch) {
       warnings.push('Could not determine tool name from block: ' + inner.slice(0, 60));
       if (options.strict) {
-        throw new Error('Invalid GLM tool call block: no tool name tag');
+        throw new Error('Invalid structured tool call block: no tool name tag');
       }
       return null;
     }
@@ -177,7 +177,7 @@ export class GlmToolCallParser {
       value = this.unescapeXml(value);
 
       // If value itself contains another level of param tags, we currently flatten to string.
-      // For GLM-5.3 coding use cases this is usually sufficient.
+      // For coding use cases this is usually sufficient.
       params.push({ name, value: value.trim() });
     }
 

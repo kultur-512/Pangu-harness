@@ -119,7 +119,7 @@ export function menuRenderLines(items: MenuCandidate[], index: number): string[]
  * Parse a command+argument pattern for the ARGUMENT sub-menu.
  *   '/model'        → null (no trailing space yet — still command menu)
  *   '/model '       → { command:'model', argQuery:'' }
- *   '/model glm-5'  → { command:'model', argQuery:'glm-5' }
+ *   '/model openPangu-7B'  → { command:'model', argQuery:'openPangu-7B' }
  * Returns null when the value is not of the form '/cmd ' (command + space +
  * optional arg) — i.e. plain tasks or a bare command without trailing space.
  */
@@ -283,7 +283,7 @@ export function parseCommandInput(value: string): { command: string; argQuery: s
  *   '/model'         → { stage:'provider', provider:null, query:'' }   (③ direct)
  *   '/model '        → { stage:'provider', provider:null, query:'' }
  *   '/model scnet '  → { stage:'model', provider:'scnet', query:'' }
- *   '/model a6:glm-5 ' → { stage:'model', provider:'a6', query:'glm-5' }
+ *   '/model a6:openPangu-7B ' → { stage:'model', provider:'a6', query:'openPangu-7B' }
  *   '/model xyz' (unknown provider) → { stage:'provider', query:'xyz' }
  */
 export function argStageFor(

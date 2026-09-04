@@ -1,6 +1,6 @@
-// StructuredReasoner - GLM-5.x 结构化推理协议
+// StructuredReasoner - 结构化推理协议
 // 核心目的：强化模型的工程思维能力（分析、规划、验证、纪律）。
-// - 强力模式（非实用）：高结构、高纪律，适合日常高强度、复杂、关键的编码任务。
+// - 高纪律模式（非实用）：高结构、高纪律，适合日常高强度、复杂、关键的编码任务。
 // - 实用模式：更简洁温和，控制 token，适合常规日常开发。
 // 支持多任务风格（代码、终端、自动化），目的是覆盖真实工作场景，而非功利刷 benchmark。
 // 自我批评保持建设性，避免过度苛责和无谓消耗。
@@ -19,36 +19,36 @@ export interface StructuredReasoningOutput {
   critique?: string;
   risk?: string;
   formatCheck?: string;
-  ironLawCheck?: string;   // 新增：GLM 铁律逐条自检
+  ironLawCheck?: string;   // 新增：工程纪律规则逐条自检
   raw: string;
 }
 
 export class StructuredReasoner {
   /**
-   * GLM-5.x 最高优先级铁律（强力模式 / 工程强模式）
+   * 结构化 最高优先级纪律规则（高纪律模式 / 工程强模式）
    * 目标：既能在 benchmark 里表现出色，也能在真实日常高强度工程工作中可靠使用。
    * 语言上采用“纪律 + 质量保证”而非“违反=直接失败”，避免日常工作中模型过度紧张或 token 浪费。
    */
-  static getGlmIronLawsHeader(): string {
-    return `【GLM-5.x 强力模式工程纪律 - 高质量工作的核心要求】
+  static getEngineeringIronLawsHeader(): string {
+    return `【结构化 高纪律模式工程纪律 - 高质量工作的核心要求】
 1. Read-Before-Write：对任何文件进行 Write 或 Edit 之前，必须先完整 Read 该文件。这是避免幻觉和破坏性修改的基础。
 2. Verify-Before-Claim：只有看到明确的验证通过信号（ALL_TESTS_PASSED、正确返回值、状态确认等），才能声称已修复或问题已解决。
-3. 标准工具调用格式：优先使用 <> 结构化格式，保证可解析、可追溯。这是强力模式的基本纪律。
+3. 标准工具调用格式：优先使用 <> 结构化格式，保证可解析、可追溯。这是高纪律模式的基本纪律。
 4. 零幻觉：只操作你真正读取过或明确存在的文件/函数/状态。
 5. 每一步都要在内心快速检查以上纪律，保持修改过程清晰可验证。
 
-说明：遵守这些纪律能显著提升在复杂工程任务中的成功率和可维护性，同时也有助于在评测中取得更好结果。`;
+说明：遵守这些规则能显著提升在复杂工程任务中的成功率和可维护性，同时也有助于在评测中取得更好结果。`;
   }
 
   /**
-   * 较短的铁律提示（用于状态组合块，避免重复冗长）。
+   * 较短的纪律规则提示（用于状态组合块，避免重复冗长）。
    */
-  static getGlmIronLawsShort(): string {
+  static getEngineeringIronLawsShort(): string {
     return `【工程纪律】Read-Before-Write、Verify-Before-Claim、标准 <> 格式、零幻觉。`;
   }
 
   /**
-   * 组合静态铁律 + 当前实时状态，生成 GLM 模式下每步都应该看到的前置块。
+   * 组合静态纪律规则 + 当前实时状态，生成高纪律模式下每步都应该看到的前置块。
    */
   static buildFullIronLawHeader(status: {
     filesRead: number;
@@ -57,26 +57,26 @@ export class StructuredReasoner {
     verifiedCount: number;
     stepsSinceLastVerification: number;
   }): string {
-    const laws = this.getGlmIronLawsShort();
+    const laws = this.getEngineeringIronLawsShort();
 
     const violations: string[] = [];
     if (status.rbwViolations > 0) violations.push(`Read-Before-Write 违规 ${status.rbwViolations} 次`);
     if (status.stepsSinceLastVerification >= 2) violations.push(`已连续 ${status.stepsSinceLastVerification} 步未真实验证`);
     if (status.filesWritten > status.filesRead) violations.push(`已写(${status.filesWritten}) > 已读(${status.filesRead})`);
 
-    let header = laws + `\n\n【当前铁律状态】已读:${status.filesRead} 已写:${status.filesWritten} 真实验证:${status.verifiedCount} RBW违规:${status.rbwViolations} 距上次验证步:${status.stepsSinceLastVerification}`;
+    let header = laws + `\n\n【当前纪律规则状态】已读:${status.filesRead} 已写:${status.filesWritten} 真实验证:${status.verifiedCount} RBW违规:${status.rbwViolations} 距上次验证步:${status.stepsSinceLastVerification}`;
 
     if (violations.length > 0) {
       header += `\n【严重违规】${violations.join('；')} → 立刻停止写代码，先修复违规。`;
     } else {
-      header += `\n状态正常，继续严格遵守铁律。`;
+      header += `\n状态正常，继续严格遵守纪律规则。`;
     }
 
     return header;
   }
 
   /**
-   * 根据当前轨迹状态生成动态铁律状态块（强力模式下注入）
+   * 根据当前轨迹状态生成动态纪律规则状态块（高纪律模式下注入）
    * 语言风格：工程指导而非惩罚，强调“为了工作可靠性和质量”。
    */
   static buildCurrentIronLawStatus(params: {
@@ -119,8 +119,7 @@ Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsS
    * - practicalMode=false 或 isStrongMode=true: 高结构、高纪律，适合日常高强度工程任务
    * - taskStyle / benchmarkType: 指定当前任务风格（swe / terminal / automation），用于注入特定强调和工具提示。
    *   目的是适配真实工程场景，而非功利刷 benchmark。
-   * - isStrongMode: 推荐的公共旗标，表示强力/高纪律模式（会触发重铁律与格式要求）。
-   * - isStrictGlm: 向下兼容旧称，等同于 isStrongMode 的高纪律行为（内部会合并判断）。
+   * - isStrongMode: 推荐的公共旗标，表示高纪律模式（会触发重纪律规则与格式要求）。
    */
   static buildReasoningPrompt(
     contextSummary: string,
@@ -131,14 +130,12 @@ Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsS
       taskStyle?: string;
       /** 内部兼容旧称，等同于 taskStyle */
       benchmarkType?: BenchmarkType | string;
-      /** 是否处于强力模式（推荐），影响是否注入重铁律 */
+      /** 是否处于高纪律模式（推荐），影响是否注入重纪律规则 */
       isStrongMode?: boolean;
-      /** 向下兼容旧称，等同于 isStrongMode */
-      isStrictGlm?: boolean;
     }
   ): string {
     const practical = options?.practicalMode ?? false;
-    const isStrong = options?.isStrongMode ?? options?.isStrictGlm ?? false;
+    const isStrong = options?.isStrongMode ?? false;
     const taskStyle = options?.taskStyle ?? (options?.benchmarkType as string | undefined);
     const benchmarkType = taskStyle as BenchmarkType | undefined;
 
@@ -146,7 +143,7 @@ Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsS
       ? `\n\n【需要注意的之前问题】:\n${previousCritiques.slice(-3).map((c, i) => `${i + 1}. ${c}`).join('\n')}`
       : '';
 
-    // 获取任务风格专属提示头（会包含强调 + 重点工具 + 必要时的铁律提醒）
+    // 获取任务风格专属提示头（会包含强调 + 重点工具 + 必要时的纪律规则提醒）
     const profile = BenchmarkProfiles.get(taskStyle ?? benchmarkType);
     const benchHeader = BenchmarkProfiles.getPromptHeader(profile, isStrong && profile.defaultStrictIronLaws);
 
@@ -178,7 +175,7 @@ ${failureMemory}
 保持简洁实用，避免冗长。日常任务不需要过度思考。`;
     }
 
-    // 非实用模式（强力模式 / 高纪律路径）：保留更多结构与纪律提示
+    // 非实用模式（高纪律模式 / 高纪律路径）：保留更多结构与纪律提示
     return `${benchHeader}
 你是一个可靠的工程编码助手。请使用以下结构进行思考和行动（可根据任务复杂度适当精简）：
 
@@ -243,7 +240,7 @@ ${failureMemory}
   /**
    * 生成 Critique Prompt（建设性、可控 token 版本）
    * - practicalMode=true: 更温和、更短，聚焦有用改进，适合日常使用
-   * - practicalMode=false: 保留结构化复盘，适合强力模式（高纪律路径）
+   * - practicalMode=false: 保留结构化复盘，适合高纪律模式（高纪律路径）
    * 目标：帮助发现问题和改进方向，而不是严厉指责或无谓的自我苛责。
    */
   static buildCritiquePrompt(
@@ -274,7 +271,7 @@ ${executionResult}${toolInfo}
 保持建设性，避免过度自我否定或长篇描述。`;
     }
 
-    // 非实用模式（强力模式 / 高纪律路径）
+    // 非实用模式（高纪律模式 / 高纪律路径）
     return `请对上一步进行简要、客观的复盘（建议 2-4 点，每点 1 句话左右）。
 
 上一步概要：
@@ -292,12 +289,12 @@ ${executionResult}${toolInfo}
   }
 
   /**
-   * 构建强力模式下的格式建议提示（工程友好版）
+   * 构建高纪律模式下的格式建议提示（工程友好版）
    * 强调：标准格式是高质量、可维护、可追溯工作的基础，同时有助于模型在各种场景（包括评测）中更稳定地被解析。
    * 避免使用“必须100%否则失败”这种在日常工程中容易让模型过度保守或浪费 token 的表述。
    */
-  static buildGlmFormatEnforcementPrompt(): string {
-    return `【强力模式 - 工具调用格式建议（高质量工程实践）】
+  static buildToolCallFormatEnforcementPrompt(): string {
+    return `【高纪律模式 - 工具调用格式建议（高质量工程实践）】
 
 推荐使用以下结构化格式输出工具调用：
 

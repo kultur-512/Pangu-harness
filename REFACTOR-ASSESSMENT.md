@@ -1,6 +1,6 @@
 # 重构评估报告：贴近华为命题《基于 openPangu 的记忆增强智能体架构设计与优化》
 
-> 项目代号：**Panshalach**（现仓库工程代码名曾为 Panshalach / GLM-5.x 血统）
+> 项目代号：**Panshalach**（现仓库工程代码名曾为 Panshalach；早期模型试点已完成向 openPangu 的迁移）
 > 命题企业：华为技术有限公司 · 国产操作系统软件组
 > 命题要点：基于 **openPangu-1B / 7B / 7B-VL** 系列模型，构建具备**长程上下文管理能力**的记忆增强智能体，解决长交互 / 多轮任务 / 长文档 / 持续状态跟踪带来的**中期遗忘**与**上下文断裂**问题；交（1）架构设计文档、（2）效果评估报告（含与无记忆/基线方案对比）。
 > 评估基准日：2026-09-03（Git 仅一次初始化提交，分支 `zhaiyuanhao1`；当前可见统计：62 组 `*.test.ts`）。
@@ -11,7 +11,7 @@
 
 | 命题要求 | 拆成可验收标准 | 现状 |
 |---|---|---|
-| (1) 必须使用 openPangu 系列作为基础模型 | 模型接入层能切到 openPangu（OpenAI 兼容端点或昇腾部署），并跑真实验证 | ❌ 模型层硬编码绑定 GLM/scnet（含 magic shorthand、/model list 特化、铁律 prompt 里 GLM 字样）；❌ 无 openPangu provider 示例与文档 |
+| (1) 必须使用 openPangu 系列作为基础模型 | 模型接入层能切到 openPangu（OpenAI 兼容端点或昇腾部署），并跑真实验证 | ❌ 模型层硬编码绑定早期试点模型/网关（含 magic shorthand、/model list 特化、铁律 prompt 里品牌字样）；❌ 无 openPangu provider 示例与文档 |
 | (2) 选一个有价值的长周期任务场景 | 一个业务场景 + 对应的演示/评测任务集 | 场景候选：软件工程长期维护（跨多轮需求演进 / 跨文件长文档分析 / 持续状态跟踪）；资产天然支持（真实 read/write/bash/glob/grep + 验证铁律） |
 | (3) 长程上下文管理能力 + 合理基线对比 | 显式的记忆/上下文机制 + 可运行的基线对比评测 | 有记忆卡 / 会话资产 / 压缩雏形，但**缺若干关键长程机制**（见 §3），且无任何基线评测工程 |
 | 交付 (1) 架构设计文档 | 分层架构 / 记忆模块设计 / 训练与推理流程 / 资源消耗 / 核心创新点 | 旧文档全为 Panshalach 叙事；需重建 Panshalach 命题文档 |
@@ -38,7 +38,7 @@
 | `src/context/RepoExplorer.ts` | 仓库扫描(ignore node_modules/.git/dist)、按档位深度、`scoreFile` 打分推荐锚点、读锚点内容限 80 行 + `redact`(脱敏 key/token)、`AnchorMemory` 注入(每文件≤6000 chars) | **保留**；补：锚点生命周期版本化 + 跨会话锚点持久化（演进点） |
 | `src/context/ContextManager.ts` | 内存锚点+高重要性历史，预算估算 | **保留**；Chaser 实际用它注入锚点上下文 |
 | `src/cli/repl/PromptBuilder.ts` | 回合 prompt 最终组装：身份 → L0(≤3) → tier XML 约束 → 档位契约 → 负向工具清单 → 项目验证块 → plan-mode → thinking 阶梯 → **L1 记忆卡注入(去重/截 120/来源标签/按档位 3/6/8/10)** → skills → 当前特性 → ENV 增量 → 最近3轮 → 当前任务 → 压缩 → standard/high 探索自动拉取(预算 700) → injection_summary | **保留**；L1 是"长程记忆注入"主通道；演进点：语义检索替换/辅助子串 keyword、`markUsed` 刷新 |
-| `src/reasoning/StructuredReasoner.ts`、`src/benchmarks/BenchmarkProfiles.ts` | 思维链阶梯/铁律头/复盘 prompt；任务风格(swe/terminal/automation) profile | **保留**；去 GLM 措辞泛化为"工程纪律"（见 §4-P4） |
+| `src/reasoning/StructuredReasoner.ts`、`src/benchmarks/BenchmarkProfiles.ts` | 思维链阶梯/铁律头/复盘 prompt；任务风格(swe/terminal/automation) profile | **保留**；去模型品牌措辞泛化为"工程纪律"（见 §4-P4） |
 
 ### 2.3 会话资产（契合度 ★★★★，直接支撑"长程上下文"）
 
@@ -66,9 +66,9 @@
 | `src/model/openai-compatible.ts` | 零依赖 OpenAI 兼容 client（listModels/complete/streamChat）；返回仅 `content`(丢弃原生 tool_calls) | **保留并增强**：返回结构化 `{content, raw, toolCalls, detectedFormat}`；为 openPangu 网关若用原生 OpenAI 工具调用做透传 |
 | `src/model/ProviderRegistry.ts` | 多 provider 通用路由(配置驱动，provider:model 均可)，但 import ScnetClient 实为通用 | **保留**；无脑支持 `openpangu` 作为另一 provider |
 | `src/model/ScnetClient.ts` / `UniversalMaoyulinClient.ts` / `maoyulin-client.cjs` | scnet 特化 factory；maoyulin 历史未接线 | Scnet 保留（作为既有网关）；maoyulin 建议标注 deprecated |
-| `src/cli/repl/ModelProvider.ts` | `PANSHA_MODEL` 注入、SCNET_API_KEY 硬编码、GLM shorthand `_pickBestGLMModel`、bare name→scnet | **去 GLM 独占化**：保留通用 `provider:model` 路由，GLM 变可选别名；新增 openPangu env/key 注入与示例 |
+| `src/cli/repl/ModelProvider.ts` | `PANSHA_MODEL` 注入、SCNET_API_KEY 硬编码、早期试点模型 magic shorthand（已泛化为 `_pickBestProviderModel`）、bare name→scnet 路由（已通用化） | **去模型独占化**：保留通用 `provider:model` 路由（`_pickBestProviderModel`）；新增 openPangu env/key 注入与示例 |
 | `src/cli/repl/commands/ModelCommand.ts` | `/model` 深层 scnet 特化(直读 scnet cfg/baseUrl/提示) | `/model list` 改 provider 无关读取(遍历 providers 各调 `/models`)；提示文案不再"只教你配 scnet" |
-| `src/adapter/*`（ExtremeGlmToolCallAdapter / UniversalToolCallAdapter / GlmToolCallParser / ToolCallFormatDetector / universal-tool-parser.cjs） | GLM `<>` 严格解析、OpenAI JSON tool_calls、松散文本三路解析 + 探测与容错 | **保留为自适应解析链**；这正是"多模型可移植"的关键——openPangu 若输出 JSON tool_calls 已被探测器(confidence .95)覆盖，若输出文本协议走 loose 容错；`<>` 严格路径仅"对支持该格式的高档位模型"开启 |
+| `src/adapter/*`（StrictStructuredToolAdapter / UniversalToolCallAdapter / XmlStructuredToolParser / ToolCallFormatDetector / universal-tool-parser.cjs；早期版本以旧类名存在，已完成重命名） | 结构化 `<>` 严格解析、OpenAI JSON tool_calls、松散文本三路解析 + 探测与容错 | **保留为自适应解析链**；这正是"多模型可移植"的关键——openPangu 若输出 JSON tool_calls 已被探测器(confidence .95)覆盖，若输出文本协议走 loose 容错；`<>` 严格路径仅"对支持该格式的高档位模型"开启 |
 
 ---
 
@@ -92,12 +92,12 @@
 ### 3.4 无滚动多级摘要
 - 压缩 = 一次 model 摘要 + 保留最近6轮（合成一卡），非"多级滚动（粗→细）"。命题中点名"上下文压缩"；目前策略已可用，演进为层级摘要(长期粗粒度 + 中期结构化 + 短期逐字)会更贴"长程"。
 
-### 3.5 模型层 GLM/scnet 绑定（阻碍 openPangu 验证）
-- 绑定清单：`ModelProvider` 的 GLM shorthand 与 `_pickBestGLMModel`、`getModelContextLength` 只查 scnet、bare-name→scnet 路由、`ModelCommand` 全 scnet 特化文案与直读、`SCNET_API_KEY` env 注入、`StructuredReasoner`/`VerifyCritiqueLoop`/`RepoExplorer` 内 `GLM-5.x` 措辞与 `buildGlmFormatEnforcementPrompt`、adapter 名 Glm/ExtremeGlm、高强度 `strictGlmOnly` 路径、提示中"标准 `<>` 工具调用格式"铁律。
-- 影响：不改造则 openPangu 即便以 provider 接入，"用户可见/模型可见"仍是 GLM 血统，无法宣称"基于 openPangu 验证"。
+### 3.5 模型层早期试点绑定（阻碍 openPangu 验证）
+- 绑定清单：`ModelProvider` 的试点模型 shorthand 与旧选模方法（现已泛化为 `_pickBestProviderModel`）、`getModelContextLength` 只查 scnet、bare-name→scnet 路由、`ModelCommand` 全 scnet 特化文案与直读、`SCNET_API_KEY` env 注入、`StructuredReasoner`/`VerifyCritiqueLoop`/`RepoExplorer` 内旧品牌措辞与旧格式强化方法（现已改名 `buildToolCallFormatEnforcementPrompt`）、旧 adapter 名（现已重命名）、高强度严格解析路径（现为 `strictStructured`）、提示中"标准 `<>` 工具调用格式"纪律。
+- 影响：不改造则 openPangu 即便以 provider 接入，"用户可见/模型可见"仍是试点模型血统，无法宣称"基于 openPangu 验证"。
 
-### 3.6 品牌/文档全是 Panshalach 叙事（阻碍命题交付物）
-- 大量 src 注释、README、docs 均是 Panshalach / GLM-5.3 / 30-rounds 复盘。需重建 Panshalach 命题文档并物理清理（本次已执行）。
+### 3.6 品牌/文档全是试点模型叙事（阻碍命题交付物）
+- 大量 src 注释、README、docs 均是早期试点模型 / 30-rounds 复盘。需重建 Panshalach 命题文档并物理清理（本次已执行）。
 
 ---
 
@@ -119,10 +119,10 @@
   }
   ```
   运行 `panshalach` 后 `/model list` 或 `PANSHA_MODEL=openpangu:openPangu-7B`（见下文存储名迁移前兼容名）。
-- `ModelProvider`：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；去掉"bare name 必走 scnet"与"GLM magic shorthand"的独占假设（保留为可选别名，不阻断通用 `provider:model`）。
+- `ModelProvider`：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；去掉"bare name 必走 scnet"与试点模型 magic shorthand 的独占假设（保留为可选别名，不阻断通用 `provider:model`）。
 - `ModelCommand`：`/model list` 改为遍历所有已配置 provider，逐个 `listProviderModelsWithContext`；缺省 fallback 优先非 scnet 的第一可用 provider。
-- `openai-compatible.complete`：解析 `message.tool_calls` 并返回 `ModelClientOutput`（Keep GLM 文本格式探测作为后备）。`VerifyCritiqueLoop` 已能消费对象输出（`preParsedToolCalls`）。
-- GLM 措辞泛化：`StructuredReasoner` 的"GLM-5.x 工程纪律"头改为"工程纪律"（Read-Before-Write / Verify-Before-Claim / 标准格式 / 零幻觉不变）；adapter 保留 Glm/Extreme 作为**严格 XML 解析器**但不再由品牌强制绑定（`strictGlmOnly` → 由 tier + 模型能力联合决定）。
+- `openai-compatible.complete`：解析 `message.tool_calls` 并返回 `ModelClientOutput`（Keep 试点模型文本格式探测作为后备）。`VerifyCritiqueLoop` 已能消费对象输出（`preParsedToolCalls`）。
+- 措辞泛化：`StructuredReasoner` 的工程纪律头（Read-Before-Write / Verify-Before-Claim / 标准格式 / 零幻觉不变）不绑定任何模型品牌；adapter 作为**严格 XML 解析器**由 tier + 模型能力联合决定（`strictStructured`）。
 
 ### P2 — 记忆写入闭环 + markUsed（本次缺口修复核心）
 - 在任务落定点调用 `RefinedMemoryStore` 提炼写盘：
@@ -139,7 +139,7 @@
 - 这三点共同形成评估报告的"全能力（事件+状态+检索）"档位。
 
 ### P4 — openPangu 小模型适配（推理行为）
-- openPangu-1B/7B 在长格式遵循/深推理弱于 GLM-5 系 → 采取"外化状态 + 结构化记忆 + 低成本可验证动作"：
+- openPangu-1B/7B 在长格式遵循/深推理上的短板 → 采取"外化状态 + 结构化记忆 + 低成本可验证动作"：
   - 加大记忆卡/事件/任务状态注入的结构化程度，减少对模型记忆窗口的依赖（把关键事实放到 prompt 而不是"指望模型记住"）。
   - 工具调用协议自适应：优先探测 OpenAI JSON tool_calls（openPangu 网关常见）；文本协议 loose 兜底；`<>` 严格格式只对明确声明支持的模型在高档位开。
   - Critique/验证频度按模型能力调低初始值并看门狗化，避免小模型长格式爆token。
@@ -151,7 +151,7 @@
 
 ### P6 — 存储名/env 全量迁移（品牌收尾，可与 P1 并行或之后）
 - `.panshalach.json`→`.panshalach.json`、`.panshalach-memory.json`→`.panshalach-memory.json`、`~/.panshalach`→`~/.panshalach`、`PANSHA_*`→`PANG_*`；一次性迁移脚本(读旧写新 + 移动 sessions/rollouts/file-history/skills)。
-- `PanshalachChaser.ts`→`Panshalach.ts`、`cli.ts` bin 文案、`src/cli/repl/commands/*` 文案扫尾；`Glm53SweProChaser`/`Panshalach` bin 作为 deprecated alias 保留一版期。
+- `PanshalachChaser.ts`→`Panshalach.ts`、`cli.ts` bin 文案、`src/cli/repl/commands/*` 文案扫尾；旧类兼容层已删除。
 
 ---
 
@@ -184,8 +184,8 @@
 ## 7. 本次重构执行边界回顾（已完成部分）
 
 - **A** 本评估报告。
-- **B** 物理删除 docs/ 下全部 Panshalach/GLM/30-rounds 旧文档与 docs/agents、.agents 过时流程元数据（保留 CHANGELOG.md/examples/scripts）。
+- **B** 物理删除 docs/ 下全部试点模型/30-rounds 旧文档与 docs/agents、.agents 过时流程元数据（保留 CHANGELOG.md/examples/scripts）。
 - **C** 新写 `docs/panshalach/` 命题文档集（README 目录页 / ARCHITECTURE / MEMORY-DESIGN / EVALUATION / USER-GUIDE / ROADMAP），根 README 重写为 Panshalach 版。
-- **D** 源码**可见层**改名 Panshalach（package/bin、欢迎语与提示符、模型身份串、server 文案、memory 管理器标题、tier 描述、/init 文档指针），**保留**内部存储名/类名/GLM adapter（P1/P6 排期）。
+- **D** 源码**可见层**改名 Panshalach（package/bin、欢迎语与提示符、模型身份串、server 文案、memory 管理器标题、tier 描述、/init 文档指针），**保留**内部存储名/类名/早期试点模型 adapter（P1/P6 排期）。
 
-> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*` 环境变量、`PanshalachChaser` 类、`Glm53SweProChaser` alias、`pangu` bin 均为**内部存储/旧兼容名**，不影响对外品牌 Panshalach；迁移见 `docs/panshalach/ROADMAP.md` P6。
+> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*` 环境变量、`PanshalachChaser` 类、旧类兼容层（已删除）、`pangu` bin 均为**内部存储/旧兼容名**，不影响对外品牌 Panshalach；迁移见 `docs/panshalach/ROADMAP.md` P6。

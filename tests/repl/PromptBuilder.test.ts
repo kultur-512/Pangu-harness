@@ -23,7 +23,7 @@ describe('PromptBuilder', () => {
     const prompt = await pb.buildForTask('refactor login');
 
     assert.ok(prompt.includes('当前档位: high'));
-    assert.ok(prompt.includes('铁律强度'));
+    assert.ok(prompt.includes('纪律规则强度'));
     assert.ok(prompt.includes('最近上下文'));
     assert.ok(prompt.includes('fix add function'));
     assert.ok(prompt.includes('当前任务'));
@@ -70,7 +70,7 @@ describe('PromptBuilder', () => {
 
     const header = pb.buildSystemHeader();
     assert.ok(header.includes('档位 max'));
-    assert.ok(header.includes('铁律强度'));
+    assert.ok(header.includes('纪律规则强度'));
   });
 });
 

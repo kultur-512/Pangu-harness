@@ -179,4 +179,4 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ## 7. 下一步（按 ROADMAP.md）
 
-P1 openPangu 泛化接入（provider/环境变量//model list 去 GLM 特化）→ P2 记忆写闭环+markUsed → P3 事件记忆+任务状态机+语义检索 v0 → P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移 Panshalach 名。真机评估数据持续回填本文档与 EVALUATION.md。
+P1 openPangu 泛化接入（provider/环境变量//model list 去模型特化）→ P2 记忆写闭环+markUsed → P3 事件记忆+任务状态机+语义检索 v0 → P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移 Panshalach 名。真机评估数据持续回填本文档与 EVALUATION.md。

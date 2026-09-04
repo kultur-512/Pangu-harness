@@ -15,8 +15,8 @@ import {
 import { PANSHA_COMMANDS } from '../../src/cli/repl/SlashPicker.js';
 
 const PROVIDERS = [
-  { name: 'scnet', models: ['GLM-5.1', 'GLM-5.2', 'deepseek-v4'] },
-  { name: 'a6', models: ['glm-5.3-flash', 'gpt-5.6-luna'] },
+  { name: 'scnet', models: ['openPangu-7B', 'openPangu-1B', 'deepseek-v4'] },
+  { name: 'a6', models: ['openPangu-7B-flash', 'gpt-5.6-luna'] },
 ];
 
 const CTX = { providers: PROVIDERS, files: ['src/a.ts', 'src/deep/b.ts', 'docs/readme.md'] };
@@ -39,14 +39,14 @@ describe('generateSuggestions', () => {
 
     const models = generateSuggestions('/model scnet ', 13, CTX);
     assert.ok(models.every((x) => x.type === 'model'));
-    assert.ok(models.some((x) => x.displayText === 'GLM-5.1'));
+    assert.ok(models.some((x) => x.displayText === 'openPangu-7B'));
     assert.ok(models[0].replacement.startsWith('/model scnet:'), 'model replacement is provider:model');
   });
 
   it('/model a6: → model suggestions for a6 with query', () => {
-    const s = generateSuggestions('/model a6:glm', 13, CTX);
+    const s = generateSuggestions('/model a6:openPangu', 13, CTX);
     assert.ok(s.every((x) => x.type === 'model' && x.metadata?.provider === 'a6'));
-    assert.ok(s.some((x) => x.displayText === 'glm-5.3-flash'));
+    assert.ok(s.some((x) => x.displayText === 'openPangu-7B-flash'));
   });
 
   it('@ or path → file/directory suggestions from injected list', () => {

@@ -13,7 +13,7 @@ function fakeTraj(id: string, score: number, tokens = 100): Trajectory {
     score,
     estimatedUsedTokens: tokens,
     steps: [],
-    isGlmTarget: false,
+    isStrongTarget: false,
   } as any;
 }
 

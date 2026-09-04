@@ -53,12 +53,12 @@ export function renderConfirmationPanel(input: ConfirmationInput): string {
   }
   lines.push('');
   lines.push('──── 主要风险 ────');
-  lines.push(`  铁律强度:     ${tierConfig.ironLawInjectionLevel}（${tierConfig.verifyFirstBias ? '高验证优先' : '轻量验证'}）`);
+  lines.push(`  纪律规则强度:     ${tierConfig.ironLawInjectionLevel}（${tierConfig.verifyFirstBias ? '高验证优先' : '轻量验证'}）`);
   lines.push(`  探索深度:     ${tierConfig.explorationDepth}（${tierConfig.explorationDepth > 5 ? '激进' : '保守'}）`);
   lines.push(`  并行 rollout: ${tierConfig.parallelRollouts}`);
   lines.push(`  锚点上限:     ${tierConfig.anchorMax}`);
   if (tierConfig.isStrongMode) {
-    lines.push('  强力模式:     启用（高纪律工程模式）');
+    lines.push('  高纪律模式:     启用（高纪律工程模式）');
   }
   if (failureMemory) {
     const cardCount = (failureMemory as any).getCardCount ? (failureMemory as any).getCardCount() : '未知';

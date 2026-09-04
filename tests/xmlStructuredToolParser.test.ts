@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { GlmToolCallParser } from '../src/adapter/GlmToolCallParser.js';
+import { XmlStructuredToolParser } from '../src/adapter/XmlStructuredToolParser.js';
 
-describe('GlmToolCallParser', () => {
-  const parser = new GlmToolCallParser();
+describe('XmlStructuredToolParser', () => {
+  const parser = new XmlStructuredToolParser();
 
   it('parses the exact user-provided sample', () => {
     const input = `

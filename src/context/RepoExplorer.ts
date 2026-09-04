@@ -1,7 +1,7 @@
-// RepoExplorer + Anchor Memory (GLM-5.x Strong Engineering Agent)
-// 针对 GLM 长上下文优势进行激进探索和锚点选择
-// 目标：让 GLM 能“记住”整个仓库的关键结构，最大化 pre-exploration 收益
-// 在强力模式下探索更深、锚点更多，以支撑高强度工程任务。
+// RepoExplorer + Anchor Memory (Panshalach Memory-Augmented Agent)
+// 针对长上下文优势进行激进探索和锚点选择
+// 目标：让模型能“记住”整个仓库的关键结构，最大化 pre-exploration 收益
+// 在高强度档位下探索更深、锚点更多，以支撑长程工程任务。
 
 import { readdirSync, statSync, existsSync, readFileSync } from 'fs';
 import { join, extname, basename, relative } from 'path';
@@ -23,16 +23,16 @@ export interface AnchorFile {
 
 export class RepoExplorer {
   /**
-   * GLM 强化版探索：
+   * 长程强化版探索：
    * - 递归扫描（深度优先但带深度限制）
    * - 更激进的重要性打分
-   * - 优先保留对 GLM 有帮助的“锚点”文件
+   * - 优先保留对模型有帮助的"锚点"文件
    * - 特别照顾测试、入口、配置、核心逻辑
    */
   static async explore(workspaceRoot: string, options: {
     maxDepth?: number;
     maxFiles?: number;
-    glmBias?: boolean;   // GLM 模式下更激进保留锚点
+    anchorBias?: boolean;   // 高强度档更激进保留锚点
     tier?: string;       // 六档体系：根据档位调整策略
     taskStyle?: string;  // 任务风格：swe | terminal | automation
   } = {}): Promise<{
@@ -44,7 +44,7 @@ export class RepoExplorer {
     const {
       maxDepth = 6,
       maxFiles = 200,
-      glmBias = true,
+      anchorBias = true,
       tier = 'standard',
       taskStyle = 'swe',
     } = options;
@@ -106,7 +106,7 @@ export class RepoExplorer {
       const base = basename(filePath).toLowerCase();
       let score = 20;
 
-      // 测试相关（GLM 验证非常依赖）
+      // 测试相关（验证非常依赖）
       if (lower.includes('test') || lower.includes('spec') || lower.includes('__tests__')) score = 98;
       if (base.startsWith('test') || base.includes('.test.') || base.includes('.spec.')) score = 97;
 
@@ -132,13 +132,13 @@ export class RepoExplorer {
       const ext = extname(filePath);
       if (importantExtensions.has(ext)) score += 8;
 
-      // 文件大小适中加分（太大的文件 GLM 可能记不住）
+      // 文件大小适中加分（太大的文件模型可能记不住）
       const size = content.length;
       if (size > 200 && size < 8000) score += 6;
       if (size > 15000) score -= 10; // 过大文件降权
 
-      // GLM 偏置：额外奖励可能被反复读写的文件
-      if (glmBias) {
+      // anchor 偏置：额外奖励可能被反复读写的文件
+      if (anchorBias) {
         if (lower.includes('src') && !lower.includes('node_modules')) score += 5;
         if (lower.includes('lib')) score += 4;
       }
@@ -201,8 +201,8 @@ export class RepoExplorer {
 
     walk(workspaceRoot, 0);
 
-    // GLM 模式下强制多保留几个关键锚点
-    if (glmBias && recommended.length < 6) {
+    // anchor 模式下强制多保留几个关键锚点
+    if (anchorBias && recommended.length < 6) {
       const mustHave = ['package.json', 'src', 'tsconfig.json', 'README.md'];
       for (const m of mustHave) {
         if (!recommended.includes(m) && existsSync(join(workspaceRoot, m))) {
@@ -224,7 +224,7 @@ export class RepoExplorer {
         case 'max': return 10;
         case 'ex': return 12;
         case 'pangu': return 15;
-        default: return glmBias ? 12 : 8;
+        default: return anchorBias ? 12 : 8;
       }
     })();
 

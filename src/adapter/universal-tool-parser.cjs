@@ -1,7 +1,7 @@
 // src/adapter/universal-tool-parser.cjs
 // Universal Tool Call Parser
 // Supports:
-// 1. GLM-5.x style: <> <ToolName> <param>value</param> </ToolName> </>
+// 1. XML structured style: <> <ToolName> <param>value</param> </ToolName> </>
 // 2. Standard OpenAI: tool_calls array with function.name + arguments JSON
 
 function parseUniversalToolCalls(rawResponse) {
@@ -37,7 +37,7 @@ function parseUniversalToolCalls(rawResponse) {
     // ignore
   }
 
-  // === Strategy 2: GLM <> style (our current main target) ===
+  // === Strategy 2: XML structured <> style (our current main target) ===
   const ROOT_OPEN = '<>';
   const ROOT_CLOSE = '</>';
   let search = rawResponse;
@@ -80,12 +80,12 @@ function parseUniversalToolCalls(rawResponse) {
     calls.push({
       toolName,
       params,
-      format: 'glm-xml'
+      format: 'xml-strict'
     });
   }
 
   // Strategy 2 did not produce results. Try loose plain-text style.
-  // Strategy 3: Loose plain-text GLM style seen on some relays (e.g. Maoyulin)
+  // Strategy 3: Loose plain-text style seen on some relays
   // Observed examples:
   //   Read(file_path="C:\\...\\calculator.js")
   //   Write(file_path="src/calculator.js", content="export function add...")
@@ -116,7 +116,7 @@ function parseUniversalToolCalls(rawResponse) {
         calls.push({
           toolName,
           params,
-          format: 'glm-loose-plain'
+          format: 'loose-plain'
         });
       }
     }

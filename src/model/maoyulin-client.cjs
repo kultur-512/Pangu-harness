@@ -1,15 +1,15 @@
 // src/model/maoyulin-client.cjs
-// Real client for Maoyulin GLM relay (OpenAI-compatible)
-// For GLM-5.2 / GLM series via https://api.maoyulin.xyz
+// Real client for Maoyulin relay (OpenAI-compatible)
+// For OpenAI-compatible models via https://api.maoyulin.xyz
 
 const https = require('node:https');
 const { URL } = require('node:url');
 
 const DEFAULT_BASE_URL = 'https://api.maoyulin.xyz';
-const DEFAULT_MODEL = 'glm-5.2';   // user specifically mentioned glm-5.2
+const DEFAULT_MODEL = 'openPangu-7B';
 
 /**
- * Creates a model client compatible with PanshalachChaser (and legacy Glm53SweProChaser alias)
+ * Creates a model client compatible with PanshalachChaser
  * @param {Object} options
  * @param {string} options.apiKey
  * @param {string} [options.baseUrl]

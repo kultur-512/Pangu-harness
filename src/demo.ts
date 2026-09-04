@@ -1,7 +1,7 @@
 // demo.ts
-// Simple demo for the GLM tool call parser (not the full Panshalach agent).
+// Simple demo for the structured XML tool-call parser (not the full Panshalach agent).
 // Historical utility; prefer CLI or tests for real usage.
-import { GlmToolCallParser } from './adapter/GlmToolCallParser.js';
+import { XmlStructuredToolParser } from './adapter/XmlStructuredToolParser.js';
 
 const SAMPLE = `
 我来帮你查看一下目录结构。
@@ -15,7 +15,7 @@ const SAMPLE = `
 如果目录不存在，我会尝试创建。
 `;
 
-const parser = new GlmToolCallParser();
+const parser = new XmlStructuredToolParser();
 const result = parser.parse(SAMPLE);
 
 console.log('=== Parse Result ===');

@@ -25,18 +25,18 @@ describe('ProviderRegistry', () => {
           type: 'openai-compatible',
           baseUrl: 'https://example.com/v1',
           apiKey: 'sk-xxx',
-          models: ['glm-4-plus', 'glm-4-long'],
-          modelContexts: { 'glm-4-plus': 128000 },
+          models: ['openPangu-7B', 'openPangu-1B'],
+          modelContexts: { 'openPangu-7B': 128000 },
         },
       },
     });
 
     const models = await reg.listModels('scnet');
-    assert.deepEqual(models, ['glm-4-plus', 'glm-4-long']);
+    assert.deepEqual(models, ['openPangu-7B', 'openPangu-1B']);
 
     const withCtx = await reg.listModelsWithContext('scnet');
     assert.ok(withCtx);
-    assert.equal(withCtx![0].id, 'glm-4-plus');
+    assert.equal(withCtx![0].id, 'openPangu-7B');
     assert.equal(withCtx![0].contextLength, 128000);
     assert.equal(withCtx![1].contextLength, 256000); // default
   });

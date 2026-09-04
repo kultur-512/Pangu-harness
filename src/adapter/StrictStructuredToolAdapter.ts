@@ -1,5 +1,5 @@
-// GLM-5.3 Extreme Tool Call Adapter (30-Round Polished Version)
-// Production-grade, high-rigor/strict-format hardened tool call parser for GLM-5.x strong mode.
+// Strict Structured Tool Call Adapter
+// Production-grade strict-format tool call parser.
 // In strong mode we heavily favor and validate the strict <> XML format while still tolerating some variance for resilience.
 
 import { ToolCall, ToolCallParam, ParseResult, ParseOptions, inferToolCategory } from '../types/toolCall.js';
@@ -24,17 +24,17 @@ export interface StreamParseState {
   diagnostics: ParseDiagnostics;
 }
 
-export class ExtremeGlmToolCallAdapter {
+export class StrictStructuredToolAdapter {
   /**
    * Known root/outer variants we may see from various relays.
    * Used only for diagnostics (not for branching behavior).
    */
   static readonly KNOWN_VARIANTS: string[] = ['<>', '</>', '<tool>', '<tool_call>', 'invoke tool'];
   /**
-   * GLM-5.x specific recovery for common malformed outputs.
-   * This is critical for high success rate on GLM without punishing the model too hard.
+   * Structured-format specific recovery for common malformed outputs.
+   * This is critical for high success rate on structured models without punishing the model too hard.
    */
-  private tryGlmSpecificRecovery(content: string, options: ParseOptions, warnings: string[]): ToolCall[] {
+  private tryStructuredRecovery(content: string, options: ParseOptions, warnings: string[]): ToolCall[] {
     const calls: ToolCall[] = [];
     if (!content) return calls;
 
@@ -66,7 +66,7 @@ export class ExtremeGlmToolCallAdapter {
 
     if (calls.length > 0) return calls;
 
-    // Recovery 2: "invoke tool" style that GLM sometimes emits
+    // Recovery 2: "invoke tool" style that structured models sometimes emit
     const invokeMatch = /invoke\s+tool\s+([A-Za-z_][A-Za-z0-9_-]+)\s+with([\s\S]*?)(?=\n\n|invoke tool|$)/i.exec(content);
     if (invokeMatch) {
       const toolName = invokeMatch[1];
@@ -110,7 +110,7 @@ export class ExtremeGlmToolCallAdapter {
 
   /**
    * Full response parse (non-streaming)
-   * In strict mode (default for GLM strong/high-rigor path), we are very strict about <> format.
+   * In strict mode (default for structured strong/high-rigor path), we are very strict about <> format.
    * 整个 parse 被 try/catch 保护，任何解析异常都不会杀死 rollout。
    */
   parse(content: string, options: ParseOptions = {}): ParseResult {
@@ -138,14 +138,14 @@ export class ExtremeGlmToolCallAdapter {
 
     const trimmed = content.trim();
 
-    // Fast path: if no root at all, try GLM-specific recovery before giving up
+    // Fast path: if no root at all, try structured-format recovery before giving up
     if (!trimmed.includes(ROOT_OPEN)) {
-      const recovered = this.tryGlmSpecificRecovery(trimmed, options, warnings);
+      const recovered = this.tryStructuredRecovery(trimmed, options, warnings);
       if (recovered.length > 0) {
         return {
           toolCalls: recovered,
           remainingText: '',
-          warnings: [...warnings, 'RECOVERED_VIA_GLM_HEURISTICS'],
+          warnings: [...warnings, 'RECOVERED_VIA_STRUCTURED_HEURISTICS'],
         };
       }
       return {
@@ -156,7 +156,7 @@ export class ExtremeGlmToolCallAdapter {
     }
 
     // Detect possible variant usage for diagnostics
-    for (const v of ExtremeGlmToolCallAdapter.KNOWN_VARIANTS) {
+    for (const v of StrictStructuredToolAdapter.KNOWN_VARIANTS) {
       if (trimmed.includes(v) && v !== '<>') variantsDetected.push(v);
     }
 
@@ -181,7 +181,7 @@ export class ExtremeGlmToolCallAdapter {
 
     // If we found root but zero successful parses, try aggressive recovery
     if (toolCalls.length === 0 && trimmed.includes(ROOT_OPEN)) {
-      const recovered = this.tryGlmSpecificRecovery(trimmed, options, warnings);
+      const recovered = this.tryStructuredRecovery(trimmed, options, warnings);
       if (recovered.length > 0) {
         toolCalls.push(...recovered);
         warnings.push('RECOVERED_AFTER_ROOT_DETECTION');
@@ -288,7 +288,7 @@ export class ExtremeGlmToolCallAdapter {
 
     if (!toolNameMatch) {
       warnings.push('NO_TOOL_NAME_TAG');
-      if (options.strict) throw new Error('Invalid GLM tool call: no tool name tag found');
+      if (options.strict) throw new Error('Invalid structured tool call: no tool name tag found');
       return null;
     }
 
@@ -317,7 +317,7 @@ export class ExtremeGlmToolCallAdapter {
 
     if (params.length === 0 && body.length > 0) {
       warnings.push(`NO_NAMED_PARAMS:${toolName}`);
-      // As a last resort for some GLM outputs, treat entire body as "content"
+      // As a last resort for some structured-model outputs, treat entire body as "content"
       if (options.strict !== true) {
         params.push({ name: 'content', value: body.trim() });
       }
@@ -343,8 +343,8 @@ export class ExtremeGlmToolCallAdapter {
   }
 
   /**
-   * Generate high-quality repair hint specifically tuned for GLM-5.x failure modes.
-   * This is one of the most important pieces for maintaining high success rate on GLM.
+   * Generate high-quality repair hint specifically tuned for structured-format failure modes.
+   * This is one of the most important pieces for maintaining high success rate on structured models.
    */
   generateRepairHint(warnings: string[], lastRawOutput: string): string {
     const hints: string[] = [];
@@ -358,7 +358,7 @@ export class ExtremeGlmToolCallAdapter {
 
     if (hasNoTool || lastRawOutput.includes('<>') === false) {
       hints.push(
-        '必须严格使用 GLM-5.x 标准格式（最重要）：\n' +
+        '必须严格使用标准结构化格式（最重要）：\n' +
         '<>\n' +
         '  <ToolName>\n' +
         '    <file_path>src/xxx.js</file_path>\n' +
@@ -380,7 +380,7 @@ export class ExtremeGlmToolCallAdapter {
       );
     }
 
-    // Special case: model output raw tags instead of values (very common GLM bug)
+    // Special case: model output raw tags instead of values (very common structured-format bug)
     if (lastRawOutput.includes('<file_path>') && lastRawOutput.includes('</file_path>') &&
         !lastRawOutput.match(/<file_path>[^<]+<\/file_path>/)) {
       hints.push('参数值要直接写在标签之间，不要再嵌套标签。例如 <file_path>src/calculator.js</file_path>');
@@ -391,11 +391,11 @@ export class ExtremeGlmToolCallAdapter {
     }
 
     if (hints.length === 0) {
-      hints.push('请严格按照 GLM-5.x 的 <> 格式输出工具调用，不要添加多余解释。');
+      hints.push('请严格按照结构化 <> 格式输出工具调用，不要添加多余解释。');
     }
 
     return [
-      '【GLM-5.x 格式错误修复指令】',
+      '【格式错误修复指令】',
       ...hints,
       '只输出正确的工具调用块，不要解释。'
     ].join('\n');

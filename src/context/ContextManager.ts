@@ -1,5 +1,5 @@
 // 1M Context + Anchor Manager (30-Round Extreme Polished)
-// Designed for maximum signal retention under large context windows (GLM-5.3 1M advantage)
+// Designed for maximum signal retention under large context windows (long-context advantage)
 
 export interface AnchorEntry {
   path: string;

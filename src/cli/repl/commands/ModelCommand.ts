@@ -9,9 +9,9 @@ let lastScnetListError: string | null = null;
 
 const command: Command = {
   name: 'model',
-  description: '查看或切换模型；/model list 拉取远程模型列表；/model glm 直连 scnet 最佳 GLM 模型',
+  description: '查看或切换模型；/model list 拉取远程模型列表',
   category: 'state',
-  usage: '/model [name|list]   例如: /model list 或 /model glm 或 /model GLM-5.1 或 /model scnet:GLM-5',
+  usage: '/model [name|list]   例如: /model list 或 /model openPangu-7B 或 /model scnet:<模型名>',
   async execute(ctx: CommandContext, args: string[]): Promise<CommandResult> {
     const provider: ModelProvider | undefined = ctx.provider || ctx.session.provider;
 
@@ -100,7 +100,7 @@ const command: Command = {
         }
       }
 
-      // Force into the running provider so createClient("glm") etc. works immediately
+      // Force into the running provider so createClient("scnet") etc. works immediately
       if (scnetCfg?.apiKey) {
         try {
           const active = ctx.provider || ctx.session.provider;
@@ -223,7 +223,7 @@ const command: Command = {
             ctx.renderer.writeLine('       /exit');
             ctx.renderer.writeLine('       npm run build');
             ctx.renderer.writeLine('       # 然后启动 pangu');
-            ctx.renderer.writeLine('  3. 启动后直接： /model list   和   /model glm');
+            ctx.renderer.writeLine('  3. 启动后直接： /model list 拉取模型，然后 /model scnet:<模型名> 或 /model <模型名> 切换');
             ctx.renderer.writeLine('');
             ctx.renderer.writeLine('或者临时用环境变量快速验证：');
             ctx.renderer.writeLine('       $env:SCNET_API_KEY="sk-tp-你的密钥"; pangu');
@@ -235,7 +235,7 @@ const command: Command = {
             }
             if (lastErr) ctx.renderer.writeLine('最后错误: ' + lastErr);
             ctx.renderer.writeLine('可能原因：网络、密钥对应的计划不支持列模型、接口返回空、或需要特定请求头。');
-            ctx.renderer.writeLine('即使列表失败，你仍然可以尝试： /model glm  （会尝试使用已知的 GLM-5.1）。');
+            ctx.renderer.writeLine('即使列表失败，你也可以尝试： /model scnet:<模型名>  （使用配置里 /models 返回的具体模型名）。');
           }
         } else {
           ctx.renderer.warn(`未能从 "${targetProvider}" 拉取到模型列表。`);
@@ -279,7 +279,7 @@ const command: Command = {
           for (const m of listed) map[m.id] = m.contextLength || 256000;
           (active as any).adoptRemoteModels(targetProvider, listed.map(m => m.id), map);
         }
-        ctx.renderer.info('已载入当前会话，可直接使用 /model <模型名>（例如 /model glm）。');
+        ctx.renderer.info('已载入当前会话，可直接使用 /model <模型名>（例如 /model openPangu-7B）。');
       } catch {}
 
       return {};
@@ -289,8 +289,7 @@ const command: Command = {
     let name = sub;
 
     // Normalize "scnet:xxx" → bare name.
-    // Special: bare "glm" / "glm5" is the magic shorthand for "best working GLM on scnet".
-    // Explicit GLM names like "GLM-5.1", "GLM-5" are passed through as-is.
+    // Explicit model names like "openPangu-7B" are passed through as-is.
     if (name.startsWith('scnet:')) {
       name = name.slice(6);
     }
@@ -302,14 +301,13 @@ const command: Command = {
       if (!okDirect && !okScnet) {
         const avail = (provider.listModels?.() || []).join(', ');
 
-        // Special helpful message for the "glm" magic shorthand
-        const lower = name.toLowerCase();
-        const isGlmShorthand = (lower === 'glm' || lower === 'glm5');
-        // For the special glm case we always talk about scnet as the backend
-        if (isGlmShorthand) {
-          ctx.renderer.warn(`模型 "glm" 不可用（尚未配置 scnet 供应商）。`);
+        // Special helpful message when switching to the bare scnet provider name
+        const isScnetEntry = (name === 'scnet');
+        // For the scnet entry we always talk about scnet as the backend
+        if (isScnetEntry) {
+          ctx.renderer.warn(`模型 "scnet" 不可用（尚未配置 scnet 供应商）。`);
           ctx.renderer.writeLine('');
-          ctx.renderer.writeLine('要使用 /model glm 直连 scnet 的 GLM 模型，请先配置密钥：');
+          ctx.renderer.writeLine('要使用 /model scnet 直连 scnet 的模型，请先配置密钥：');
           ctx.renderer.writeLine('');
           ctx.renderer.writeLine('方法一（推荐，立即生效，下次启动自动读取）：');
           ctx.renderer.writeLine('  在当前目录创建 .panshalach.json，内容例如：');
@@ -327,7 +325,7 @@ const command: Command = {
           ctx.renderer.writeLine('  $env:SCNET_API_KEY="sk-tp-你的密钥"');
           ctx.renderer.writeLine('  然后重新启动 pangu');
           ctx.renderer.writeLine('');
-          ctx.renderer.writeLine('配置好后直接输入 /model glm 即可（会自动热加载最新配置）。');
+          ctx.renderer.writeLine('配置好后先 /model list 拉取模型列表，再 /model scnet:<模型名> 切换（会自动热加载最新配置）。');
           return {};
         }
 
@@ -338,7 +336,7 @@ const command: Command = {
 
     ctx.session.updateModel(name);
 
-    // If this was a GLM shorthand, resolve the effective model for better UX
+    // Resolve the effective model for better UX (e.g. provider-prefixed or bare-provider names)
     let displayName = name;
     try {
       const active = ctx.provider || ctx.session.provider;

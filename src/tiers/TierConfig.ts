@@ -1,7 +1,7 @@
 // Panshalach 六档强度体系（TierConfig）
 // 全部使用小写：quick / standard / high / max / ex / pangu
 // 默认档位：high（高强度 + 高验证密度 + 高适用编码）
-// 目标：让每个 tier 都有可量化的行为契约，差异化铁律、记忆、探索、预算
+// 目标：让每个 tier 都有可量化的行为契约，差异化纪律规则、记忆、探索、预算
 
 export type Tier =
   | 'quick'
@@ -55,7 +55,7 @@ export interface TierConfig {
   maxStepsPerRollout: number;
   /** critique 频率配置 */
   critiqueFrequency: CritiqueFrequencySpec;
-  /** 铁律注入强度 */
+  /** 纪律规则注入强度 */
   ironLawInjectionLevel: IronLawInjectionLevel;
   /** maxConsecutiveFailures */
   maxConsecutiveFailures: number;
@@ -71,7 +71,7 @@ export interface TierConfig {
   parallelRollouts: number;
   /** 是否需要用户确认 */
   userConfirmationRequired: boolean;
-  /** 是否强力模式（isStrongMode 等价行为） */
+  /** 是否高纪律模式（isStrongMode 等价行为） */
   isStrongMode: boolean;
   /** 锚点数量上限 */
   anchorMax: number;

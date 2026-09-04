@@ -128,7 +128,7 @@ export function InputBar(props: {
             return;
           }
           if (selected.type === 'model') {
-            submitLine(selected.replacement); // '/model a6:glm-5.3-flash'
+            submitLine(selected.replacement); // '/model a6:openPangu-7B'
             return;
           }
           if (selected.type === 'history' || selected.type === 'file' || selected.type === 'directory') {

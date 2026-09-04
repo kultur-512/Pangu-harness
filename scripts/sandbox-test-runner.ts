@@ -1,8 +1,8 @@
 // sandbox-test-runner.ts
-// Runs the Panshalach (GLM-5.x Strong Engineering Agent) inside an isolated sandbox against a known-buggy project.
+// Runs the Panshalach (structured strong engineering agent) inside an isolated sandbox against a known-buggy project.
 // 使用�?tier 体系（默�?high�?
 import { PanshalachChaser } from '../src/PanshalachChaser.js';
-import { ExtremeGlmToolCallAdapter } from '../src/adapter/ExtremeGlmToolCallAdapter.js';
+import { StrictStructuredToolAdapter } from '../src/adapter/StrictStructuredToolAdapter.js';
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -73,8 +73,8 @@ function createSandboxExecutor() {
   };
 }
 
-// Create a model client that produces GLM-5.3 style tool calls
-function createSimulatedGlmClient() {
+// Create a model client that produces structured-format tool calls
+function createSimulatedStructuredClient() {
   let step = 0;
 
   return {
@@ -144,7 +144,7 @@ export function multiply(a, b) {
 
 async function main() {
   const executor = createSandboxExecutor();
-  const modelClient = createSimulatedGlmClient();
+  const modelClient = createSimulatedStructuredClient();
 
   const chaser = new PanshalachChaser(modelClient);
 

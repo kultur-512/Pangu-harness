@@ -141,7 +141,7 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
     return { urls, restore: () => { (globalThis as any).fetch = real; } };
   }
 
-  it('createClient("a6:glm-5.3-flash") routes to the a6 provider (fix-a6-routing)', async () => {
+  it('createClient("a6:openPangu-7B") routes to the a6 provider (fix-a6-routing)', async () => {
     const mock = mockFetchCapturing();
     try {
       const p = createDefaultModelProvider({
@@ -152,7 +152,7 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
           },
         },
       });
-      const c = p.createClient('a6:glm-5.3-flash');
+      const c = p.createClient('a6:openPangu-7B');
       assert.ok(c, 'a6-prefixed name must produce a client when a6 is configured');
       await c!.complete('hi');
       assert.ok(mock.urls.some((u) => u.includes('api.a6api.com')),
@@ -162,7 +162,7 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
     }
   });
 
-  it('scnet semantics unchanged: createClient("scnet:GLM-5.1") and bare names still route to scnet (fix-a6-routing)', async () => {
+  it('scnet semantics unchanged: createClient("scnet:openPangu-7B") and bare names still route to scnet (fix-a6-routing)', async () => {
     const mock = mockFetchCapturing();
     try {
       const p = createDefaultModelProvider({
@@ -174,13 +174,13 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
         },
       });
       // explicit scnet prefix
-      const c1 = p.createClient('scnet:GLM-5.1');
+      const c1 = p.createClient('scnet:openPangu-7B');
       assert.ok(c1, 'scnet prefix must still work');
       await c1!.complete('hi');
       assert.ok(mock.urls.every((u) => u.includes('scnet.test')), `scnet: must NOT hit a6: ${mock.urls.join(',')}`);
       // bare name still falls to scnet (branch 4) even with a6 configured
       mock.urls.length = 0;
-      const c2 = p.createClient('GLM-5.1');
+      const c2 = p.createClient('openPangu-7B');
       assert.ok(c2, 'bare name must still produce a client (scnet fallback)');
       await c2!.complete('hi');
       assert.ok(mock.urls.every((u) => u.includes('scnet.test')), 'bare name must route to scnet, not a6');
@@ -208,10 +208,10 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
 describe('PANSHA_MODEL env seed (fix-a6-routing)', () => {
   it('applyEnvModel seeds session.model from PANSHA_MODEL', () => {
     const prev = process.env.PANSHA_MODEL;
-    process.env.PANSHA_MODEL = 'a6:glm-5.3-flash';
+    process.env.PANSHA_MODEL = 'a6:openPangu-7B';
     try {
       const s = applyEnvModel(new Session());
-      assert.equal(s.model, 'a6:glm-5.3-flash');
+      assert.equal(s.model, 'a6:openPangu-7B');
     } finally {
       if (prev === undefined) delete process.env.PANSHA_MODEL;
       else process.env.PANSHA_MODEL = prev;
@@ -241,7 +241,7 @@ describe('B12 upward .panshalach.json discovery', () => {
     const child = path.join(parent, 'src', 'deep');
     fs.mkdirSync(child, { recursive: true });
     fs.writeFileSync(path.join(parent, '.panshalach.json'), JSON.stringify({
-      model: 'GLM-5.1',
+      model: 'openPangu-7B',
       providers: {
         scnet: { type: 'openai-compatible', baseUrl: 'https://api.scnet.cn/api/llm/v1', apiKey: 'sk-b12-test-key-1234567890' },
       },

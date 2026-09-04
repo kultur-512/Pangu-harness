@@ -4,16 +4,18 @@
 
 ## P0 ✅ 已完成（2026-09 本期）
 - [x] REFACTOR-ASSESSMENT.md 重构评估报告
-- [x] 物理删除 docs/ 全部 Panshalach/GLM/30-rounds 旧文档与 docs/agents、.agents
+- [x] 物理删除 docs/ 全部旧品牌（Panshalach / 早期模型试点）/30-rounds 规划复盘文档与 docs/agents、.agents
 - [x] docs/panshalach/ 命题文档集（README/ARCHITECTURE/MEMORY-DESIGN/EVALUATION/USER-GUIDE/ROADMAP）
 - [x] 可见层改名 Panshalach（package/bin、欢迎/身份串、server 文案、memory 标题、tier 描述、/init 文档指针）；62 组测试通过
 
 ## P1 — openPangu 泛化接入（代码）
+- [x] `Glm53SweProChaser` 兼容层已删除
+- [x] ModelProvider 去模型 magic shorthand / `_pickBestProviderModel` 泛化（按 provider 取第一个可用模型）；`/model` 文案去品牌特化
 - [ ] `.panshalach.json` example 加 openpangu provider（本机/昇腾 OpenAI 兼容端点）
-- [ ] ModelProvider：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；bare-name 不再默认走 scnet；GLM shorthand 保留为可选别名
+- [ ] ModelProvider：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；bare-name 不再默认走 scnet
 - [ ] `ModelCommand /model list` 改为遍历全部 provider 拉模型（去 scnet 独占文案）
 - [ ] `openai-compatible.complete` 透传并返回 `message.tool_calls`（ModelClientOutput）；VerifyCritiqueLoop 已支持
-- [ ] GLM 措辞泛化为"工程纪律"（StructuredReasoner 铁律头 / 负向清单 / adapter 注释）
+- [ ] 模型措辞泛化为"工程纪律"（StructuredReasoner 铁律头 / 负向清单 / adapter 注释）
 - [ ] 验收：配置 openpangu 后可 `/model list` 看到 openPangu-1B/7B/7B-VL 并运行一次真任务
 
 ## P2 — 记忆写入闭环 + markUsed（最高价值、最快见效）
@@ -39,7 +41,7 @@
 
 ## P6 — 内部存储名/品牌全量收敛
 - [ ] `.panshalach.json`→`.panshalach.json`、`.panshalach-memory.json`→`.panshalach-memory.json`、`~/.panshalach/`→`~/.panshalach/`、`PANSHA_*`→`PANG_*`（一次性迁移脚本 + 读旧写新 fallback）
-- [ ] `PanshalachChaser.ts`→`Panshalach.ts`、bin/文案扫尾；`Glm53SweProChaser`/`pangu` bin 保留 deprecated alias
+- [ ] `PanshalachChaser.ts`→`Panshalach.ts`、bin/文案扫尾
 
 ## P7 — 真实 openPangu 评测 → EVALUATION.md 填数（命题提交物 2）
 - [ ] 评测任务集脚本化（T1 约束保持 / T2 跨文件关联 / T3 长文档跨章节 / T4 中断续接 / T5 压缩后保持）

@@ -65,7 +65,7 @@
 | `src/memory/RefinedMemoryStore.ts` 公开 API | 增方法时向后兼容；不得删除/改语义已有方法 |
 | `src/cli/repl/PromptBuilder.ts` 注入顺序 | `TaskState → 记忆卡 → MemoryEvent → 当前任务`（P3 已固定），新增层插入要写明插入位置 |
 | 测试命名 | `tests/<dir>/Xxx.test.ts`；`describe` 用被测对象名；`it` 写行为不写实现 |
-| 命名迁移窗口 | 旧别名（`zorge` bin / `Glm53SweProChaser` 类 / `power:'zorge'` tier alias）保留至 P6 收敛（见 ROADMAP-NEXT），不得新增同义别名 |
+| 命名迁移窗口 | 旧别名（`zorge` bin / `power:'zorge'` tier alias；旧类兼容层已删除）收敛（见 ROADMAP-NEXT），不得新增同义别名 |
 
 ---
 

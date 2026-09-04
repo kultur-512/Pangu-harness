@@ -1,4 +1,4 @@
-// GLM-5.x Extreme Tool Call Types + Trajectory Signals
+// 结构化 Extreme Tool Call Types + Trajectory Signals
 // 扩展支持：SWE / Terminal-Bench 3.0 / AutomationBench
 
 export interface ToolCallParam {
@@ -7,7 +7,7 @@ export interface ToolCallParam {
 }
 
 /**
- * 工具大类（用于验证路由、铁律判断、打分等）
+ * 工具大类（用于验证路由、纪律规则判断、打分等）
  * - file: 读写文件类（SWE 常用）
  * - terminal: 终端命令执行（Terminal-Bench 3.0 核心）
  * - automation: 业务自动化 / API / 工作流（AutomationBench）
@@ -42,7 +42,7 @@ export interface ToolExecutionResult {
   meta?: Record<string, any>;
 }
 
-/** 根据工具名推断分类（用于验证路由、铁律、打分） */
+/** 根据工具名推断分类（用于验证路由、纪律规则、打分） */
 export function inferToolCategory(toolName: string): ToolCategory {
   const n = (toolName || '').toLowerCase();
 

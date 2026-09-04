@@ -1,5 +1,5 @@
-// FailureMemory - GLM-5.x 失败记忆系统 (Strong Engineering Agent)
-// 针对 GLM 的常见弱点进行记忆和反注入（建设性、工程化口吻）
+// FailureMemory - 会话内失败信号记忆
+// 针对结构化模型的常见弱点进行记忆和反注入（建设性、工程化口吻）
 // 支持多任务风格（swe / terminal / automation），用于日常高强度工程任务。
 
 export type FailureCategory =
@@ -8,7 +8,7 @@ export type FailureCategory =
   | 'HALLUCINATED_BEHAVIOR'
   | 'TOOL_FORMAT_ERROR'
   | 'LOOSE_FORMAT_USED'
-  | 'READ_BEFORE_WRITE_VIOLATION'   // GLM 铁律核心
+  | 'READ_BEFORE_WRITE_VIOLATION'   // 工程纪律规则核心
   | 'WEAK_VERIFICATION'
   | 'NO_VERIFICATION_BEFORE_CLAIM'
   | 'OVERCONFIDENCE'
@@ -27,13 +27,13 @@ export type FailureCategory =
 
 export class FailureMemory {
   private memory = new Map<FailureCategory, string[]>();
-  private maxPerCategory = 8;           // GLM 需要更强的记忆容量
+  private maxPerCategory = 8;           // 更强的记忆容量
 
-  // 专门为 GLM 准备的“高权重”模式（这些失败必须被反复锤）
+  // 高权重失败类别（这些失败需要重点关注）
   private highWeightCategories: FailureCategory[] = [
     'TOOL_FORMAT_ERROR',
     'LOOSE_FORMAT_USED',
-    'READ_BEFORE_WRITE_VIOLATION',   // 新增：GLM 核心铁律
+    'READ_BEFORE_WRITE_VIOLATION',   // 新增：工程纪律规则核心
     'HALLUCINATED_FILE',
     'WEAK_VERIFICATION',
     'NO_VERIFICATION_BEFORE_CLAIM',
@@ -76,7 +76,7 @@ export class FailureMemory {
 
   /**
    * 极致版本的 prompt 注入
-   * GLM 必须被反复锤这些失败模式
+   * 高权重失败模式提示
    */
   toPromptInjection(): string {
     if (this.memory.size === 0) return '';
@@ -109,7 +109,7 @@ export class FailureMemory {
   }
 
   /**
-   * 更激进的自动提取（GLM 专用）
+   * 自动失败信号提取
    */
   autoExtractFromTrajectory(steps: any[]): void {
     for (const step of steps) {
@@ -118,7 +118,7 @@ export class FailureMemory {
       const reasoning = (step.reasoning?.thinking || step.thought || '').toLowerCase();
       const toolCalls = step.toolCalls || step.action || [];
 
-      // === 格式类（GLM 最核心问题）===
+      // === 格式类===
       if (critique.includes('格式') || critique.includes('loose') || critique.includes('invoke tool')) {
         this.record('TOOL_FORMAT_ERROR', '工具调用格式不标准（未使用严格 <> 格式）');
       }
@@ -130,7 +130,7 @@ export class FailureMemory {
           (t.rawBlock && /read\(|write\(|bash\(/i.test(String(t.rawBlock)))
         );
         if (hasLoose) {
-          this.record('LOOSE_FORMAT_USED', '本次使用了松散格式（Read(file_path=...) 等），而非 GLM 标准 <> 格式');
+          this.record('LOOSE_FORMAT_USED', '本次使用了松散格式（Read(file_path=...) 等），而非标准 <> 格式');
         }
       }
 
@@ -143,7 +143,7 @@ export class FailureMemory {
         this.record('HALLUCINATED_FUNCTION', '引用了不存在的函数或方法');
       }
 
-      // === 验证类（GLM 第二大问题）===
+      // === 验证类===
       if ((critique.includes('验证') || critique.includes('verify')) &&
           (result.includes('fail') || critique.includes('没有验证') || critique.includes('未验证'))) {
         this.record('WEAK_VERIFICATION', '在没有充分验证的情况下就认为问题已解决');
@@ -174,7 +174,7 @@ export class FailureMemory {
   }
 
   /**
-   * 强制把记忆注入到任意 prompt（GLM 模式下应该在几乎每轮都调用）
+   * 把记忆注入到任意 prompt（高纪律模式下每轮调用）
    */
   injectIntoPrompt(basePrompt: string): string {
     const injection = this.toPromptInjection();

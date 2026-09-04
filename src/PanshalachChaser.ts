@@ -6,11 +6,9 @@
 // - 实用模式：token 更省、复盘更温和，适合常规日常开发。
 // - 六档强度体系（全部小写）：quick / standard / high / max / ex / pangu，默认 high。
 //
-// 推荐新代码使用 PanshalachChaser。旧名 Glm53SweProChaser 仅为兼容别名。
-//
 // 客户端不做限流（按用户要求）。
 
-import { ExtremeGlmToolCallAdapter } from './adapter/ExtremeGlmToolCallAdapter.js';
+import { StrictStructuredToolAdapter } from './adapter/StrictStructuredToolAdapter.js';
 import { UniversalToolCallAdapter } from './adapter/UniversalToolCallAdapter.js';
 import { StructuredReasoner } from './reasoning/StructuredReasoner.js';
 import { RepoExplorer, AnchorMemory } from './context/RepoExplorer.js';
@@ -87,7 +85,7 @@ export interface ChaserConfig {
 export class PanshalachChaser {
   // M3.1: 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
   private memStoreForInvalidate: any = null;
-  private extremeAdapter = new ExtremeGlmToolCallAdapter();
+  private extremeAdapter = new StrictStructuredToolAdapter();
   private universalAdapter = new UniversalToolCallAdapter();
   private failureMemory = new FailureMemory();
   private contextManager = new ContextManager();
@@ -181,7 +179,7 @@ export class PanshalachChaser {
     config.onStep?.({ version: 1, type: 'phase', phase: 'explore' });
 
     const exploration = await RepoExplorer.explore(workspaceRoot, {
-      glmBias: isHighRigor,
+      anchorBias: isHighRigor,
       maxDepth: tierConfig.explorationDepth,
       tier: tierConfig.tier,
       taskStyle,
@@ -229,8 +227,7 @@ export class PanshalachChaser {
         practicalMode: usePracticalPrompt,
         taskStyle,
         benchmarkType: taskStyle,
-        isStrongMode: isHighRigor,
-        isStrictGlm: isHighRigor
+        isStrongMode: isHighRigor
       }
     );
 
@@ -267,9 +264,9 @@ export class PanshalachChaser {
       } catch {}
     }
 
-    // 铁律/格式提示按 ironLawInjectionLevel 注入
+    // 纪律规则/格式提示按 ironLawInjectionLevel 注入
     if (tierConfig.ironLawInjectionLevel !== 'none') {
-      basePrompt += `\n\n${StructuredReasoner.buildGlmFormatEnforcementPrompt()}`;
+      basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
     }
 
     // P0-B: 一次性收集静态分析结果（仅本次 solveIssue 执行一次）
@@ -300,7 +297,7 @@ export class PanshalachChaser {
 
     const loopOptions: VerifyCritiqueLoopOptions = {
       useUniversalAdapter: !isHighRigor,
-      strictGlmOnly: isHighRigor,
+      strictStructured: isHighRigor,
       maxSteps: maxStepsPerRollout,
       maxConsecutiveFailures: tierConfig.maxConsecutiveFailures,
       failureMemory: this.failureMemory,
@@ -380,7 +377,7 @@ export class PanshalachChaser {
 
             // Format detection probe (same as non-streaming path)
             try {
-              ToolCallFormatDetector.probeAndParse(text, { strictGlmOnly: isHighRigor });
+              ToolCallFormatDetector.probeAndParse(text, { strictStructured: isHighRigor });
             } catch {}
 
             return text;
@@ -465,7 +462,7 @@ export class PanshalachChaser {
         }
         if (estimatedUsedTokens >= budgetTokens * 0.9 && !triggeredDegradation) {
           triggeredDegradation = true;
-          budgetNotes.push(`行为降级触发：已使用约 ${estimatedUsedTokens} token。maxSteps 缩短，critique 周期翻倍，铁律强度降级`);
+          budgetNotes.push(`行为降级触发：已使用约 ${estimatedUsedTokens} token。maxSteps 缩短，critique 周期翻倍，纪律规则强度降级`);
           config.onStep?.({ version: 1, type: 'degradation', reason: 'soft-limit-90%' });
         }
 
@@ -530,6 +527,3 @@ export class PanshalachChaser {
     return { success, bestTrajectory: best, score: best.score, totalRollouts: maxRollouts, budgetReport, tierConfig };
   }
 }
-
-/** 兼容别名 @deprecated */
-export { PanshalachChaser as Glm53SweProChaser };

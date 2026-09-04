@@ -4,6 +4,7 @@
 // - Default "default" model can be backed by an optional fallbackComplete
 // - Supports registration of named factories
 // - Now also supports "scnet" (and "scnet:xxx") via ProviderRegistry + openai-compatible client
+// - Generic "<provider>:<model>" routing works for any configured provider (e.g. a6, openpangu)
 
 import type { ModelClient, ModelProvider, CompleteOptions, ModelClientOutput } from './types.js';
 import { ConfigManager } from './ConfigManager.js';
@@ -252,7 +253,6 @@ export class DefaultModelProvider implements ModelProvider {
     const base = ['default', ...others];
     if (hasScnet) {
       if (!base.includes('scnet')) base.push('scnet');
-      if (!base.includes('glm')) base.push('glm');
     }
     // fix-a6-routing: expose every configured provider name in the model list
     try {
@@ -274,19 +274,6 @@ export class DefaultModelProvider implements ModelProvider {
 
   isModelAvailable(name: string): boolean {
     if (!name) return false;
-
-    const lower = name.toLowerCase();
-
-    // GLM shorthand on scnet: only bare "glm" or "glm5"
-    if (lower === 'glm' || lower === 'glm5') {
-      let pr = this.getProviderRegistry();
-      if (!pr || !pr.isProviderConfigured('scnet')) {
-        // Hot-reload: user may have just created .panshalach.json or set env var in this running process
-        this.invalidateProviderCache();
-        pr = this.getProviderRegistry();
-      }
-      return !!(pr && pr.isProviderConfigured('scnet'));
-    }
 
     // Direct registered factory (e.g. 'default' or manually registered)
     const factory = this.registry.get(name);
@@ -334,29 +321,14 @@ export class DefaultModelProvider implements ModelProvider {
       if (name !== 'default') return null;
     }
 
-    // 2. Bare GLM shorthand on scnet: "glm" or "glm5" (magic auto-pick)
-    const lower = name.toLowerCase();
-    if (lower === 'glm' || lower === 'glm5') {
-      let pr = this.getProviderRegistry();
-      if (!pr || !pr.isProviderConfigured('scnet')) {
-        // Try to pick up a config that the user just created or env var they just set
-        this.invalidateProviderCache();
-        pr = this.getProviderRegistry();
-      }
-      if (pr && pr.isProviderConfigured('scnet')) {
-        const targetModel = this._pickBestGLMModel();
-        return this._createScnetClient(targetModel);
-      }
-    }
-
-    // 3. scnet prefix form: "scnet" or "scnet:some-model"
+    // 2. scnet prefix form: "scnet" or "scnet:some-model"
     if (name === 'scnet' || name.startsWith('scnet:')) {
       const modelPart = name.startsWith('scnet:') ? name.slice(6) : undefined;
       return this._createScnetClient(modelPart);
     }
 
-    // 3b. Generic provider:model prefix (fix-a6-routing) — any configured
-    // provider works, e.g. "a6:glm-5.3-flash". Additive; scnet semantics above
+    // 2b. Generic provider:model prefix (fix-a6-routing) — any configured
+    // provider works, e.g. "a6:some-model". Additive; scnet semantics above
     // are untouched.
     if (name.includes(':')) {
       const sep = name.indexOf(':');
@@ -372,7 +344,7 @@ export class DefaultModelProvider implements ModelProvider {
       }
     }
 
-    // 4. If scnet provider is configured, treat bare name as a scnet model name
+    // 3. If scnet provider is configured, treat bare name as a scnet model name
     const pr = this.getProviderRegistry();
     if (pr && pr.isProviderConfigured('scnet')) {
       return this._createScnetClient(name);
@@ -416,8 +388,6 @@ export class DefaultModelProvider implements ModelProvider {
    * 1. In-memory cache from a recent /model list (remoteContextsCache)
    * 2. Persisted in .panshalach.json providers.<prov>.modelContexts
    * 3. 256000 (256K) default
-   *
-   * GLM shorthand ("glm", "glm-5", etc.) is resolved to the effective concrete model first.
    */
   getModelContextLength(name: string): number {
     if (!name) return 256000;
@@ -514,45 +484,43 @@ export class DefaultModelProvider implements ModelProvider {
   }
 
   /**
-   * For shorthands like "glm" / "glm5", return the concrete model id that will actually be sent to the backend.
-   * For normal names (including explicit "GLM-5.1", "GLM-5") returns the input name as-is.
+   * For names that carry a "<provider>:" prefix, return the concrete model id
+   * that will actually be sent to the backend (the part after the prefix).
+   * For plain "scnet" (provider alias without a model) resolves to the provider's
+   * first available model when the remote list is cached, otherwise the input
+   * name is returned as-is. All other names pass through unchanged.
    */
   getEffectiveModel(name: string): string {
     if (!name) return name;
-    const lower = name.toLowerCase();
-    if (lower === 'glm' || lower === 'glm5') {
-      return this._pickBestGLMModel();
+
+    const sep = name.indexOf(':');
+    if (sep >= 0) {
+      const providerName = name.slice(0, sep);
+      const modelPart = name.slice(sep + 1);
+      if (modelPart) return modelPart;
+      // "scnet:" with no model — resolve a concrete model from the cache if present
+      if (providerName === 'scnet') return this._pickBestProviderModel('scnet');
+      return name;
+    }
+    // Provider alias given as a bare name: plain "scnet" → concrete model when cached
+    if (name === 'scnet') {
+      return this._pickBestProviderModel('scnet');
     }
     return name;
   }
 
   /**
-   * Pick the best GLM model available for scnet.
-   * Based on live testing with scnet:
-   * - GLM-5.1 and GLM-5 usually succeed with Token Plan.
-   * - GLM-5.2-Base / *-Base variants often return 403 "does not support Token Plan".
+   * Pick the first usable model of a provider (best effort when the caller
+   * refers to the provider by its bare name, e.g. "scnet" without a model id).
    * Strategy:
-   * 1. If we have fetched models (via /model list), pick best from cache.
-   * 2. If no cache yet, default to GLM-5.1 (verified working).
+   * 1. If we have a fetched model list (via /model list), pick the first entry.
+   * 2. If no cache yet, return the input provider name and let the
+   *    openai-compatible client / backend resolve the effective default.
    */
-  private _pickBestGLMModel(): string {
-    const cached = this.remoteModelsCache.get('scnet') || [];
-
-    // If we have remote list, use it
-    if (cached.length > 0) {
-      const preferredOrder = ['GLM-5.1', 'GLM-5', 'GLM-5.2'];
-      for (const name of preferredOrder) {
-        if (cached.includes(name)) return name;
-      }
-      const glmNonBase = cached.filter(m => /^glm/i.test(m) && !/base/i.test(m));
-      if (glmNonBase.length > 0) return glmNonBase[0];
-      const glmAny = cached.filter(m => /^glm/i.test(m));
-      if (glmAny.length > 0) return glmAny[0];
-    }
-
-    // No cache (or no GLM in cache): use a model known to work with current scnet Token Plan
-    // Live test confirmed GLM-5.1 works.
-    return 'GLM-5.1';
+  private _pickBestProviderModel(providerName: string): string {
+    const cached = this.remoteModelsCache.get(providerName) || [];
+    if (cached.length > 0) return cached[0];
+    return providerName;
   }
 }
 

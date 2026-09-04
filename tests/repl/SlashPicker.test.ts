@@ -139,7 +139,7 @@ describe('dismiss re-arm semantics (fix-menu-timing 问题 2)', () => {
 describe('argMenuFor (feat-submenu)', () => {
   it('parses command + trailing space / partial arg', () => {
     assert.deepEqual(argMenuFor('/model '), { command: 'model', argQuery: '' });
-    assert.deepEqual(argMenuFor('/model glm-5'), { command: 'model', argQuery: 'glm-5' });
+    assert.deepEqual(argMenuFor('/model openPangu-7B'), { command: 'model', argQuery: 'openPangu-7B' });
     assert.deepEqual(argMenuFor('/tier '), { command: 'tier', argQuery: '' });
   });
 
@@ -152,10 +152,10 @@ describe('argMenuFor (feat-submenu)', () => {
   });
 
   it('filterArgCandidates: prefix → substring → fuzzy; arg lists NOT capped (full browse)', () => {
-    const models = ['GLM-5.1', 'GLM-5.2', 'glm-5.3-flash', 'DeepSeek-V4-Flash-0731', 'default'];
-    assert.deepEqual(filterArgCandidates('glm', models), ['GLM-5.1', 'GLM-5.2', 'glm-5.3-flash']);
+    const models = ['openPangu-7B', 'openPangu-1B', 'DeepSeek-V4-Flash-0731', 'default'];
+    assert.deepEqual(filterArgCandidates('openPangu', models), ['openPangu-7B', 'openPangu-1B']);
     assert.deepEqual(filterArgCandidates('deep', models), ['DeepSeek-V4-Flash-0731']);
-    assert.deepEqual(filterArgCandidates('5.3', models), ['glm-5.3-flash']); // substring
+    assert.deepEqual(filterArgCandidates('7B', models), ['openPangu-7B']); // substring
     assert.equal(filterArgCandidates('', models).length, models.length); // empty → ALL (uncapped)
   });
 
@@ -291,8 +291,8 @@ describe('leadingSlashTrigger', () => {
 
 describe('argStageFor / resolveModelTarget (fix-picker-3 ②③)', () => {
   const PROVIDERS = [
-    { name: 'scnet', models: ['GLM-5.1', 'GLM-5.2', 'deepseek-v4'] },
-    { name: 'a6', models: ['glm-5.3-flash', 'gpt-5.6-luna'] },
+    { name: 'scnet', models: ['openPangu-7B', 'openPangu-1B', 'deepseek-v4'] },
+    { name: 'a6', models: ['openPangu-7B-flash', 'gpt-5.6-luna'] },
   ];
 
   it('"/model " (trailing space) → provider stage', () => {
@@ -310,9 +310,9 @@ describe('argStageFor / resolveModelTarget (fix-picker-3 ②③)', () => {
     assert.deepEqual(r, { stage: 'model', provider: 'scnet', query: '' });
   });
 
-  it('"/model a6:glm-5 " → model stage for a6 with query', () => {
-    const r = argStageFor('/model a6:glm-5 ', PROVIDERS);
-    assert.deepEqual(r, { stage: 'model', provider: 'a6', query: 'glm-5' });
+  it('"/model a6:openPangu " → model stage for a6 with query', () => {
+    const r = argStageFor('/model a6:openPangu ', PROVIDERS);
+    assert.deepEqual(r, { stage: 'model', provider: 'a6', query: 'openPangu' });
   });
 
   it('unknown provider prefix → stays provider stage (filter by typed query)', () => {
@@ -327,8 +327,8 @@ describe('argStageFor / resolveModelTarget (fix-picker-3 ②③)', () => {
   });
 
   it('resolveModelTarget builds /model <provider>:<model>', () => {
-    assert.equal(resolveModelTarget('a6', 'glm-5.3-flash'), '/model a6:glm-5.3-flash');
-    assert.equal(resolveModelTarget('scnet', 'GLM-5.1'), '/model scnet:GLM-5.1');
+    assert.equal(resolveModelTarget('a6', 'openPangu-7B-flash'), '/model a6:openPangu-7B-flash');
+    assert.equal(resolveModelTarget('scnet', 'openPangu-7B'), '/model scnet:openPangu-7B');
   });
 
   it('parseCommandInput is lenient (no trailing space required) — fix-picker-4 ③', () => {
