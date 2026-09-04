@@ -258,10 +258,10 @@ export class VerifyCritiqueLoop {
         }
 
         // 任务风格提醒（仅违规时，轻量）
-        if (this.profile.type === 'terminal-bench-3' && this.terminalNoCheckViolations > 0) {
+        if (this.terminalNoCheckViolations > 0) {
           prompt += `\n\n【Terminal 实践】关键命令后请检查 exit code / 输出 / 状态，确认效果。`;
         }
-        if (this.profile.type === 'automation-bench' && this.automationStepsWithoutEffectCheck > 0) {
+        if (this.automationStepsWithoutEffectCheck > 0) {
           prompt += `\n\n【Automation 实践】动作后请用 CheckStatus / VerifyEffect 确认业务效果。`;
         }
         if (this.readBeforeWriteViolations > 0) {
@@ -506,9 +506,7 @@ export class VerifyCritiqueLoop {
         detectedFormat,
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
-        // 多任务风格每步信号（供打分和轨迹记录使用）
-        terminalNoCheck: this.profile.type === 'terminal-bench-3' && this.terminalNoCheckViolations > 0,
-        automationNoEffectCheck: this.profile.type === 'automation-bench' && this.automationStepsWithoutEffectCheck > 0,
+      };
       };
 
       this.steps.push(step);
@@ -524,21 +522,17 @@ export class VerifyCritiqueLoop {
         // 多任务风格失败记忆增强
         if (this.failureMemory) {
           const lowerRes = verificationResult.toLowerCase();
-          if (this.profile.type === 'terminal-bench-3') {
-            if (lowerRes.includes('fail') || lowerRes.includes('error') || lowerRes.includes('non-zero')) {
-              this.failureMemory.record('COMMAND_FAILED', `Terminal command failed or error: ${verificationResult.slice(0, 120)}`);
-            }
-            if (this.terminalNoCheckViolations > 0 && (stepNum % 2 === 0)) {
-              this.failureMemory.record('TERMINAL_NO_CHECK_AFTER_COMMAND', '关键终端命令后未及时检查输出/状态');
-            }
+          if (lowerRes.includes('fail') || lowerRes.includes('error') || lowerRes.includes('non-zero')) {
+            this.failureMemory.record('COMMAND_FAILED', `Command failed or error: ${verificationResult.slice(0, 120)}`);
           }
-          if (this.profile.type === 'automation-bench') {
-            if (lowerRes.includes('fail') || lowerRes.includes('error') || lowerRes.includes('mismatch')) {
-              this.failureMemory.record('WORKFLOW_STEP_ERROR', `Automation step issue: ${verificationResult.slice(0, 120)}`);
-            }
-            if (this.automationStepsWithoutEffectCheck > 1) {
-              this.failureMemory.record('AUTOMATION_NO_EFFECT_VERIFICATION', '执行自动化动作后未验证业务效果');
-            }
+          if (this.terminalNoCheckViolations > 0 && (stepNum % 2 === 0)) {
+            this.failureMemory.record('TERMINAL_NO_CHECK_AFTER_COMMAND', '关键终端命令后未及时检查输出/状态');
+          }
+          if (lowerRes.includes('fail') || lowerRes.includes('error') || lowerRes.includes('mismatch')) {
+            this.failureMemory.record('WORKFLOW_STEP_ERROR', `Step issue: ${verificationResult.slice(0, 120)}`);
+          }
+          if (this.automationStepsWithoutEffectCheck > 1) {
+            this.failureMemory.record('AUTOMATION_NO_EFFECT_VERIFICATION', '执行自动化动作后未验证业务效果');
           }
           if (lowerRes.includes('mismatch') || lowerRes.includes('state') && lowerRes.includes('expect')) {
             this.failureMemory.record('STATE_MISMATCH', `状态不匹配: ${verificationResult.slice(0, 120)}`);

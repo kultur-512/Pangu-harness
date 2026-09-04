@@ -1,10 +1,6 @@
-// Test-Time Compute + Trajectory System (GLM-5.x Strong Engineering Agent)
-// Multi-rollout with GLM-optimized scoring + multi-task-style support:
-// - Heavy reward for correct strict GLM <> format (when targeting strong/high-rigor mode)
-// - Task-style-specific verification density, early verification, state consistency (swe / terminal / automation)
-// - Penalties for RBW (SWE), no-check-after-command (terminal), no-effect-verification (automation)
-// 
-// 设计目标：强化真实工程能力（日常高强度编码），而非功利刷 benchmark。
+// Test-Time Compute + Trajectory System (Panshalach 记忆增强引擎)
+// 打分以"长程记忆保持 + 验证密度"为核心，去掉 GLM 时代 format 加分/扣分与 terminal/automation 风格专属惩罚。
+// 保留 RBW 惩罚（通用安全价值）与早验证奖励（轻量）。
 
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
 
@@ -16,10 +12,9 @@ export interface TrajectoryStep {
   result: string;
   critique?: string;
   detectedFormat?: string;
-  /** GLM Iron Law compliance signals */
+  /** 工程纪律合规信号 */
   didRealVerification?: boolean;
   readBeforeWriteViolation?: boolean;
-  /** 多任务风格额外信号（由 VerifyCritiqueLoop 填充） */
   terminalNoCheck?: boolean;
   automationNoEffectCheck?: boolean;
 }
@@ -29,17 +24,19 @@ export interface Trajectory {
   steps: TrajectoryStep[];
   finalPatch?: string;
   score: number;
-  isGlmTarget?: boolean;     // legacy-ish flag: whether this trajectory targeted strong/high-rigor mode (heavy verification, iron laws, strict format)
-  benchmarkType?: string;    // legacy alias for taskStyle
-  taskStyle?: string;        // e.g. 'terminal', 'automation', 'swe' (preferred public name)
-  estimatedUsedTokens?: number; // D-parallel: per-rollout token spend for budget aggregation
+  /** @deprecated 使用 isStrongTarget 替代 */
+  isGlmTarget?: boolean;
+  isStrongTarget?: boolean;
+  benchmarkType?: string;
+  taskStyle?: string;
+  estimatedUsedTokens?: number;
 }
 
 export class TrajectoryRecorder {
   private trajectories = new Map<string, Trajectory>();
 
-  create(id: string, isGlmTarget = false, benchmarkType?: string, taskStyle?: string): Trajectory {
-    const t: Trajectory = { id, steps: [], score: 0, isGlmTarget, benchmarkType, taskStyle: taskStyle ?? benchmarkType };
+  create(id: string, isStrongTarget = false, benchmarkType?: string, taskStyle?: string): Trajectory {
+    const t: Trajectory = { id, steps: [], score: 0, isStrongTarget, isGlmTarget: isStrongTarget, benchmarkType, taskStyle: taskStyle ?? benchmarkType };
     this.trajectories.set(id, t);
     return t;
   }
@@ -74,129 +71,70 @@ export class TrajectoryScorer {
    */
   static score(trajectory: Trajectory): number {
     let score = 0;
-    // isStrongTarget: indicates the trajectory was run under strong/high-rigor mode (heavy verification, iron laws, strict format expectations).
-    // Legacy field name isGlmTarget is still populated for backward compat with existing consumers.
-    const isStrongTarget = !!trajectory.isGlmTarget;
+    // isStrongTarget: 高纪律模式下的验证密度奖励
+    const isStrongTarget = !!trajectory.isStrongTarget || !!trajectory.isGlmTarget;
     const taskStyle = (trajectory.taskStyle ?? trajectory.benchmarkType) as BenchmarkType | undefined;
     const profile = BenchmarkProfiles.get(taskStyle);
 
     const v = profile.scoringHints.verificationWeight;
-    const f = profile.scoringHints.formatWeight;
     const early = profile.scoringHints.earlyVerifyBonus;
-    const state = profile.scoringHints.stateConsistencyBonus;
 
-    // 1. 真实验证次数（按任务风格权重缩放，强力模式下给予更高权重）
-    // 改进：去除过于宽泛的 includes('ok') / includes('success')，要求明确的验证信号
+    // 1. 真实验证次数（核心指标）
     const verifiedSteps = trajectory.steps.filter(s =>
       s.result.includes('ALL_TESTS_PASSED') ||
       s.result.includes('VERIFICATION: PASS') ||
-      s.result.includes('PASS') ||
       s.result.toLowerCase().includes('all tests passed') ||
       s.result.toLowerCase().includes('verification: pass')
     ).length;
 
-    score += verifiedSteps * (isStrongTarget ? 32 * v : 24 * v);
+    score += verifiedSteps * (isStrongTarget ? 24 * v : 18 * v);
 
     if (trajectory.steps.length > 0) {
       const density = verifiedSteps / trajectory.steps.length;
-      score += Math.round(density * 20 * (isStrongTarget ? v : 0.8));
+      score += Math.round(density * 15 * (isStrongTarget ? v : 0.8));
     }
 
-    // 2. 早验证奖励（按任务风格调整；强力模式奖励更激进）
-    // 改进：要求明确的验证信号，而非模糊的 includes('pass')
+    // 2. 早验证奖励（轻量）
     const firstVerificationStep = trajectory.steps.findIndex(s =>
       s.result.includes('ALL_TESTS_PASSED') ||
       s.result.includes('VERIFICATION: PASS') ||
-      s.result.includes('PASS') ||
       s.didRealVerification === true
     );
     if (firstVerificationStep >= 0) {
       const earlyBonus = isStrongTarget
-        ? Math.max(0, 18 - firstVerificationStep * 2.5) * early
-        : Math.max(0, 10 - firstVerificationStep * 1.5) * early;
+        ? Math.max(0, 12 - firstVerificationStep * 2) * early
+        : Math.max(0, 8 - firstVerificationStep * 1.5) * early;
       score += earlyBonus;
     }
 
-    // 3. 格式纯度 + Read-Before-Write + 多任务风格违规（强力模式对格式和铁律违规惩罚更重）
-    let perfectFormat = 0;
-    let badFormat = 0;
+    // 3. RBW 违规惩罚（通用安全，保留）
     let rbwViolations = 0;
-    let terminalNoCheck = 0;
-    let automationNoEffect = 0;
-
     for (const step of trajectory.steps) {
-      const hasAction = Array.isArray(step.action) && step.action.length > 0;
-      if (!hasAction) continue;
-
-      const fmt = String(step.detectedFormat || '').toLowerCase();
-      // 改进：空字符串不应被自动判定为 perfectFormat（之前会导致强力模式格式分恒正）
-      // 只有明确识别为 strict / glm-xml 的才算完美格式
-      if (fmt.includes('strict') || fmt.includes('glm-xml')) {
-        perfectFormat++;
-      } else if (fmt.includes('loose') || fmt.includes('plain') || fmt.includes('invoke')) {
-        badFormat++;
-      } else if (fmt === '' || fmt === 'unknown') {
-        // 未检测到格式：中性，不加分也不扣分
-      }
-
       if (step.readBeforeWriteViolation) rbwViolations++;
-      if (step.terminalNoCheck) terminalNoCheck++;
-      if (step.automationNoEffectCheck) automationNoEffect++;
     }
+    score -= rbwViolations * 12;
 
-    score += perfectFormat * 14 * f;
-    score -= badFormat * 22 * f;
-
-    // RBW 惩罚：SWE/强力模式重，其它轻
-    if (profile.type === 'swe' || (isStrongTarget && profile.defaultStrictIronLaws)) {
-      score -= rbwViolations * 25;
-    } else {
-      score -= rbwViolations * 12;
-    }
-
-    // Terminal 风格专用惩罚
-    if (profile.type === 'terminal-bench-3') {
-      score -= terminalNoCheck * 20 * state;
-    }
-
-    // Automation 风格专用惩罚
-    if (profile.type === 'automation-bench') {
-      score -= automationNoEffect * 18 * state;
-    }
-
-    // 4. 深度批评（强力模式对长而有深度的 critique 奖励更高）
+    // 4. 深度批评奖励（轻量）
     const deepCritiques = trajectory.steps.filter(s =>
       s.critique && s.critique.length > 160
     ).length;
-    score += deepCritiques * (isStrongTarget ? 16 : 12);
+    score += deepCritiques * (isStrongTarget ? 10 : 8);
 
-    // 5. 严重惩罚：大量步骤但几乎无验证（强力模式惩罚更严厉）
+    // 5. 严重惩罚：大量步骤几乎无验证
     const totalSteps = trajectory.steps.length;
     if (verifiedSteps === 0 && totalSteps >= 4) {
-      score -= isStrongTarget ? 35 : 20;
+      score -= isStrongTarget ? 25 : 15;
     }
     if (verifiedSteps <= 1 && totalSteps >= 8) {
-      score -= isStrongTarget ? 20 : 10;
+      score -= isStrongTarget ? 15 : 8;
     }
 
-    // 6. 长度惩罚（强力模式对冗长轨迹惩罚更明显）
-    score -= Math.max(0, totalSteps - 9) * (isStrongTarget ? 5 : 3.5);
+    // 6. 长度惩罚（轻量）
+    score -= Math.max(0, totalSteps - 9) * (isStrongTarget ? 4 : 3);
 
-    // 7. 思考深度
+    // 7. 思考深度奖励（轻量）
     const deepThoughts = trajectory.steps.filter(s => s.thought && s.thought.length > 320).length;
-    score += deepThoughts * 6;
-
-    // 8. 状态/效果验证奖励（Terminal & Automation 更看重）
-    if (profile.type === 'automation-bench' || profile.type === 'terminal-bench-3') {
-      const stateChecks = trajectory.steps.filter(s =>
-        (s.result || '').toLowerCase().includes('state') ||
-        (s.result || '').toLowerCase().includes('effect') ||
-        (s.result || '').toLowerCase().includes('check') ||
-        (s.result || '').toLowerCase().includes('verify') ||
-        (s.result || '').toLowerCase().includes('ok')
-      ).length;
-      score += Math.round(stateChecks * 3 * state);
-    }
+    score += deepThoughts * 4;
 
     return Math.max(0, Math.min(100, Math.round(score)));
   }
@@ -209,15 +147,10 @@ export class TestTimeOrchestrator {
     runOne: (rolloutId: string) => Promise<Trajectory>,
     count: number = 5,
     budget: { maxTokens?: number } = {},
-    options: { isGlmTarget?: boolean; benchmarkType?: string; taskStyle?: string; parallel?: boolean } = {}
+    options: { isStrongTarget?: boolean; isGlmTarget?: boolean; benchmarkType?: string; taskStyle?: string; parallel?: boolean } = {}
   ): Promise<Trajectory> {
-    // D-parallel: quick/standard stay SERIAL (cost-sensitive — the tier policy
-    // is enforced by the caller passing a single count); high+ tiers run all
-    // rollouts in PARALLEL via Promise.allSettled (a single failure never
-    // drags the batch), with budget aggregation (Σ estimated tokens → soft
-    // limit → early stop) and write-mutex serialization for shared-workspace
-    // mutations (enforced by engineAdapter; read/bash stay parallel).
-    const isStrongTarget = !!options.isGlmTarget;
+    // D-parallel: quick/standard stay SERIAL; high+ tiers run parallel
+    const isStrongTarget = !!options.isStrongTarget || !!options.isGlmTarget;
     const taskStyle = options.taskStyle ?? options.benchmarkType;
     const parallel = (options as any).parallel === true;
 
@@ -226,6 +159,7 @@ export class TestTimeOrchestrator {
       this.recorder.create(id, isStrongTarget, taskStyle, taskStyle);
       try {
         const traj = await runOne(id);
+        traj.isStrongTarget = isStrongTarget;
         traj.isGlmTarget = isStrongTarget;
         traj.benchmarkType = taskStyle;
         traj.taskStyle = taskStyle;

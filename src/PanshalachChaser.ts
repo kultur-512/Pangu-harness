@@ -1,5 +1,5 @@
-// PanshalachChaser - Panshalach 框架（GLM-5.x 高工程强度 Agent）
-// 目标：打造一个**既在工程里强，也在跑分里强**的工具。
+// PanshalachChaser - Panshalach 记忆增强引擎
+// 目标：打造一个**既在工程里强，也在记忆增强里强**的工具。
 //
 // 核心理念：
 // - 高强度模式（High-Rigor / 由 tier 驱动）：高验证密度、结构化思考、工程纪律。
@@ -485,7 +485,7 @@ export class PanshalachChaser {
             automationNoEffectCheck: s.automationNoEffectCheck,
           })),
           score: 0,
-          isGlmTarget: isHighRigor,
+          isStrongTarget: isHighRigor,
           benchmarkType: taskStyle,
           taskStyle,
         };
@@ -503,7 +503,7 @@ export class PanshalachChaser {
       maxRollouts,
       { maxTokens: config.budgetTokens },
       {
-        isGlmTarget: isHighRigor,
+        isStrongTarget: isHighRigor,
         benchmarkType: taskStyle,
         taskStyle,
         // D-parallel: high+ tiers run rollouts concurrently (Promise.allSettled,

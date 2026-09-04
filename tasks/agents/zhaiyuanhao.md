@@ -1,8 +1,8 @@
 # Agent 注册卡 — zhaiyuanhao
 
-- 控制人: 翟源昊
+- 控制人: 翟苑皓
 - 拼音:   zhaiyuanhao
-- agent-id: <待填写实际 agent-id（claude-sonnet-4.5 / gpt-4 / cursor-claude）>
+- agent-id: claude-code
 - 注册日期: 2026-09-04
 - 工作分支: feature/zhaiyuanhao
 - 角色:  **Leader（超级骨干）**
