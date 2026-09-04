@@ -153,6 +153,201 @@ W8  | 复盘       | 复盘         | 复盘     | 复盘       | 复盘
 - **每周一 stand-up**（30 分钟）：每人 3 条（做完/在做/阻塞）；Leader 把阻塞点写进 `tasks/standups/<date>.md`。
 - **风险升级路径**：阻塞 > 1 天 → Leader 协调；> 2 天 → 用户介入。
 - **代码 reviewer**：W2/W3/W4 互评（轮值）；Leader 终审；实习 PR 只走 Leader。
+- **分支整洁规则（防污染远端仓库）**：每个 agent **只能在 `feature/<pinyin>` 分支追踪自己负责交付的代码、文档与测试**。以下内容**禁止 commit/push 到任何 `feature/<pinyin>` 分支**，需另寻路径管理：
+  - **个人测试草稿 / 实验脚本**（如 `tests-sandbox/`、`sandbox-*.ts`、`playground/`）→ 留在本地工作区，**不入 git**。
+  - **个人开发草稿 / 思考笔记**（如 `notes-*.md`、`drafts/`、`scratch.md`）→ 留在本地工作区。
+  - **第三方参考材料 / 临时下载**（网络复制的代码片段、论文、API 文档副本）→ 仅本地参考，**不入 git**。
+  - **生成的中间产物**（如 `dist/`、`build/`、`.next/`、`node_modules/`、各 agent 自跑的评测 `results/` 缓存）→ 通过 `.gitignore` 屏蔽，绝不提交。
+  - **个人调试输出 / 截屏 / 日志** → 留在本地。
+  - **其他 agent 的工作副本**（误 pull 到本地的别人分支）→ 不与自己的分支合并，单独 checkout 回自己分支。
+  - **任何看起来是"自己的、暂时的、跟交付无关"的内容**，先问 Leader 该不该入 git，不要自作主张。
+- **判断标准（三个问题）**：
+  1. 这东西是 **评审者必须看到** 的吗？（不入评审分支的 → 不入 git）
+  2. 删掉它会 **影响其他 agent 工作** 吗？（不影响 → 不入 git）
+  3. 这东西 **会随时间增长且其他人不需要看到细节** 吗？（如日志、缓存 → 不入 git）
+  - 三个问题任何一项答案是"否"→ 不要提交到 `feature/<pinyin>`。
+- **违反处理**：Leader 评审发现分支脏文件 → REVISE + 强 `git rm` 清扫 → 在 `tasks/incidents/` 写日志；二次违反锁 agent 名册。
+- **`.gitignore` 全局防护**（kultur 在 W1 末尾提交到 develop，所有 agent 共享）：
+
+```gitignore
+# 个人草稿与临时（每个 agent 不应在 feature/<pinyin> 提交）
+notes-*.md
+drafts/
+scratch*.md
+sandbox-*.ts
+sandbox-*.mjs
+playground/
+# 实验性测试 / 草稿脚本
+tests-sandbox/
+*draft*.test.ts
+# 临时调试输出
+debug-*.log
+*.tmp-debug
+# 第三方参考材料（下载的代码片段、论文）
+third-party-refs/
+# 评审产物（每次跑随机数据，不入 git）
+docs/panshalach/evals/sessions/
+docs/panshalach/evals/cache/
+# 已有屏蔽保留
+.zorge*.bak
+node_modules/
+dist/
+*.log
+.env
+```
+
+- **临时文件落本地约定**：所有"非交付"文件落 `/tmp/<agent-id>-<date>/` 或 `<agent-workspace>/local/`，**不进仓库根**。Leader 在 CI 加一行 `git ls-files | grep -E '(notes-|drafts/|sandbox-|scratch|debug-)' && exit 1` 作为分支 gate。
+
+### 6.1 强制工作日志与交接（每个 agent 必须做）
+
+**目的**：让多个 agent 并行工作时能看见彼此"为什么这么改、在干什么"，并能异步确认"我这块要不要等另一块"。
+
+#### 6.1.1 工作日志：`docs/agent/logs/<branch>/<branch>-YYYY-MM-DD.md`
+
+- **每个 `feature/<pinyin>` 分支一个文件夹**：`docs/agent/logs/feature-<pinyin>/`。
+- **每个工作日一个 md 文件**，文件名 `<branch>-YYYY-MM-DD.md`（例：`feature-zhangsan-2026-09-05.md`）。
+- **每个文件结构**（每次新增内容按日期追加，不删除已落下的内容；同一文件多日更新仅追加，不覆盖）：
+
+```markdown
+# <branch> 工作日志 — YYYY-MM-DD
+
+agent: <pinyin> / <agent-id>
+date:  YYYY-MM-DD
+last_updated: HH:MM
+
+## 想做什么（目的）
+<一段话：本轮想达到什么目标，为什么>
+
+## 打算怎么改（动作）
+- 改：src/xxx.ts（理由：…）
+- 改：tests/xxx.test.ts（理由：…）
+- 新增：src/yyy.ts（理由：…）
+
+## 实际干了什么（事实）
+- 改了 src/xxx.ts L100-150（做 X）
+- 跑了 npm test（结果：525 pass / 0 fail）
+- 跑了 scripts/eval/run-eval.mjs --mode mock（结果：exit 0 / JSON 落盘）
+
+## 卡点 / 需要别人决定（接口争议）
+- 我把 `refine()` 返回的 card 数组扩成了 `{ cards, merged }`，**影响 W3 中坚 A 的 taskState 持久化接口**，请他在下次 stand-up 同步。
+- 我看到 W4 的 `localNgramEmbed` 函数签名变了，看 PR #42 没问题，但要确认。
+
+## TODO（明天 / 下一轮）
+- [ ] 跑 T3 长文档跨章节 5 轮 mock
+- [ ] 等 W3 中坚 A 确认 TaskState 接口后合入
+```
+
+- **更新规则（重要）**：
+  - 同一天多次更新 → **追加**（append），不要 `cat > file.md` 覆盖；用 Edit 的"追加"或 `>> file.md`。
+  - 前一天文件**永远保留**，不删除、不改写。
+  - `last_updated` 时间戳每改一次更新一次。
+  - **不写"思考过程"的冗长内容**，只写"目的 + 动作 + 事实 + 卡点"4 块。
+- **写入时机**：每次 `git commit` 之前**必须**有对应日志条目的最近改动记录；CI gate 检查"commit 时间戳 ≥ log 最后更新时间"。
+- **.gitignore 调整**：`docs/agent/logs/**` **不被 gitignore**，正常入 git（这是有意追踪的协作记忆）。但允许 `.gitignore` 排除 `*.local.md`、`*.tmp` 等临时副本。
+
+#### 6.1.2 交接声明：`docs/agent/handover/<branch>-handover.md`
+
+- **目的**：跨 agent 协调"我这块依赖谁/谁能合我的"。每个分支**必须**有且只有一个 `handover/<branch>-handover.md`（branch = `feature-<pinyin>`）。
+- **结构**：
+
+```markdown
+# 交接声明 — <branch>
+
+branch: feature/<pinyin>
+owner:   <pinyin>
+status:  WIP | READY-FOR-REVIEW | BLOCKED-ON-<branch>
+
+## 我需要别人确认的接口（resolved: false）
+- [ ] W1 Leader: `OpenAICompatClient.complete` 返回 `ModelClientOutput` 对象（含 tool_calls 字段）
+- [ ] W3 中坚A: `MemoryEventStore.append` 接受 `kind/topic/summary/refs/sessionId`
+
+## 我已经确认的接口（resolved: true）
+- [x] W2 实干: `RefinedMemoryStore.markUsed(cardIds)` 签名
+
+## 我暴露的接口（别人依赖）
+- `PromptBuilder.appendMemoryCardsDedup` 会在注入前 markUsed（影响 W3 eventExtractor 的二次写入）
+
+## 阻塞我
+- 无 / 等 W1 PR #41 合并 / 等 openPangu 端点就绪
+
+## 时间承诺
+- 预计 N 周内 merge-ready
+- 风险：...
+```
+
+- **更新规则**：
+  - 状态变更（`WIP` → `READY-FOR-REVIEW` → `MERGED`）必须**只追加**，不改历史；用版本号 `handover/<branch>-handover.md` + `handover/<branch>-handover.v2.md` 留审计。
+  - 任何 agent 工作前**必须**先 `cat handover/feature-*.md` 看有没有 unresolved 接口冲突；如有则先在 PR 描述里"引用对应 handover 行"再开工。
+  - **开工前必查**（写进 `AGENT-CONTRIBUTION.md` Pre-merge 清单）："已读 `docs/agent/handover/feature-*.md` 中所有未 resolved 项"打勾。
+
+#### 6.1.3 协作前置流程
+
+```bash
+# 1. 开工前：拉所有 handover 看是否有指向自己的未解项
+git fetch origin
+for h in docs/agent/handover/feature-*.md; do
+  echo "=== $h ==="
+  grep -E "我需要别人确认的接口|我需要.*确认" "$h" || true
+done
+# 若看到 "owner: <my-pinyin>" 的未 resolved 项 → 先去解决（写 PR / 改自己的设计）
+
+# 2. 工作中：每天结束前写日志
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DATE=$(date +%Y-%m-%d)
+mkdir -p "docs/agent/logs/${BRANCH}"
+LOG="docs/agent/logs/${BRANCH}/${BRANCH}-${DATE}.md"
+if [[ ! -f "$LOG" ]]; then
+  echo "# ${BRANCH} 工作日志 — ${DATE}" > "$LOG"
+  echo "" >> "$LOG"
+  echo "agent: <pinyin> / <agent-id>" >> "$LOG"
+  echo "date:  ${DATE}" >> "$LOG"
+  echo "last_updated: $(date +%H:%M)" >> "$LOG"
+  echo "" >> "$LOG"
+  echo "## 想做什么（目的）" >> "$LOG"
+  echo "" >> "$LOG"
+  echo "## 打算怎么改（动作）" >> "$LOG"
+  echo "" >> "$LOG"
+  echo "## 实际干了什么（事实）" >> "$LOG"
+  echo "" >> "$LOG"
+  echo "## 卡点 / 需要别人决定（接口争议）" >> "$LOG"
+  echo "" >> "$LOG"
+  echo "## TODO（明天 / 下一轮）" >> "$LOG"
+fi
+# 用编辑器或 cat >> append "## HH:MM 更新 ..." 块
+
+# 3. 提交前：保证当日日志覆盖了本次 commit 的变更
+git diff --stat
+git add docs/agent/logs/${BRANCH}/${BRANCH}-${DATE}.md
+# 然后再 git add src/...
+```
+
+#### 6.1.4 Leader / CI 责任
+
+- Leader 每周一汇总 5 人的 `handover/*.md` 中 unresolved 项，在 stand-up 第一项过这些。
+- CI 加 gate：
+  - `scripts/agent-logs-gate.sh` 检查每个 `feature/*` 分支是否新增/更新了当日 `docs/agent/logs/<branch>/<branch>-<date>.md` 文件，与本次 commit 时间戳偏差 ≤ 1 小时。
+  - `scripts/agent-handover-check.sh` 检查开工前 `git fetch origin` 后 `handover/feature-*.md` 中 owner=自己分支的未 resolved 项是否在 PR 描述里被引用。
+- 实习 agent（W5）可以把日志/交接维护作为"练手入口"，让 Leader 帮其过日志格式。
+
+#### 6.1.5 落到仓库的具体文件清单
+
+| 路径 | 创建者 | 是否入 git |
+|---|---|---|
+| `docs/agent/logs/feature-<pinyin>/<branch>-YYYY-MM-DD.md` | 该分支 owner | ✅ 强制入 git |
+| `docs/agent/logs/.gitkeep` | Leader W1 | ✅ |
+| `docs/agent/handover/feature-<pinyin>-handover.md`（及 `.v2.md` ...） | 该分支 owner | ✅ 强制入 git |
+| `docs/agent/handover/README.md` | Leader W1（说明用法） | ✅ |
+
+`.gitignore`（在原 §6 末尾块下追加）：
+```gitignore
+# docs/agent/logs 与 handover 是强制追踪的协作记忆，不忽略
+# docs/agent/logs/* 与 docs/agent/handover/* 保持入 git
+# 只忽略其下的临时副本
+docs/agent/logs/**/*.local.md
+docs/agent/logs/**/*.tmp
+docs/agent/handover/**/*.local.md
+docs/agent/handover/**/*.tmp
+```
 
 ---
 
