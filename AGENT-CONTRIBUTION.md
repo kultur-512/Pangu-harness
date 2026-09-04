@@ -204,10 +204,106 @@ DECISION: APPROVE | REVISE
 - [ ] 公共 API / 持久化路径 / 命名改动已写入对应文档
 - [ ] commit message 含 `Tests:` `Docs:` `Risks:`
 - [ ] 已 `cat .agents/locks/*.lock` 确认无他人持有锁
-- [ ] 已 `git pull --rebase` 同步主分支
+- [ ] **已 `git fetch origin master develop` + `git rebase origin/develop` 同步基线**（关键防合并错）
+- [ ] **PR 描述引用了 `docs/agent/handover/feature-*.md` 中跟自己相关的行**（防未读别人就 push）
+- [ ] **已 cat `docs/agent/handover/feature-*.md` 确认无未 resolved 项指向自己**
+- [ ] **分支名 = `feature/<pinyin>`**（`B.3`）
+- [ ] **自己 `tasks/agents/<pinyin>.md` 已注册**（`B.2`）
 - [ ] 没有引入新的运行时依赖
 
 > 缺一项 → REVISE。
+
+### 10.1 Git 协作全流程（每次写代码必做）
+
+**目的**：5+ 人并行 + 多分支 feature → 没规则就会出合并灾难。下面是**每个人、每一次写代码必走**的硬流程。详细版见 `WORK-PLAN-MAIN-LEARN.md` §6.2；这里是 checklist 版。
+
+**A. 开工前（pre-flight，每次开工或 >1 小时未操作后重做）**
+```bash
+git fetch --all --tags --prune          # 拉远端最新
+git fetch origin master develop
+git rev-parse --abbrev-ref HEAD         # 必须 feature/<own-pinyin>
+git status                              # 工作区干净
+git diff --stat origin/feature/<own-pinyin>..HEAD
+# 吸收最新 develop 基线
+git fetch origin develop
+git rebase origin/develop               # 若冲突：解决后 `git rebase --continue`
+# 读别人对接口的请求
+for f in $(git ls-files docs/agent/handover/ | grep -v README); do
+  echo "=== $f ==="
+  grep -E "我需要别人确认的接口" "$f" || true
+done
+```
+
+**B. 写代码过程中（每次 `git commit` 之前）**
+```bash
+git status
+git diff --stat                          # 看清楚改了什么
+git add <具体文件>                       # 不要 `git add .` / `-A`
+git commit -m "<scope>: <summary>"       # 多行 message 必含 Tests: Docs: Risks:
+# 必写日志（防 commit 没记录原因）
+cat >> docs/agent/logs/$(git rev-parse --abbrev-ref HEAD)/$(git rev-parse --abbrev-ref HEAD)-$(date +%F).md <<EOF
+
+## HH:MM 更新
+- 改了：<文件>（理由）
+- 跑了：<命令 + 结果>
+- 卡点：<无 / 链接其他人>
+EOF
+```
+- 绝不用 `git commit --amend` 已 push 的 commit（改写历史）
+- 绝不 `git commit -m ""` 空 message
+
+**C. 推送 / PR 前**
+```bash
+# 必读所有 handover（尤其别人分支）
+for f in docs/agent/handover/feature-*.md; do
+  [ "$f" = "docs/agent/handover/feature-<own-pinyin>-handover.md" ] && continue
+  echo "=== $f ==="; cat "$f"
+done
+# 推送前再 rebase 一次 develop
+git fetch origin develop
+git rebase origin/develop
+# 推送（严禁 --force，除非与挂靠主力 + Leader 约定）
+git push origin feature/<pinyin>
+```
+
+**D. PR 描述模板**（`§9` 模板 + 引用 handover）：
+```
+## What
+- <改动点>
+## Why
+- <目标 + 引用 docs/agent/handover/feature-<my-pinyin>-handover.md 的对应行>
+## Tests
+- npm test → 525/525
+## Docs
+- <改动的文档/日志/handover>
+## Risks
+- <风险与回滚方式>
+```
+
+**E. 合入 develop（仅 Leader 决定）**
+```bash
+git checkout develop
+git pull --rebase origin develop
+git checkout feature/<pinyin>
+git rebase origin/develop
+# develop 在我们分支前面
+git log --oneline origin/develop..feature/<pinyin>
+git checkout develop
+git merge --no-ff feature/<pinyin> -m "merge feature/<pinyin>: <scope> (#<PR号>)"
+git push origin develop
+```
+
+**F. 红线（绝不能做）**
+- ❌ 直接 `git commit` 到 `develop` / `master`（仅 kultur 能推 master，agent push develop 也违反 §B）
+- ❌ `git push --force` 已 push 的 commit（改写历史）
+- ❌ 拉 `git pull` 不带 `--rebase`（污染 develop 历史）
+- ❌ `git add .` / `-A` 把脏文件一起塞
+- ❌ `git commit -m ""` 空 message
+- ❌ `git commit --amend` 别人已拉走的 commit
+- ❌ 多个 agent 同时改同一文件不协调（必须先 `§6` 写锁 + `§6.1.2` handover 同步）
+- ❌ 跨分支 rebase 后忘了 `--force-with-lease`（远端分支出现"两个根"）
+
+> 违反上面任何一条 → Leader REVISE + 写 `tasks/incidents/`。
 
 ---
 

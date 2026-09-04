@@ -390,7 +390,147 @@ docs/agent/handover/**/*.local.md
 docs/agent/handover/**/*.tmp
 ```
 
----
+### 6.2 Git 协作流程（强约束，防合并错误）
+
+**为什么需要**：5+ 人并行 + 多分支 feature → 没规则会产生"漏拉、错合、误 push master、隐式 rebase"等灾难。下面是**每个人、每一次写代码前必做**的标准流程。
+
+#### 6.2.1 启动 / 开工前（pre-flight）
+
+1. **必拉基线**（每次开工前必跑，且至少 1 小时内最多跑一次）：
+   ```bash
+   git fetch --all --tags --prune
+   git fetch origin master develop
+   ```
+2. **确认自己分支干净**：
+   ```bash
+   git status            # 干净 or 已 staged
+   git rev-parse --abbrev-ref HEAD   # 必须 feature/<own-pinyin>
+   git diff --stat origin/feature/<own-pinyin>..HEAD   # 自己独有的进度
+   ```
+3. **拉取更新基线**（推荐用 rebase 而不是 merge，保留线性历史）：
+   ```bash
+   # 你的 feature 分支领先 develop 多少？有多少冲突高风险？
+   git fetch origin develop
+   git rebase origin/develop
+   # 若冲突：先 `git rebase --abort` 看任务卡是否触碰了别人也在改的文件；
+   # 若不可避免冲突 → 解决后 `git rebase --continue` 并在 `docs/agent/logs/<branch>/...` 写"rebase 了哪些文件、原因"
+   ```
+4. **确认"我能 push 到哪儿"**（防误推 master）：
+   ```bash
+   git remote -v
+   git branch -vv --no-color | head
+   # 当前分支必须以 feature/<pinyin>/ 开头，否则不得 push
+   ```
+5. **查 handover 是否锁了我**（`§6.1.2` 流程）：
+   ```bash
+   for h in $(git ls-files docs/agent/handover/ | grep -v README); do
+     echo "=== $h ==="
+     grep -E "我需要别人确认的接口" "$h" || true
+   done
+   # 任何"owner: <my-pinyin>" 且 unresolved 的项 → 先解决再开工
+   ```
+
+#### 6.2.2 写代码过程中（每次 `git commit` 之前）
+
+1. **小步提交**：一个 commit 一个逻辑改动；禁止混入"顺手清理"和重构。
+2. **commit 前 3 件套**：
+   ```bash
+   git status
+   git diff --stat                      # 看清楚改了什么
+   git add <具体文件>                   # 不要 `git add .` / `-A`
+   git commit -m "<scope>: <summary>"   # 多行 message 见 §5.2
+   ```
+3. **commit message 必含 `Tests:` `Docs:` `Risks:` 三段（任一段可简写但不得全省）**。
+4. **当日必写日志**（`§6.1.1`）：commit 之前先 `cat >> docs/agent/logs/<branch>/<branch>-$(date +%F).md` 加一段当日更新；否则 CI gate 拒合入 develop。
+5. **绝不** `git commit --amend` 已 push 到远端的 commit（会改写历史 → 别人 rebase 失败）。本地未 push 的 commit 可以 amend。
+6. **绝不** 用 `git commit -m ""` 空 message；CI gate 拒。
+
+#### 6.2.3 推送 / PR 前
+
+1. **必读 `docs/agent/handover/feature-*.md` 自己分支 + 别人分支**：
+   ```bash
+   git fetch origin
+   # 自己分支
+   cat docs/agent/handover/feature-<my-pinyin>-handover.md
+   # 别人分支（看是否有 unresolved 项提到我）
+   for f in docs/agent/handover/feature-*.md; do
+     [ "$f" = "docs/agent/handover/feature-<my-pinyin>-handover.md" ] && continue
+     echo "=== $f ==="; cat "$f"
+   done
+   ```
+2. **推送前 rebase develop 一次**（吸收 base 的最新变更）：
+   ```bash
+   git fetch origin develop
+   git rebase origin/develop
+   # 有冲突：解决后 `git rebase --continue`；若冲突太多，改为 `git merge origin/develop` 但需在 PR 描述里说明
+   ```
+3. **推送**：
+   ```bash
+   git push origin feature/<pinyin>
+   # 严禁 `git push --force` / `git push --force-with-lease`（除非已与挂靠主力 + Leader 约定）
+   ```
+4. **PR 描述模板**（`AGENT-CONTRIBUTION.md` §9 模板 + 引用 handover）：
+   ```markdown
+   ## What
+   - <改动点>
+
+   ## Why
+   <目标 + 引用 docs/agent/handover/feature-<pinyin>-handover.md 的对应行>
+
+   ## Tests
+   - `npm test` → 525/525
+
+   ## Docs
+   - <改动的文档/日志/handover>
+
+   ## Risks
+   - <风险与回滚方式>
+   ```
+
+#### 6.2.4 合入 develop（仅 Leader / kultur 决定）
+
+1. **Leader 评审通过后**：
+   ```bash
+   git checkout develop
+   git pull --rebase origin develop
+   # 切到主力/学习位的工作分支
+   git checkout feature/<pinyin>
+   git rebase origin/develop   # 把 develop 提上来
+   # 强力确认：develop 在我们分支前面
+   git log --oneline origin/develop..feature/<pinyin>
+   # 合并（建议 no-ff 留审计线）
+   git checkout develop
+   git merge --no-ff feature/<pinyin> -m "merge feature/<pinyin>: <scope> (#<PR号>)"
+   git push origin develop
+   ```
+2. **绝不允许直接 push master**。master 只在 release 周期由 kultur 推。
+
+#### 6.2.5 常见错误模式与防
+
+| 错误模式 | 触发后果 | 正确做法 |
+|---|---|---|
+| 没 `git fetch` 就 `git push` | 推掉别人刚合的变更 → 历史分叉 | push 前必 `git fetch origin` + `git status` 看"ahead/behind" |
+| 在 develop 上直接 commit | 污染主线，团队历史被破坏 | 永远在 `feature/<pinyin>` 写 |
+| `git pull` 替代 `git pull --rebase` | develop 出现无意义 merge commit，污染历史 | 默认用 `git pull --rebase` |
+| `git push --force` 已 push 的 commit | 远端历史被改写，其他人 rebase 全失败 | 仅本地未 push commit 可 `commit --amend` |
+| 多个 agent 同时改同一文件不协调 | 合并冲突 + 互相覆盖 | `§6` 写锁 `.agents/locks/*.lock` + `§6.1.2` handover 协同 |
+| 把别人分支的内容 commit 进了自己 | 历史混乱、责任不清 | 误 pull 后 `git checkout 自己分支`，**不**与别人分支合并 |
+| 一次 commit 塞 5 个不相关改动 | 评审难定位、回滚粒度大 | 小步提交；用 `git add <文件>` 而非 `git add .` |
+| commit 时不写 message 或 `git commit -m ""` | 历史无信息 | commit message 必含 `Tests:` `Docs:` `Risks:` |
+| 跨分支 rebase 后忘了 force-push 别人旧 commit | 远端分支会出现"两个根" | `git push --force-with-lease=refname:expected`（限自己分支）|
+| 把 develop 当 feature 推 | 全员受影响 | develop 是"集成中"，不是"主分支"；feature 是 PR 目标 |
+
+#### 6.2.6 CI gate（kultur 在 W1 末尾落到 `.github/workflows/agent-branch-guard.yml`）
+
+- **pre-commit**：hook 检查当日 `docs/agent/logs/<branch>/<branch>-<date>.md` 已更新。
+- **push 时**：
+  - 当前分支若 = `master` 或 `develop` → 拒绝（仅 kultur 可推）。
+  - 推送者 SSH key 不在 `KULTUR_KEY_FINGERPRINT` 白名单 → 拒绝（master/develop gate）。
+  - 推送分支若 = `feature/<pinyin>` 但 `tasks/agents/<pinyin>.md` 不存在 → 拒绝（未注册）。
+  - 推送分支若 PR 描述里没引用 `docs/agent/handover/feature-*.md` 中跟自己相关的行 → 拒绝（未读 handover）。
+- **pre-merge 到 develop**：CI 必须 `npx tsc --noEmit` + `npm test` + `verify-panshalach-cleanup.mjs` + `node scripts/eval/smoke-eval.mjs` 全绿。
+
+
 
 ## 7. 依赖与降级
 
