@@ -1,0 +1,8 @@
+# 任务与 stand-up 目录（运行时产生；强制入 git）
+# 结构：
+# tasks/
+# ├── agents/                # 4 主力 + K 学习位 注册卡
+# ├── standups/              # 每周 stand-up 纪要
+# ├── learner-notes/         # 学习位笔记
+# ├── incidents/             # 冲突/事故复盘
+# └── <task-id>.md           # 单 agent 任务卡（AGENT-CONTRIBUTION.md 附录 A 模板）

@@ -1,0 +1,105 @@
+name: agent-branch-guard
+
+# 触发条件：所有 push + 所有 PR（覆盖 master / develop / feature/*）
+on:
+  push:
+    branches: [master, develop, 'feature/**']
+  pull_request:
+    branches: [master, develop, 'feature/**']
+
+jobs:
+  branch-ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Branch ownership check
+        run: |
+          set -euo pipefail
+          current="${{ github.ref_name }}"
+          actor="${{ github.actor }}"
+
+          echo "current=$current  actor=$actor"
+
+          # 1) master / develop 只能由 kultur 推
+          if [[ "$current" == "master" || "$current" == "develop" ]]; then
+            if [[ "$actor" != "kultur" ]]; then
+              echo "✗ $actor 试图直接 push/合并到 $current（仅 kultur 可推）"
+              exit 1
+            fi
+            echo "✓ $current 由 kultur 推"
+            exit 0
+          fi
+
+          # 2) feature/* 必有对应注册卡
+          if [[ "$current" == feature/* ]]; then
+            pinyin="${current#feature/}"
+            pinyin="${pinyin%%/*}"
+            if [[ ! -f "tasks/agents/${pinyin}.md" ]]; then
+              echo "✗ feature 分支 $current 缺少注册卡 tasks/agents/${pinyin}.md"
+              exit 1
+            fi
+            echo "✓ feature 分支 $current 注册卡存在"
+          fi
+
+      - name: PR references handover
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          body="${{ github.event.pull_request.body }}"
+          current="${{ github.ref_name }}"
+
+          # 仅 feature/* PR 强制引用 handover；master / develop 由 kultur 手动合
+          if [[ "$current" != feature/* ]]; then
+            echo "✓ master/develop PR 不强制引用 handover"
+            exit 0
+          fi
+
+          # 必须引用 docs/agent/handover/feature-*.md 中任意一个
+          if ! echo "$body" | grep -qE 'docs/agent/handover/feature-[a-z0-9-]+\.md'; then
+            echo "✗ feature PR 未引用 docs/agent/handover/feature-*.md —— 必须先 cat 别人 handover 后在 PR 描述里写引用"
+            exit 1
+          fi
+          echo "✓ PR 描述包含 handover 引用"
+
+  agent-logs-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Each feature branch must have a current-day log
+        run: |
+          set -euo pipefail
+          current="${{ github.ref_name }}"
+          if [[ "$current" != feature/* ]]; then
+            echo "✓ 非 feature 分支，跳过日志 gate"
+            exit 0
+          fi
+
+          # 必须存在本工作日（UTC）的日志文件
+          today="$(date -u +%Y-%m-%d)"
+          log_path="docs/agent/logs/${current}/${current}-${today}.md"
+          if [[ ! -f "$log_path" ]]; then
+            echo "✗ 缺少当日日志: $log_path —— 参见 AGENT-CONTRIBUTION.md §6.1.1"
+            exit 1
+          fi
+          echo "✓ 当日日志存在: $log_path"
+
+  build-and-test:
+    needs: [branch-ownership, agent-logs-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --omit=optional --no-audit --no-fund
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: node verify-panshalach-cleanup.mjs

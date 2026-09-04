@@ -22,3 +22,28 @@ sandbox-test-runner.cjs
 /test-*.cjs
 /probe-*.cjs
 
+# === Agent 协作记忆（强制入 git 留作追溯，仅临时副本忽略）===
+# docs/agent/logs/** 与 docs/agent/handover/** 是协作记忆，正常入 git
+docs/agent/logs/**/*.local.md
+docs/agent/logs/**/*.tmp
+docs/agent/handover/**/*.local.md
+docs/agent/handover/**/*.tmp
+
+# === Agent 草稿 / 沙箱（不允许入 feature/<pinyin>）===
+notes-*.md
+drafts/
+scratch*.md
+sandbox-*.ts
+sandbox-*.mjs
+playground/
+tests-sandbox/
+*draft*.test.ts
+debug-*.log
+*.tmp-debug
+third-party-refs/
+
+# === 评审产物（每次跑随机数据，不入 git）===
+docs/panshalach/evals/sessions/
+docs/panshalach/evals/cache/
+
+
