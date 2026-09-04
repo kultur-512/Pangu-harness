@@ -20,7 +20,7 @@ import { BenchmarkProfiles } from './benchmarks/BenchmarkProfiles.js';
 import { Tier, TierConfig, TierRegistry, DEFAULT_TIER } from './tiers/TierConfig.js';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import type { StepEvent } from './cli/repl/types.js';
+import type { StepEvent, ModelClientOutput } from './cli/repl/types.js';
 import { ToolCallFormatDetector } from './adapter/ToolCallFormatDetector.js';
 import { createEngineAdapter } from './tools/engineAdapter.js';
 import { redactAnchorLines } from './utils/redact.js';
@@ -336,7 +336,7 @@ export class PanshalachChaser {
         // stream, re-emit throttled thinking.delta / message.delta events via
         // onStep, and return the accumulated raw text so VerifyCritiqueLoop's
         // parsing path is untouched. Falls back to plain complete() otherwise.
-        const makeStreamingComplete = (): ((prompt: string) => Promise<string>) => {
+        const makeStreamingComplete = (): ((prompt: string) => Promise<string | ModelClientOutput>) => {
           const streamable = originalClient as any;
           if (typeof streamable?.streamChat !== 'function') {
             // Preserve original semantics: complete() may return a string OR an
@@ -357,12 +357,19 @@ export class PanshalachChaser {
           // Emit every chunk as-is. Ink dispatches are cheap enough at chat
           // cadence, and the Hermes-style live feel matters more than
           // micro-batching here (typically 10-100 chunks per reply).
-          return async (prompt: string): Promise<string> => {
+          // P1.1: type:'toolCalls' chunk（原生 function calling）聚合后以结构化
+          // 对象返回，VerifyCritiqueLoop.preParsedToolCalls 通道直接消费。
+          return async (prompt: string): Promise<string | ModelClientOutput> => {
             let text = '';
             let startedThinking = false;
             let startedMessage = false;
+            let streamToolCalls: unknown[] | null = null;
 
             for await (const chunk of streamable.streamChat(prompt)) {
+              if (chunk && (chunk as any).type === 'toolCalls' && Array.isArray((chunk as any).toolCalls)) {
+                streamToolCalls = ((chunk as any).toolCalls as unknown[]).slice();
+                continue;
+              }
               if (!chunk || typeof chunk.text !== 'string') continue;
               if (chunk.type === 'thinking') {
                 emitDelta('thinking', chunk.text, !startedThinking);
@@ -378,6 +385,15 @@ export class PanshalachChaser {
             try {
               ToolCallFormatDetector.probeAndParse(text, { strictStructured: isHighRigor });
             } catch {}
+
+            // 原生 function calling 优先：网关已给出结构化调用，不再走文本解析
+            if (streamToolCalls && streamToolCalls.length > 0) {
+              return {
+                content: text,
+                toolCalls: streamToolCalls,
+                detectedFormat: 'openai-json',
+              } as ModelClientOutput;
+            }
 
             return text;
           };

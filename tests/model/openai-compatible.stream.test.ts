@@ -132,4 +132,34 @@ describe('openai-compatible streamChat', () => {
     const out = await client.complete('q');
     assert.equal(out, '你好', `SSE body must be parsed by complete(), got: ${JSON.stringify(out)}`);
   });
+
+  it('assembles delta.tool_calls increments into a toolCalls chunk (P1.1)', async () => {
+    const { port, close } = await startSseServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const events = [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'wri', arguments: '' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'te_file', arguments: '{"fi' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: '', arguments: 'le":"a.ts"}' } }] } }] },
+        { choices: [{ delta: { content: '正在写入' } }] },
+        '[DONE]',
+      ];
+      for (const ev of events) {
+        res.write(`data: ${typeof ev === 'string' ? ev : JSON.stringify(ev)}\n\n`);
+      }
+      res.end();
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const chunks: any[] = [];
+    for await (const c of client.streamChat!('q')) chunks.push(c as any);
+
+    const tcChunks = chunks.filter(c => c.type === 'toolCalls');
+    assert.equal(tcChunks.length, 1, 'exactly one toolCalls chunk at stream end');
+    const tc = tcChunks[0].toolCalls[0];
+    assert.equal(tc.toolName, 'write_file');
+    assert.deepEqual(tc.params, [{ name: 'file', value: 'a.ts' }]);
+    const text = chunks.filter(c => c.type === 'text').map(c => c.text).join('');
+    assert.equal(text, '正在写入');
+  });
 });

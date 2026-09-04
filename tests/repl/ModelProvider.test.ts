@@ -20,10 +20,10 @@ import type { ModelClient, ModelProvider } from '../../src/cli/repl/types.js';
 describe('P3 ModelProvider (DefaultModelProvider)', () => {
   it('listModels includes default and registered names', () => {
     const p = createDefaultModelProvider();
-    p.register('maoyulin', () => ({ async complete() { return 'ok'; } } as ModelClient));
+    p.register('custom-provider', () => ({ async complete() { return 'ok'; } } as ModelClient));
     const list = p.listModels();
     assert.ok(list.includes('default'));
-    assert.ok(list.includes('maoyulin'));
+    assert.ok(list.includes('custom-provider'));
   });
 
   it('isModelAvailable("default") is false when no fallback', () => {
@@ -63,8 +63,8 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
   });
 
   it('createDefaultClient prefers explicit defaultModel when resolvable', async () => {
-    const p = createDefaultModelProvider({ defaultModel: 'maoyulin' });
-    p.register('maoyulin', () => ({ async complete() { return 'MAO'; } } as ModelClient));
+    const p = createDefaultModelProvider({ defaultModel: 'custom-provider' });
+    p.register('custom-provider', () => ({ async complete() { return 'MAO'; } } as ModelClient));
     const c = p.createDefaultClient();
     assert.ok(c);
     const out = await c!.complete('p');

@@ -116,3 +116,91 @@ describe('openai-compatible client (mocked)', () => {
     assert.ok(seenUrls.some(u => u.includes('/v1/models')));
   });
 });
+
+// ==================== P1.1: 原生 tool_calls 透传 ====================
+describe('openai-compatible tool_calls passthrough (mocked)', () => {
+  afterEach(() => {
+    restoreFetch();
+  });
+
+  it('complete returns structured output when message.tool_calls is present', async () => {
+    mockFetch(async (url) => {
+      if (url.includes('/chat/completions')) {
+        return {
+          ok: true,
+          json: {
+            choices: [{
+              message: {
+                content: '',
+                tool_calls: [{
+                  id: 'call_1',
+                  type: 'function',
+                  function: {
+                    name: 'write_file',
+                    arguments: '{"file":"src/a.ts","content":"x=1"}',
+                  },
+                }],
+              },
+            }],
+          },
+        };
+      }
+      return { ok: false };
+    });
+
+    const client = createOpenAICompatClient({ baseUrl: 'https://ex.com/v1', apiKey: 'k' });
+    const out: any = await client.complete('do it', { model: 'openPangu-7B' });
+
+    assert.equal(typeof out, 'object');
+    assert.equal(out.detectedFormat, 'openai-json');
+    assert.equal(out.content, '');
+    assert.ok(Array.isArray(out.toolCalls) && out.toolCalls.length === 1);
+    const tc = out.toolCalls[0];
+    assert.equal(tc.toolName, 'write_file');
+    assert.deepEqual(tc.params, [
+      { name: 'file', value: 'src/a.ts' },
+      { name: 'content', value: 'x=1' },
+    ]);
+    assert.ok(String(tc.rawBlock).includes('call_1'));
+  });
+
+  it('complete returns plain string when no tool_calls (unchanged behavior)', async () => {
+    mockFetch(async () => ({
+      ok: true,
+      json: { choices: [{ message: { content: 'plain text' } }] },
+    }));
+    const client = createOpenAICompatClient({ baseUrl: 'https://ex.com/v1', apiKey: 'k' });
+    const out = await client.complete('hi');
+    assert.equal(out, 'plain text');
+  });
+
+  it('custom headers from config are merged into requests', async () => {
+    let seenHeaders: Record<string, string> = {};
+    mockFetch(async (url, init) => {
+      seenHeaders = (init?.headers || {}) as Record<string, string>;
+      return { ok: true, json: { choices: [{ message: { content: 'ok' } }] } };
+    });
+
+    const client = createOpenAICompatClient({
+      baseUrl: 'https://ex.com/v1',
+      apiKey: 'k',
+      headers: { 'X-Gateway-Route': 'mindie-a' },
+    });
+    await client.complete('hi');
+
+    assert.equal(seenHeaders['X-Gateway-Route'], 'mindie-a');
+    assert.equal(seenHeaders['Authorization'], 'Bearer k');
+  });
+
+  it('convertOpenAIToolCalls tolerates malformed arguments', async () => {
+    const { convertOpenAIToolCalls } = await import('../../src/model/openai-compatible.js');
+    const out = convertOpenAIToolCalls([
+      { function: { name: 'bash', arguments: '{not-json' } },
+      { function: { name: 't2', arguments: '' } },
+      { no_function: true },
+    ]);
+    assert.equal(out.length, 2);
+    assert.deepEqual(out[0].params, [{ name: 'args', value: '{not-json' }]);
+    assert.deepEqual(out[1].params, []);
+  });
+});
