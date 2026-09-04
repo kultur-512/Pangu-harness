@@ -1,5 +1,5 @@
 // src/cli/repl/TerminalCapabilities.ts
-// P2-E: Centralized, pure, testable terminal capability detection.
+// Centralized, pure, testable terminal capability detection.
 // Used by InputReader and OutputRenderer for graceful degradation on
 // old Windows cmd, PowerShell ISE, non-TTY, etc.
 //

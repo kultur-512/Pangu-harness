@@ -1,5 +1,5 @@
 // src/cli/repl/FeatureTracker.ts
-// P1-T14 (L08): feature_list.json is a harness primitive — the active feature
+// feature_list.json is a harness primitive — the active feature
 // and its evidence live in a state FILE, not the chat history.
 //
 // Rules (harness-creator):

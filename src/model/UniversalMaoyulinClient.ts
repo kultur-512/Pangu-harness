@@ -133,7 +133,7 @@ export class UniversalMaoyulinClient {
   }
 
   /**
-   * P1.1: token-level streaming (SSE, stream:true).
+   * token-level streaming (SSE, stream:true).
    * Yields {type:'thinking'} for delta.reasoning_content and {type:'text'}
    * for delta.content. Falls back to a single complete() chunk when the relay
    * rejects streaming or sends nothing parseable.

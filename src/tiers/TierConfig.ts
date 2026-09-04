@@ -71,7 +71,7 @@ export interface TierConfig {
   parallelRollouts: number;
   /** 是否需要用户确认 */
   userConfirmationRequired: boolean;
-  /** 是否高纪律模式（isStrongMode 等价行为） */
+  /** 是否高纪律模式（严格解析 + 验证密集 + 并行 rollout） */
   isStrongMode: boolean;
   /** 锚点数量上限 */
   anchorMax: number;
@@ -205,16 +205,16 @@ export class TierRegistry {
   }
 
   /**
-   * 把新 tier 映射到旧 `isStrongMode` 旗标，便于逐步清理旧代码
+   * 读取 tier 的高纪律旗标
    */
-  static toLegacyIsStrongMode(tier: Tier | string | undefined): boolean {
+  static isStrong(tier: Tier | string | undefined): boolean {
     return TierRegistry.get(tier).isStrongMode;
   }
 
   /**
-   * 旧 --mode 旗标到新 tier 的转换（兼容层）
+   * 任务风格（ModelMode）到 tier 的映射
    */
-  static fromLegacyMode(mode: 'strong' | 'practical' | 'universal' | undefined): Tier {
+  static fromMode(mode: 'strong' | 'practical' | 'universal' | undefined): Tier {
     if (!mode) return DEFAULT_TIER;
     if (mode === 'practical') return 'quick';
     if (mode === 'strong') return 'high';

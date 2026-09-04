@@ -1,5 +1,5 @@
 // src/cli/repl/commands/CompactCommand.ts
-// M2.3: /compact — summarize old turns, keep recent ones, print token drop.
+// /compact — summarize old turns, keep recent ones, print token drop.
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
 import { compactSession, estimateSessionTokens } from '../compactService.js';

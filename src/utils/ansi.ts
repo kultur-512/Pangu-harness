@@ -1,7 +1,7 @@
 // src/utils/ansi.ts
 // Hand-written ANSI utilities (zero-dependency fallback)
 // Used when chalk is not available or fails to load.
-// P2-E: Windows terminal depth compatibility + testable capability detection
+// Windows 终端色彩深度兼容 + 可测试的能力探测
 
 const ESC = '\x1b';
 const RESET = `${ESC}[0m`;
@@ -26,7 +26,7 @@ const COLORS: Record<string, number> = {
 };
 
 /**
- * P2-E: Injectable environment for tests (pure detection).
+ * 可注入测试环境（纯探测）。
  */
 export interface TerminalEnv {
   platform?: string;

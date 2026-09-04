@@ -47,7 +47,7 @@ export async function runAgentTask(
     provider?: ModelProvider;
     onEvent: (event: any) => void;
     signal?: AbortSignal;
-    // M2.0: approval passthrough (rich ConfirmBar / line readline / headless)
+    // 审批透传（rich ConfirmBar / line readline / headless）
     approvalMode?: 'readonly' | 'default' | 'full';
     sessionAllowlist?: Set<string>;
     approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<'y' | 'n' | 'a'>;
@@ -68,7 +68,7 @@ export async function runAgentTask(
     if (req.model) session.model = req.model;
   }
 
-  // P0-fix: layered provider resolution on the process-wide shared instance.
+  // 进程级共享实例上的分层 provider 解析。
   // Explicit provider (caller) → shared provider → one hot-reload retry.
   // Keeps /model hot state and .panshalach.json discovery consistent with the REPL.
   const { client } = await resolveSharedClient(session.model, ctx.provider);
@@ -91,7 +91,7 @@ export async function runAgentTask(
       yes: true,
       dryRun: !!req.simulate,
       memoryPreInjected: true,
-      // M2.0: approval passthrough
+      // 审批透传
       approvalMode: ctx.approvalMode ?? 'readonly',
       sessionAllowlist: ctx.sessionAllowlist,
       approvalBridge: ctx.approvalBridge,

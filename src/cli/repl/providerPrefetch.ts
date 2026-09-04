@@ -18,7 +18,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 async function listModelsTimed(reg: ProviderRegistry, name: string): Promise<string[] | null> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), FETCH_TIMEOUT_MS);
-    timer.unref(); // M2.0: non-deadline guard — never holds the process
+    timer.unref(); // 非截止型守护 — 不阻塞进程退出
     reg.listModels(name)
       .then((m) => { clearTimeout(timer); resolve(m && m.length ? m : null); })
       .catch(() => { clearTimeout(timer); resolve(null); });

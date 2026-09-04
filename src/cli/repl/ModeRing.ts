@@ -1,5 +1,5 @@
 // src/cli/repl/ModeRing.ts
-// P4-4.7: permission mode ring (Claude Code confirm:cycleMode analog).
+// 权限模式环（模式循环切换）。
 // Order: plan → default → auto-accept → full → plan (shift+tab).
 //
 // plan  : reads free; writes/bash denied at the adapter pre-check; PromptBuilder

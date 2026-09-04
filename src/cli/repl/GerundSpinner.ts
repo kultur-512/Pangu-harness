@@ -1,5 +1,5 @@
 // src/cli/repl/GerundSpinner.ts
-// P4-4.9: whimsical gerund spinner label (CC-inspired, bilingual).
+// 趣味动名词 spinner 标签（双语）。
 // nextGerund() never repeats the previous word. Pure logic — the caller owns
 // the 4s interval and elapsed-time formatting (timers are gate-relevant).
 

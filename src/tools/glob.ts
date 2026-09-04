@@ -1,5 +1,5 @@
 // src/tools/glob.ts
-// M1-2.1: glob — self-implemented **, *, ? matching over a workspace walk.
+// glob — 自实现 **、*、? 匹配的工作区遍历。
 // ignoreDirs respected; 200 result cap; 2000-file scan hard stop.
 
 import path from 'path';

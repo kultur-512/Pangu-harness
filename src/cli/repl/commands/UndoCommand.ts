@@ -1,5 +1,5 @@
 // src/cli/repl/commands/UndoCommand.ts
-// M2.1: /undo — restore the last real write via the file-history checkpoint.
+// /undo — restore the last real write via the file-history checkpoint.
 // Optional arg: a workspace-relative path to undo only that file.
 
 import type { Command, CommandContext, CommandResult } from '../types.js';

@@ -1,5 +1,5 @@
 // src/cli/repl/commands/InitCommand.ts
-// P1-T13 (L06): /init — generate a project instruction directory page
+// /init — generate a project instruction directory page
 // (.panshalach/AGENTS.md) with verification commands + invariants, plus an empty
 // feature_list.json template. Idempotent (asks before overwriting existing).
 // The buildAgentsMd + probeWorkspace logic is EXPORTED so the rich interactive

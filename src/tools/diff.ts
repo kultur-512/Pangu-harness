@@ -1,5 +1,5 @@
 // src/tools/diff.ts
-// M1-2.3: zero-dependency line diff (LCS on trimmed middle, structured hunks).
+// 零依赖行级 diff（中部 LCS、结构化 hunks）。
 // - CRLF normalized to \n on split (output keeps \n)
 // - new file → all 'add'; deleted file → all 'del'
 // - contextLines (default 3) of 'ctx' around change runs

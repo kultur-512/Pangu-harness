@@ -181,7 +181,7 @@ export interface StepCallback {
   (event: StepEvent): void;
 }
 
-// ==================== P3: ModelProvider abstraction (per ModelProvider blueprint) ====================
+// ==================== ModelProvider abstraction (per ModelProvider blueprint) ====================
 /** 流式 chunk（P1.1）：reasoning 对应 reasoning_content 风格的思考增量 */
 export type ModelStreamChunk =
   | { type: 'text'; text: string }
@@ -191,7 +191,7 @@ export type ModelStreamChunk =
 export interface ModelClient {
   complete(prompt: string, opts?: CompleteOptions): Promise<string | ModelClientOutput>;
   /**
-   * P1.1: optional token-level streaming. When present, the chaser wrapper
+   * optional token-level streaming. When present, the chaser wrapper
    * prefers it over complete() and re-emits deltas as protocol-v2 events.
    * Must yield at least the full text across chunks; implementers may also
    * just fall back internally to complete() if streaming is unavailable.
@@ -246,7 +246,7 @@ export interface ModelProvider {
   invalidateProviderCache?(): void;
 }
 
-// ==================== P2-A: Path expansion for @path in run/simulate ====================
+// ==================== Path expansion for @path in run/simulate ====================
 export interface PathExpansionResult {
   /** Safe resolved absolute paths that are within the workspace root (prefix-checked) */
   expanded: string[];
@@ -336,7 +336,7 @@ export interface UiState {
     model: string;
     workspace: string;
     budgetRatio: number; // 0..1
-    /** P0.3: heuristic estimated-context usage ratio (0..1), chars/4 over nominal window */
+    /** heuristic estimated-context usage ratio (0..1), chars/4 over nominal window */
     ctxRatio?: number;
   };
   feed: FeedItem[];
@@ -350,7 +350,7 @@ export interface UiState {
     onResolve: (yes: boolean) => void;
   };
   running: boolean;
-  /** P1.4: live in-flight buffers (cleared when the turn settles) */
+  /** live in-flight buffers (cleared when the turn settles) */
   streamThinking: string;
   streamMessage: string;
 }

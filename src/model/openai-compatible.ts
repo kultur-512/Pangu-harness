@@ -15,7 +15,7 @@ export interface OpenAICompatConfig {
   timeoutMs?: number; // default 120000
 }
 
-/** P1.1: streaming chunk type (mirrors cli/repl/types ModelStreamChunk to avoid import cycle) */
+/** streaming chunk type (mirrors cli/repl/types ModelStreamChunk to avoid import cycle) */
 export interface ModelStreamChunk {
   type: 'text' | 'thinking';
   text: string;
@@ -194,7 +194,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     },
 
     /**
-     * P1.1: token-level streaming via SSE (stream:true).
+     * token-level streaming via SSE (stream:true).
      * Yields {type:'thinking'} for delta.reasoning_content (OpenAI-compatible style)
      * and {type:'text'} for delta.content. Falls back to a single text chunk
      * built from complete() when the endpoint does not support streaming.

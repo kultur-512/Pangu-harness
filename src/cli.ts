@@ -17,7 +17,7 @@ const rawArgs = process.argv.slice(2);
 // Support forcing classic line mode explicitly (for users who prefer the old REPL or for diagnostics).
 // Accepted: --classic, -C, --line
 let forceClassic = false;
-// M2.2: --resume [id|last] — restore a rollout before starting the interactive REPL.
+// --resume [id|last] — restore a rollout before starting the interactive REPL.
 let resumeArg: string | null = null;
 // P3-3.5: --branch <name> — fork the resume target into a new branch session.
 let branchArg: string | null = null;

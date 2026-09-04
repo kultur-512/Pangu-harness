@@ -1,5 +1,5 @@
 // src/tools/executor.ts
-// M1-2.1: tool execution kernel.
+// 工具执行内核。
 // - name normalization + alias table (case-insensitive)
 // - unified 20k output cap
 // - 5s hard timeout for file tools
@@ -71,7 +71,7 @@ export interface ToolExecutor {
   availableTools(): string[];
 }
 
-/** P5-5.2: an MCP-backed tool registration (namespaced mcp_<server>_<tool>). */
+/** MCP 工具注册（命名空间 mcp_<server>_<tool>）。 */
 export interface McpRegisteredTool {
   server: string;
   name: string;                 // namespaced full name
@@ -98,7 +98,7 @@ export function createToolExecutor(
     registry.set(norm, { impl, timeoutMs });
   }
 
-  // P5-5.2: MCP tools — namespaced `mcp_<server>_<tool>`; built-ins win on clash
+  // MCP 工具 — 命名空间 `mcp_<server>_<tool>`；冲突时内建优先
   for (const mt of mcpTools) {
     if (registry.has(mt.name)) continue; // built-in priority
     const impl: ToolImpl = async (params) => {

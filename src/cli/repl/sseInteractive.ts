@@ -26,7 +26,7 @@ export interface SseInteractiveOptions {
   provider?: ModelProvider;
   defaultTier?: string;
   defaultWorkspace?: string;
-  /** M2.2: resume an existing session instead of starting fresh */
+  /** resume an existing session instead of starting fresh */
   session?: Session;
 }
 
@@ -46,7 +46,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     return startClassicRepl(opts.session ? { session: opts.session } : {});
   }
 
-  // M2.0: one shared session for rich + line paths (approval mode/allowlist
+  // one shared session for rich + line paths (approval mode/allowlist
   // flow from here into the engine adapter; M2.2 resume seeds it).
   const session: Session = opts.session ?? new Session({ workspace: opts.defaultWorkspace, tier: (opts.defaultTier as any) || 'high' });
   if (!opts.session) {
@@ -270,7 +270,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return;
     }
 
-    // M2.1/M2.0: local commands shared by rich + line paths
+    // M2.1/local commands shared by rich + line paths
     // (/undo now; /approvals + /usage + /compact land with their batches)
     if (trimmed.startsWith('/')) {
       const sp = trimmed.indexOf(' ');
@@ -311,7 +311,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           const dur = n.durationMs >= 1000 ? `${(n.durationMs / 1000).toFixed(1)}s` : `${n.durationMs}ms`;
           feedOrLine(`  ${glyph} ${n.id} · ${n.status} · ${n.stepCount} 步 · ${dur}${n.lastPhase ? ` · ${n.lastPhase}` : ''}`);
         }
-        // P2-T19: graph edges (dep/rollback/approval) annotated
+        // graph edges (dep/rollback/approval) annotated
         try {
           const edges = agentTree.edges();
           if (edges.length > 0) {
@@ -451,7 +451,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (cmd === '/tree') {
-        // P2-T18: session tree (origin + branch nodes); /tree <id> → resume path
+        // session tree (origin + branch nodes); /tree <id> → resume path
         try {
           const { listSessionTree, renderSessionTree } = await import('./rolloutStore.js');
           const current = (session as any).sessionId || '';
@@ -467,7 +467,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (cmd === '/feature') {
-        // P1-T14: /feature list|add|done|next (rich-local mirror of FeatureCommand)
+        // /feature list|add|done|next (rich-local mirror of FeatureCommand)
         const { loadFeatures, activeFeature, addFeature, markFeatureDone, setFeatureNext } = await import('./FeatureTracker.js');
         const ws = session.workspace || process.cwd();
         const sub = (arg.split(/\s+/)[0] || 'list').toLowerCase();
@@ -501,7 +501,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (cmd === '/init') {
-        // P1-T13: rich-local /init — probe workspace + write
+        // rich-local /init — probe workspace + write
         // .panshalach/AGENTS.md + feature_list.json. B-dual: reuses the SAME
         // probe/build logic as the registry InitCommand (the old inline
         // simplified copy diverged in output — now unified).
@@ -609,7 +609,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       await initMcpServers();
       const { runAgentTask } = await import('../../server/runAgentTask.js');
 
-      // M2.0: real approval bridges.
+      // real approval bridges.
       // - rich path → bridge.setConfirm(request) → ConfirmBar (y/n/a/Esc)
       // - line path → readline question bridge (60s silence → n)
       const approvalBridge = useRich
@@ -671,7 +671,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
               });
             }
 
-            // P0.3: heuristic context meter (chars/4) from reasoning/plan/result/critique
+            // heuristic context meter (chars/4) from reasoning/plan/result/critique
             if (ev && ev.type === 'step') {
               bumpCtx(ev.thinking); bumpCtx(ev.plan);
               bumpCtx(typeof ev.result === 'string' ? ev.result : '');
@@ -717,7 +717,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         if (!useRich) renderer.warn('任务已被中断' + tail);
         else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: '任务已被中断' + tail, level: 'warn' });
       } else {
-        // M2.2: persist the completed turn into the session + rollout jsonl
+        // persist the completed turn into the session + rollout jsonl
         // P5-5.3: this task's rollouts are done
         agentTree.markAll('running', 'done');
         const r = raced.result;
@@ -881,7 +881,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   // Line-mode renderer for SSE events (used when rich UI is not active).
   function renderSseEvent(event: string, data: any, r: ReturnType<typeof createOutputRenderer>) {
-    // P1.4: v2 streaming deltas are display-only for the rich UI; the line
+    // v2 streaming deltas are display-only for the rich UI; the line
     // terminal keeps its clean step-granular output and ignores them.
     if (event === 'thinking.start' || event === 'message.start' ||
         event === 'thinking.delta' || event === 'message.delta') {
@@ -986,9 +986,9 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   try {
     const { tryStartInkUI } = await import('./ui/startInkUI.js');
 
-    // M2.0: shared session (created above) — approval mode/allowlist are
+    // shared session (created above) — approval mode/allowlist are
     // seeded here and flow into the engine adapter via runTaskViaSse.
-    // P4: submissions route through handleUserLine (queue/steer aware).
+    // submissions route through handleUserLine (queue/steer aware).
     const hostCtx: any = {
       handleInput: async (text: string) => { await handleUserLine(text, bridgeRef.current); },
       executeTask: async (text: string) => { await handleUserLine(text, bridgeRef.current); },
@@ -1000,7 +1000,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       bridge = (hostCtx as any).inkBridge || (hostCtx as any)._inkBridge || null;
       bridgeRef.current = bridge;
 
-      // P4: expose host-side handlers to the rich bridge
+      // expose host-side handlers to the rich bridge
       try {
         (bridge as any).cycleMode = () => cycleMode();
         (bridge as any).clearQueue = () => { queue.clear(); updateQueueCount(); };
@@ -1164,7 +1164,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
 
     // Use the unified runner (no bridge → line renderer path).
-    // P4: while a task is running, submissions are queued/steered instead.
+    // while a task is running, submissions are queued/steered instead.
     if (isRunning()) {
       await handleUserLine(trimmed, undefined);
       rl.prompt();

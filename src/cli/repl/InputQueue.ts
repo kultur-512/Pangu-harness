@@ -1,5 +1,5 @@
 // src/cli/repl/InputQueue.ts
-// P4-4.2/4.3: queued messages + steering inbox (pure logic, fully testable
+// 排队消息 + 转向收件箱（纯逻辑，完全可测试
 // under SMOKE — no stdin, no timers, no UI imports).
 //
 // Semantics (per Phase 4 instruction):
@@ -7,7 +7,7 @@
 // - steers: user interjections (`!` prefix); consumed at the START of the next
 //   runTaskViaSse and injected into that round's prompt; Ctrl+C abort clears
 //   unconsumed steers (already-injected ones cannot be recalled) but KEEPS tasks
-// - clear(): double-Esc wipe (P4-4.8 wiring point)
+// - clear(): 双 Esc 清空
 
 export type QueuedItem =
   | { kind: 'task'; text: string; ts: number }

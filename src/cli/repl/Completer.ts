@@ -1,6 +1,6 @@
 // src/cli/repl/Completer.ts
 // Simple prefix-based completer for ZIS + real filesystem path completion for @ tokens
-// P4-4.1: fuzzy fallback — exact prefix stays top priority; when nothing
+// 模糊兜底 — 精确前缀最优先；无前缀命中时
 // prefix-matches, fuzzyFilter ranks commands (e.g. `/tl` → `/tier`).
 
 import type { CommandRegistry } from './CommandRegistry.js';
@@ -29,7 +29,7 @@ export class Completer {
         return [matches, '/' + prefix];
       }
 
-      // P4-4.1: fuzzy fallback over name + aliases
+      // 对 name + aliases 做模糊兜底
       const fuzzy = fuzzyFilter(prefix, cmds.map((c: any) => ({
         name: c.name,
         aliases: (c.aliases || []) as string[],

@@ -1,5 +1,5 @@
 // src/cli/repl/commands/FeatureCommand.ts
-// P1-T14 (L08): /feature — feature_list.json state management.
+// /feature — feature_list.json state management.
 //   /feature list               → active + all features
 //   /feature add <标题>          → add + make active (one active at a time)
 //   /feature done <id> <证据>    → mark done (evidence REQUIRED)

@@ -16,7 +16,7 @@ const command: Command = {
       return { message: '用法: run "你的任务描述"' };
     }
 
-    // P2-A: @path 展开（path.resolve + workspace 前缀检查）
+    // @path 展开（path.resolve + workspace 前缀检查）
     const { result: pathRes, cleaned } = expandAtPaths(task, ctx.session.workspace || process.cwd());
     if (pathRes.rejected.length > 0) {
       ctx.renderer.warn('@path 拒绝（越界或无法解析）: ' + pathRes.rejected.join(', '));
@@ -26,7 +26,7 @@ const command: Command = {
     }
     const finalTask = (cleaned && cleaned.trim()) ? cleaned : task;
 
-    // P3: Resolve a usable client via provider; never pass null to PanshalachChaser
+    // Resolve a usable client via provider; never pass null to PanshalachChaser
     const provider: ModelProvider | undefined = ctx.provider || ctx.session.provider;
     const client = provider?.createClient(ctx.session.model) ?? provider?.createDefaultClient();
     if (!client) {

@@ -20,16 +20,8 @@ import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawI
 import { Reviewer, type StaticAnalysisResult } from '../review/Reviewer.js';
 
 /**
- * P0.5-A (v2): Critique 构造上下文
+ * Critique 构造上下文
  * 用于在 critique prompt 构建阶段按指定顺序注入结构化块。
- */
-export interface CritiqueContext {
-  staticAnalysisBlocks?: string[];
-}
-
-/**
- * P0.5-A (v2): Critique 构造上下文
- * 用于在 buildCritiquePrompt 阶段按指定顺序注入结构化块。
  */
 export interface CritiqueContext {
   staticAnalysisBlocks?: string[];
@@ -53,7 +45,7 @@ export interface LoopStep {
 }
 
 export interface VerifyCritiqueLoopOptions {
-  strictStructured?: boolean; // parser/format strictness flag (legacy); combined with !practicalMode yields high-rigor behavior
+  strictStructured?: boolean; // 解析/格式严格度旗标；与 !practicalMode 联合构成高纪律行为
   useUniversalAdapter?: boolean;
   maxSteps?: number;
   maxConsecutiveFailures?: number;
@@ -66,35 +58,35 @@ export interface VerifyCritiqueLoopOptions {
   practicalMode?: boolean;
   /** 任务风格（推荐）：'swe' | 'terminal' | 'automation' 等，用于适配验证策略。 */
   taskStyle?: string;
-  /** 内部兼容旧称 benchmarkType，等同于 taskStyle。仅作为别名使用。 */
+  /** 任务风格别名，等同于 taskStyle。 */
   benchmarkType?: BenchmarkType | string;
-  /** 是否高纪律模式（新名），等同于 !practicalMode 的高纪律路径。 */
+  /** 是否高纪律模式，等同于 !practicalMode 的高纪律路径。 */
   isStrongMode?: boolean;
-  /** 六档体系新增：critique 频率配置 */
+  /** critique 频率配置 */
   critiqueFrequency?: CritiqueFrequencySpec;
-  /** 六档体系新增：纪律规则注入强度 */
+  /** 纪律规则注入强度 */
   ironLawInjectionLevel?: IronLawInjectionLevel;
-  /** 六档体系新增：tier 名称 */
+  /** tier 名称 */
   tier?: string;
   /**
-   * P0.5-A (v2): 预格式化的静态分析块字符串数组（推荐）。
+   * 预格式化的静态分析块字符串数组（推荐）。
    * 每个元素应为 Reviewer 产生的 <static_analysis_result ...> 片段。
    * 这些块将在 critique prompt 中以 <static_analysis_context> 包裹，并在 <user_request> 之前注入。
    */
   staticAnalysisBlocks?: string[];
   /**
-   * P0-B 遗留兼容：原始结果，Loop 会按需格式化。
-   * 新代码优先使用 staticAnalysisBlocks。
+   * 原始静态分析结果（Loop 会按需格式化）。
+   * 预格式化块请优先使用 staticAnalysisBlocks。
    */
   staticAnalysis?: StaticAnalysisResult[];
 
   /**
-   * P0.5-A (v2): 显式用户请求，用于构造 <user_request> 块。
+   * 显式用户请求，用于构造 <user_request> 块。
    */
   userRequest?: string;
 
   /**
-   * P0.5-A (v2): 当前 diff，用于构造 <current_diff> 块。
+   * 当前 diff，用于构造 <current_diff> 块。
    */
   currentDiff?: string;
 }
@@ -106,25 +98,25 @@ export class VerifyCritiqueLoop {
   private consecutiveFailures = 0;
 
   private useUniversal: boolean;
-  private strictStructured: boolean; // legacy internal: when true, prefer the strict <> parser + high-rigor behaviors (combined with !practicalMode)
+  private strictStructured: boolean; // 为 true 时优先严格 <> 解析器 + 高纪律行为（与 !practicalMode 联合）
   private failureMemory?: FailureMemory;
   private verifyFirstBias: boolean;
   private practicalMode: boolean;
-  private benchmarkType?: BenchmarkType | string; // legacy alias for taskStyle (internal compat only)
+  private benchmarkType?: BenchmarkType | string; // taskStyle 的别名（内部同步维护）
   private taskStyle?: string;
   private isStrongMode?: boolean;
   private profile = BenchmarkProfiles.get('swe');
-  // 六档体系新增
+  // critique 频率 / 纪律规则注入强度 / tier 名称
   private critiqueFrequency?: CritiqueFrequencySpec;
   private ironLawInjectionLevel?: IronLawInjectionLevel;
   private tierName?: string;
-  /** P0-B 兼容：原始静态分析结果 */
+  /** 原始静态分析结果 */
   private staticAnalysis?: StaticAnalysisResult[];
-  /** P0.5-A (v2)：预格式化的静态分析块 */
+  /** 预格式化的静态分析块 */
   private staticAnalysisBlocks: string[] = [];
-  /** P0.5-A (v2)：显式 user request，用于 <user_request> 块 */
+  /** 显式 user request，用于 <user_request> 块 */
   private userRequest?: string;
-  /** P0.5-A (v2)：当前 diff，用于 <current_diff> 块 */
+  /** 当前 diff，用于 <current_diff> 块 */
   private currentDiff?: string;
   /** 保存初始 prompt，用于尽力提取 user request（不影响主逻辑） */
   private initialPromptForContext: string = '';
@@ -140,20 +132,20 @@ export class VerifyCritiqueLoop {
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
     this.failureMemory = options.failureMemory;
     this.verifyFirstBias = options.verifyFirstBias ?? this.strictStructured;
-    // 高纪律模式判定（behavioral）：优先 isStrongMode，其次 !practicalMode，再次 strictStructured（legacy）
+    // 高纪律模式判定（behavioral）：优先 isStrongMode，其次 !practicalMode，再次 strictStructured
     const explicitStrong = options.isStrongMode;
     const explicitPractical = options.practicalMode;
     this.isStrongMode = explicitStrong ?? (explicitPractical === undefined ? this.strictStructured : !explicitPractical);
     this.practicalMode = explicitPractical ?? !this.isStrongMode;
-    // 任务风格：优先 taskStyle，其次 benchmarkType（legacy alias）
+    // 任务风格：优先 taskStyle，其次 benchmarkType（别名）
     this.taskStyle = options.taskStyle ?? (options.benchmarkType as string | undefined);
     this.benchmarkType = options.benchmarkType ?? this.taskStyle;
     this.profile = BenchmarkProfiles.get(this.taskStyle ?? this.benchmarkType);
-    // 六档体系新增：接收 critique 频率、纪律规则注入强度、tier 名称
+    // 接收 critique 频率、纪律规则注入强度、tier 名称
     this.critiqueFrequency = options.critiqueFrequency;
     this.ironLawInjectionLevel = options.ironLawInjectionLevel;
     this.tierName = options.tier;
-    // P0-B / P0.5-A 静态分析
+    // 静态分析
     this.staticAnalysis = options.staticAnalysis;
     if (Array.isArray(options.staticAnalysisBlocks)) {
       this.staticAnalysisBlocks = options.staticAnalysisBlocks.slice();
@@ -190,7 +182,7 @@ export class VerifyCritiqueLoop {
     // This represents the "strong mode" execution path (high-rigor discipline) regardless of underlying model.
     // Computed from:
     // - explicit isStrongMode (preferred public flag), or
-    // - strictStructured (legacy high-discipline parser intent) + !practicalMode.
+    // - strictStructured (strict parser intent) + !practicalMode.
     const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode) && !this.useUniversal;
 
     // 任务风格相关元信息（用于 prompt 注入和纪律规则策略）
@@ -214,7 +206,7 @@ export class VerifyCritiqueLoop {
       // - 但只在“有风险或早期”时才重度注入，避免每步塞大段规则导致 token 爆炸和日常工程不可用
       if (highRigor) {
         // === 高纪律模式（高纪律，工程可用） ===
-        // P2-3 修复：完全按 ironLawInjectionLevel 差异化
+        // 完全按 ironLawInjectionLevel 差异化
         // - 'minimal' / 'low'：几乎不注入（只保留格式/任务风格提醒）
         // - 'medium'：常规注入
         // - 'medium_high' / 'high'：重度注入
@@ -281,7 +273,7 @@ export class VerifyCritiqueLoop {
         }
       }
 
-      // P0-2 修复：旧 FailureMemory 注入加 tier 门控
+      // FailureMemory 注入加 tier 门控
       // 高纪律模式（!practicalMode）才允许注入旧 FailureMemory；
       // 实用模式完全不注入（避免双记忆污染和 token 爆炸）。
       // 最终目标：完全收敛到 RefinedMemoryStore（旧路径下线）。
@@ -400,10 +392,8 @@ export class VerifyCritiqueLoop {
         signal = this.classifySignal(verificationResult);
 
         const lower = verificationResult.toLowerCase();
-        // M1-2.5 (the ONLY change allowed in this file): the real-execution
-        // engine adapter terminates successful bash results with `EXIT_CODE:0`
-        // — treat that as the strongest real-verification signal. Legacy PASS
-        // heuristics below remain for compatibility.
+        // 真实执行引擎的成功 bash 结果以 `EXIT_CODE:0` 结尾——最强真实验证信号。
+        // 下方的 PASS 启发式作为补充信号。
         const looksLikeRealPass =
           lower.includes('exit_code:0') ||
           lower.includes('all_tests_passed') ||
@@ -436,7 +426,7 @@ export class VerifyCritiqueLoop {
           ? JSON.stringify(this.steps[this.steps.length - 1])
           : '（第一步）';
 
-        // P0.5-A (v2): 按蓝图要求构造结构化上下文
+        // 构造结构化上下文
         // 顺序：
         //   <static_analysis_context> （来自 Reviewer 的块）
         //   <user_request>
@@ -547,7 +537,7 @@ export class VerifyCritiqueLoop {
         done = true;
       }
 
-      // critique 文本单独不能终止任务（修复 P0-6：critique 可单独终止的问题）
+      // critique 文本单独不能终止任务
       // 仅当 critique 声称"已解决"且本步有真实验证信号时才允许终止
       if (critique && /任务已解决|已修复|问题已解决|完全正确|验证通过/i.test(critique)) {
         // 必须本步有真实验证（PASS 信号或 ALL_TESTS_PASSED）才允许终止
@@ -625,9 +615,8 @@ export class VerifyCritiqueLoop {
 
   private buildHistoryPrompt(): string {
     const isPractical = this.practicalMode;
-    // P2-2 修复：保留 <plan> 和 <verify> 的完整结构（长上下文利用）
-    // 之前 plan.slice(150) / result.slice(160) 破坏了结构化信息
-    // 现在按 tier + practical 给出合理上限，但确保结构化块完整
+    // 保留 <plan> 和 <verify> 的完整结构（长上下文利用）：
+    // 按 tier + practical 给出合理上限，但确保结构化块完整
     const planLimit = isPractical ? 200 : 300;
     const resultLimit = isPractical ? 200 : 300;
     const thinkLimit = isPractical ? 200 : 300;
@@ -644,10 +633,8 @@ export class VerifyCritiqueLoop {
         const plan = (s.reasoning.plan || '').slice(0, planLimit);
         const verify = (s.reasoning.verify || '').slice(0, planLimit);
         const resultText = (s.verificationResult || '').slice(0, resultLimit);
-        // fix-#10: truncated results MUST tell the model — silent truncation of
-        // read_file content made the model believe the file never loaded and
-        // (under RBW) refuse to edit → zero-output spin. Now it knows to
-        // re-read with an offset.
+        // 截断结果必须告知模型——静默截断会让模型以为文件没加载完
+        // 而拒绝编辑；明确提示后模型会用 offset 重读。
         const resultTruncated = (s.verificationResult || '').length > resultLimit;
         const thinking = (s.reasoning.thinking || '').slice(0, thinkLimit);
         const critique = s.critique

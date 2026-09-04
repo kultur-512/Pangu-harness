@@ -1,5 +1,5 @@
 // src/tools/bash.ts
-// M1-2.2: real command execution.
+// 真实命令执行。
 // - spawn with shell:true, cwd=workspaceRoot, detached (for tree-kill)
 // - tier-driven timeout: quick=30s / standard=60s / high|ex|pangu=120s (cap 600000)
 // - timeout kills the whole process tree (taskkill /T /F on Windows, -SIGKILL on POSIX)

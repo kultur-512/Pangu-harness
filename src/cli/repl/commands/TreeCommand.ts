@@ -1,5 +1,5 @@
 // src/cli/repl/commands/TreeCommand.ts
-// P2-T18 (Pi): /tree — session tree navigation.
+// /tree — session tree navigation.
 //   /tree        → render the current session's tree (origin + branch nodes)
 //   /tree <id>   → point the user at the node for continuation (equivalent to
 //                  resuming that session — /resume <id> or /tree switch)

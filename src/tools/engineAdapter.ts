@@ -1,5 +1,5 @@
 // src/tools/engineAdapter.ts
-// M1-2.1: engine compatibility layer.
+// 引擎兼容层。
 // Bridges VerifyCritiqueLoop's verificationEngine contract —
 //   execute(calls: ToolCall[]): Promise<string>
 // — onto the real tool executor, formatting results into the string heuristics
@@ -24,7 +24,7 @@ import { checkpointBeforeMutation } from './fileHistory.js';
 import path from 'path';
 import type { ToolContext, ToolImpl, ToolResult, DiffHunk } from './types.js';
 
-// D-parallel: shared write mutex — write/edit_file calls across ALL parallel
+// 共享写互斥 — 并行 rollout 间的 write/edit_file 调用全部
 // rollouts serialize through one promise chain (shared workspace safety);
 // read/bash tools run concurrently. Never blocks; failures don't poison the
 // chain.
@@ -53,15 +53,15 @@ export interface EngineAdapterOptions {
   }) => Promise<'y' | 'n' | 'a'>;
   /** Session-scoped allowlist for 'a' (allow-always) decisions. */
   sessionAllowlist?: Set<string>;
-  /** P4-4.7: plan mode — writes and bash are denied outright (reads free). */
+  /** plan mode — 写入与 bash 直接拒绝（读取放行）。 */
   planMode?: boolean;
-  /** M1-2.4: approval confirm timeout (default 60s → treated as 'n'). */
+  /** 审批确认超时（默认 60s → 视为 'n'）。 */
   approvalTimeoutMs?: number;
-  /** M1-2.4: event emitter (approval.request cards) — e.g. config.onStep. */
+  /** 事件发射器（approval.request 卡片）— e.g. config.onStep。 */
   emitEvent?: (event: any) => void;
   /** Extra tools registered beyond the built-ins (bash in 2.2, write/edit in 2.3). */
   extraTools?: Record<string, import('./types.js').ToolImpl>;
-  /** P5-5.2: MCP tools (namespaced mcp_<server>_<tool>), gated like bash. */
+  /** MCP 工具（命名空间 mcp_<server>_<tool>），按 bash 同等门禁。 */
   mcpTools?: Array<{
     server: string;
     name: string;
@@ -116,7 +116,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     signal: opts.signal,
   };
 
-  // M1-2.3: per-run RBW bookkeeping. readFiles records every successfully
+  // 每轮 RBW 记账。readFiles 记录每次成功
   // read file (absolute, resolved) so write_file/edit_file can enforce
   // Read-Before-Write. The set lives for the lifetime of THIS adapter
   // (created per rollout by PanshalachChaser — matching per-rollout semantics).
@@ -131,7 +131,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     return res;
   };
 
-  // M1-2.3 tier toolsets: quick/standard NEVER get write tools (six-tier
+  // tier 工具集：quick/standard 不提供写工具（六档
   // contract enforced at the execution layer). high/max/ex/pangu do.
   // (B1 fix: 'max' was missing — TierConfig marks max isStrongMode with
   // all-write confirmation, so it must carry write tools too.)
@@ -144,7 +144,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         }
       : {};
 
-  // M1-2.2: bash registers with a tier-driven timeout. Readonly enforcement
+  // bash 按 tier 注册超时。只读强制
   // lives here (day-one rule): readonly mode → allowlist only; other modes
   // run fully (confirmation/danger handling arrives with 2.4).
   const bashImpl = createBashTool({ timeoutMs: bashTimeoutForTier(opts.tierConfig.tier) });
@@ -170,7 +170,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     ...writeTools,
   };
 
-  // P5-5.2: MCP tools — namespaced mcp_<server>_<tool>, gated like bash.
+  // MCP 工具 — 命名空间 mcp_<server>_<tool>，按 bash 同等门禁。
   // readonly → denied; default → confirm (via the same bridge); full → pass;
   // plan mode → denied. Danger heuristic: write-ish tool names flagged.
   const mcpTools = (opts.mcpTools ?? []).map((mt) => ({
@@ -262,7 +262,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
       head = `TOOL_ERROR: ${res.error || 'UNKNOWN'} ${firstLine}`;
     }
 
-    // M1-2.3: carry structured diff to the UI inside the string contract.
+    // 在字符串契约内把结构化 diff 带给 UI。
     // ToolCard parses this marker line; the engine stays UI-agnostic.
     const diff = res.meta?.diff as DiffHunk[] | undefined;
     if (diff && diff.length > 0) {
@@ -280,12 +280,12 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
   let approvalSeq = 0;
   let decisionTimer: NodeJS.Timeout | undefined;
-  // fix-#9-②: consecutive unknown-tool drift counter (adapter lifetime = one
+  // 连续未知工具漂移计数器（adapter 生命周期 = 单次
   // task run; resets only when a KNOWN tool is called).
   let unknownToolStreak = 0;
 
   /**
-   * M1-2.4: pre-execution approval gate.
+   * 执行前审批门。
    * - classify → denied: return immediately (readonly denial keeps the
    *   guidance text; user denial reports DENIED_BY_USER)
    * - needsApproval: route through the bridge (rich ConfirmBar / readline /
@@ -295,7 +295,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   async function gate(toolRaw: string, params: Record<string, string>): Promise<ToolResult | null> {
     const tool = String(toolRaw || '').trim().toLowerCase();
 
-    // P4-4.7: plan-mode pre-check (BEFORE classify) — reads free, writes and
+    // plan-mode 预检（classify 之前）— 读取放行，写入与
     // bash denied with the plan reason. Uses approval.ts WRITE_TOOLS as a
     // read-only helper; classify() signature untouched.
     if (planMode && (WRITE_TOOLS_SET.has(tool) || tool === 'bash')) {
@@ -348,7 +348,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
     let decision: ApprovalDecision = 'n';
     try {
-      // M2.0 root-cause hang fix: clear the timeout when the bridge wins the
+      // 桥接胜出时清除超时（防挂起）：
       // race — a stray 60s timer otherwise keeps `node --test` alive.
       // (No unref(): the timeout is a real deadline and must keep the loop
       //  alive until it fires or the bridge resolves.)
@@ -395,12 +395,12 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
           parts.push(describeResult(call, params, deniedRes));
           continue;
         }
-        // M2.1: snapshot the target BEFORE mutation so /undo can restore it.
+        // snapshot the target BEFORE mutation so /undo can restore it.
         const toolNorm = String(call.toolName || '').trim().toLowerCase();
         if (toolNorm === 'write_file' || toolNorm === 'edit_file') {
           try { checkpointBeforeMutation(toolNorm, params, opts.workspaceRoot); } catch {}
         }
-        // P1-T16 (DeepSeek): tools/pre-execute event point — observers (memory,
+        // tools/pre-execute event point — observers (memory,
         // logging, policy) attach here; execution semantics unchanged.
         const toolStart = Date.now();
         try {
@@ -412,12 +412,12 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
             danger: false,
           });
         } catch {}
-        // D-parallel: write/edit serialized through the shared mutex
+        // write/edit 经共享互斥串行化
         // (parallel rollouts share the workspace); read/bash stay concurrent.
         const res = toolNorm === 'write_file' || toolNorm === 'edit_file'
           ? await withWriteLock(() => executor.execute(String(call.toolName || ''), params))
           : await executor.execute(String(call.toolName || ''), params);
-        // P1-T16: tools/post-execute event (result + duration) for observability
+        // tools/post-execute event (result + duration) for observability
         try {
           emitEvent?.({
             type: 'tools/post-execute',
@@ -428,7 +428,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
             error: res.error,
           });
         } catch {}
-        // fix-#9-②: runtime guard on unknown-tool drift — record + guide +
+        // 未知工具漂移运行时护栏 — 记录 + 引导 +
         // hard-stop on consecutive spins (anti "5-step empty spin").
         if (res.error === 'UNKNOWN_TOOL') {
           unknownToolStreak++;

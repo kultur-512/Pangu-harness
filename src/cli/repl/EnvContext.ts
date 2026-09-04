@@ -1,5 +1,5 @@
 // src/cli/repl/EnvContext.ts
-// P1-T17 (Codex build_environment_update_item): incremental environment
+// incremental environment
 // context — only CHANGED fields (cwd / git branch / changed files) are
 // injected into the prompt; unchanged runs emit nothing (token savings).
 // Git-unavailable environments degrade to cwd-only.

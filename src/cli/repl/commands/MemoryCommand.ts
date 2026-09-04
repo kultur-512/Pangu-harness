@@ -9,7 +9,7 @@ const command: Command = {
   async execute(ctx: CommandContext, args: string[]): Promise<CommandResult> {
     const workspace = ctx.session?.workspace || process.cwd();
 
-    // P1-D: 无参数时进入子模式菜单
+    // 无参数时进入子模式菜单
     if (!args || args.length === 0) {
       ctx.renderer.writeLine('烛龙（Zhulong）Memory Manager');
       ctx.renderer.writeLine('▸ list / clear / refine / export / import / back');

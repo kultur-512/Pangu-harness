@@ -1,5 +1,5 @@
 // src/cli/repl/commands/ApprovalsCommand.ts
-// M1-2.4: /approvals — view/switch approval mode, clear session allowlist.
+// /approvals — 查看/切换审批模式，清空会话允许清单。
 // No args        → show current mode + allowlist
 // readonly|default|full → switch mode (persisted with the session)
 // clear          → clear the session allow-always list

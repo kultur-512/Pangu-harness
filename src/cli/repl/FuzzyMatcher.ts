@@ -1,5 +1,5 @@
 // src/cli/repl/FuzzyMatcher.ts
-// P4-4.1: dependency-free fuzzy matching for slash commands.
+// 零依赖的 slash 命令模糊匹配。
 //
 // Score (0..1, higher = better):
 //   prefix hit            → 1.0 (exact prefix of the candidate)

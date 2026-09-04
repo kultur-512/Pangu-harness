@@ -11,7 +11,7 @@ const USER_CONFIG_DIR = join(homedir(), '.panshalach');
 const USER_CONFIG_PATH = join(USER_CONFIG_DIR, 'config.json');
 
 /**
- * P2-C: 深度合并
+ * 深度合并
  * - 嵌套对象递归合并
  * - 数组：替换（不 concat）
  * - 后者覆盖前者（undefined 不覆盖）
@@ -51,7 +51,7 @@ export class ConfigManager {
   private load() {
     this.config = {};
 
-    // P2-C 加载顺序：项目级 .panshalach.json → 用户级 ~/.panshalach/config.json → CLI 参数（CLI 由调用方在 getAll 后叠加）
+    // 加载顺序：项目级 .panshalach.json → 用户级 ~/.panshalach/config.json → CLI 参数（CLI 由调用方在 getAll 后叠加）
     const projectPath = join(this.workspaceRoot, '.panshalach.json');
     this.mergeProjectConfig(projectPath);
 

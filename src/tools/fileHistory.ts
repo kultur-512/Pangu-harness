@@ -1,5 +1,5 @@
 // src/tools/fileHistory.ts
-// M2.1: file-history checkpoints — every real write/edit snapshots the target
+// file-history checkpoints — every real write/edit snapshots the target
 // BEFORE mutation so /undo can restore it (Claude Code /rewind semantics,
 // workspace-scoped, bash side-effects excluded by design).
 //
@@ -119,7 +119,7 @@ export function latestCheckpoint(workspaceRoot: string, rel?: string): Checkpoin
   return list[list.length - 1];
 }
 
-/** P4-4.8 (ctrl+t panel): the n most recent checkpoints, newest first. */
+/** 最近 n 个检查点（ctrl+t 面板），新在前。 */
 export function recentCheckpoints(workspaceRoot: string, n = 5): CheckpointEntry[] {
   return readIndex(workspaceRoot).slice(-n).reverse();
 }

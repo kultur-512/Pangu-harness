@@ -15,7 +15,7 @@ export interface BridgeContext {
 let currentDispatch: ((action: any) => void) | null = null;
 let currentHistory: string[] = [];
 
-// M2.0: interactive confirm state (rich UI approval bridge).
+// interactive confirm state (rich UI approval bridge).
 // The resolver lives OUTSIDE React state on purpose: the engine awaits the
 // promise while the reducer only carries the serializable request for render.
 export interface ConfirmRequest {
@@ -66,7 +66,7 @@ export function createBridge(
     if (currentDispatch) currentDispatch({ type: 'SET_RUNNING', running });
   };
 
-  // M2.0: legacy setter kept for the old reducer action (unused by the new
+  // legacy setter kept for the old reducer action (unused by the new
   // approval flow); the new Promise-based bridge is `setConfirm` below.
   const setConfirmLegacy = (confirm: UiState['confirm'] | undefined) => {
     if (currentDispatch) currentDispatch({ type: 'SET_CONFIRM', confirm });
@@ -84,7 +84,7 @@ export function createBridge(
     if (currentDispatch) currentDispatch({ type: 'UPDATE_INPUT', value });
   };
 
-  // P1.4: live streaming buffers
+  // live streaming buffers
   const appendStream = (kind: 'thinking' | 'message', text: string) => {
     if (!text || !currentDispatch) return;
     currentDispatch({ type: 'APPEND_STREAM', kind, text });
@@ -107,7 +107,7 @@ export function createBridge(
     currentDispatch({ type: 'SET_QUEUE_COUNT', total, tasks, steers });
   };
 
-  // M2.0: rich approval bridge — the engine awaits setConfirm(request);
+  // rich approval bridge — the engine awaits setConfirm(request);
   // PanshaApp's ConfirmBar calls resolveConfirm(decision) on y/n/a/Esc.
   const setConfirm = (request: ConfirmRequest): Promise<'y' | 'n' | 'a'> =>
     new Promise((resolve) => {
@@ -255,7 +255,7 @@ export function createBridge(
     pushFeed,
     setTop,
     setRunning,
-    // M2.0: real approval bridge
+    // real approval bridge
     setConfirm,
     resolveConfirm,
     hasPendingConfirm,

@@ -1,5 +1,5 @@
 // src/cli/repl/commands/UsageCommand.ts
-// M2.4: /usage — local usage + cost estimate panel.
+// /usage — local usage + cost estimate panel.
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
 import { collectUsage, loadPricesFromConfig } from '../usageService.js';

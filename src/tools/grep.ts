@@ -1,5 +1,5 @@
 // src/tools/grep.ts
-// M1-2.1: grep — recursive line regex over the workspace.
+// grep — 工作区递归行级正则搜索。
 // 250-match cap; output `file:line:text`; include glob filter; friendly
 // error on invalid regex.
 

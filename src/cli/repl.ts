@@ -4,7 +4,7 @@
 // Behavior:
 // - startRepl({resume}) → 默认进入 **流式交互模式**（对标 Hermes）
 //   - 进程内事件直连（P0.2），富 UI 优先、行模式兜底；非 TTY 静默降级经典
-//   - M2.2: --resume [id|last] 恢复 rollout（turns + 审批状态）
+//   - --resume [id|last] 恢复 rollout（turns + 审批状态）
 // - runOneShot() → 单条命令执行（保持原有兼容行为）
 
 import { createDefaultModelProvider, setSharedModelProvider } from './repl/ModelProvider.js';
@@ -12,7 +12,7 @@ import { Session } from './repl/Session.js';
 import { Repl } from './repl/Repl.js';
 
 export interface StartReplOptions {
-  /** M2.2: 'last' | specific rollout/session id */
+  /** 'last' | specific rollout/session id */
   resume?: string;
   /** P3-3.5: fork the resume target into `<id>--branch-<name>` before starting */
   branch?: string;
@@ -31,7 +31,7 @@ export function applyEnvModel(session: Session): Session {
 }
 
 export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
-  // P0-fix: seed the process-wide shared provider ONCE at the entry so the
+  // 在入口一次性播种进程级共享 provider，
   // interactive runner, classic fallback and /serve all share hot config state.
   const provider = createDefaultModelProvider();
   try { setSharedModelProvider(provider as any); } catch {}
@@ -43,7 +43,7 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
     prefetchProviderModels(process.cwd()).catch(() => {});
   } catch {}
 
-  // M2.2: resolve --resume into a restored Session (best-effort, never blocks startup)
+  // resolve --resume into a restored Session (best-effort, never blocks startup)
   // P3-3.5: --branch forks the resolved target into a NEW rollout (origin untouched)
   let session: Session | undefined;
   if (opts.resume || opts.branch) {

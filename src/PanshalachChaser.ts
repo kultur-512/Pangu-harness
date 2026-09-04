@@ -26,8 +26,7 @@ import { createEngineAdapter } from './tools/engineAdapter.js';
 import { redactAnchorLines } from './utils/redact.js';
 
 /**
- * 旧版 ModelMode（仅供向下兼容，新代码请使用 tier）
- * @deprecated
+ * 任务风格：strong=高纪律验证密集 / practical=务实 / universal=通用
  */
 export type ModelMode = 'strong' | 'practical' | 'universal';
 
@@ -50,10 +49,10 @@ export interface ChaserConfig {
   maxStepsPerRollout?: number;
   budgetTokens?: number;
   earlyStopOnHighScore?: boolean;
-  /** @deprecated 使用 tier 代替 */
+  /** 任务模式（tier 的别名入口，等价于 tier: high/quick/standard） */
   modelMode?: ModelMode;
   taskStyle?: string;
-  /** @deprecated 使用 taskStyle 代替 */
+  /** taskStyle 的别名 */
   benchmarkType?: string;
   tier?: Tier;
   yes?: boolean;
@@ -63,7 +62,7 @@ export interface ChaserConfig {
    * into the prompt. Core should skip its own memory injection to avoid duplication.
    */
   memoryPreInjected?: boolean;
-  // ---- M1-2.5: real-execution approval passthrough (all optional) ----
+  // ---- 真实执行审批透传（全部可选） ----
   /** Session approval mode (default: readonly — safe floor). */
   approvalMode?: 'readonly' | 'default' | 'full';
   /** Session-scoped allow-always list ('a' decisions). */
@@ -72,9 +71,9 @@ export interface ChaserConfig {
   approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<'y' | 'n' | 'a'>;
   /** Approval confirm timeout (default 60s → treated as 'n'). */
   approvalTimeoutMs?: number;
-  /** P4-4.7: plan mode (writes/bash denied, plan-only output). */
+  /** plan mode（禁止写入/bash，仅输出计划）。 */
   planMode?: boolean;
-  /** P5-5.2: MCP tools (namespaced, gated like bash). */
+  /** MCP 工具（命名空间化，按 bash 同等门禁）。 */
   mcpTools?: any[];
 }
 
@@ -83,7 +82,7 @@ export interface ChaserConfig {
  * 推荐：import { PanshalachChaser } from './PanshalachChaser.js'
  */
 export class PanshalachChaser {
-  // M3.1: 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
+  // 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
   private memStoreForInvalidate: any = null;
   private extremeAdapter = new StrictStructuredToolAdapter();
   private universalAdapter = new UniversalToolCallAdapter();
@@ -110,7 +109,7 @@ export class PanshalachChaser {
     if (config.tier) {
       effectiveTier = config.tier;
     } else if (this.defaultModeOrTier === 'strong' || this.defaultModeOrTier === 'practical' || this.defaultModeOrTier === 'universal') {
-      effectiveTier = TierRegistry.fromLegacyMode(this.defaultModeOrTier);
+      effectiveTier = TierRegistry.fromMode(this.defaultModeOrTier);
     } else if (TierRegistry.isTier(this.defaultModeOrTier as string)) {
       effectiveTier = this.defaultModeOrTier as Tier;
     } else {
@@ -118,7 +117,7 @@ export class PanshalachChaser {
     }
     const tierConfig = TierRegistry.get(effectiveTier);
 
-    // P3: 入口防御——严禁把 null / 无 complete 的客户端带入执行路径
+    // 入口防御——严禁把 null / 无 complete 的客户端带入执行路径
     if (!this.modelClient || typeof (this.modelClient as any).complete !== 'function') {
       return {
         success: false,
@@ -141,7 +140,7 @@ export class PanshalachChaser {
                    : 80_000,
     } = config;
 
-    const isHighRigor = tierConfig.isStrongMode; // 由 tierConfig 驱动，旧名 isStrongMode 仅为向后兼容
+    const isHighRigor = tierConfig.isStrongMode;
 
     const taskStyle = config.taskStyle ?? (config as any).benchmarkType;
     const profile = BenchmarkProfiles.get(taskStyle);
@@ -247,7 +246,7 @@ export class PanshalachChaser {
       try {
         const { RefinedMemoryStore } = await import('./memory/RefinedMemoryStore.js');
         const memStore = new RefinedMemoryStore(workspaceRoot);
-        // M3.1: 走投影缓存（任务内快照冻结；任务边界 invalidateProjection 重建）
+        // 走投影缓存（任务内快照冻结；任务边界 invalidateProjection 重建）
         const memoryCards = memStore.loadFilteredCached({
           taskStyle,
           tier: tierConfig.tier,
@@ -259,7 +258,7 @@ export class PanshalachChaser {
           const memBlock = `\n【提炼后的教训（来自历史项目记忆）】\n${memoryCards.map(c => `  - [${c.category}] ${c.summary}`).join('\n')}\n`;
           basePrompt += memBlock;
         }
-        // M3.1: 任务边界 → 重建（下一任务反映最新衰减）
+        // 任务边界 → 重建（下一任务反映最新衰减）
         this.memStoreForInvalidate = memStore;
       } catch {}
     }
@@ -269,7 +268,7 @@ export class PanshalachChaser {
       basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
     }
 
-    // P0-B: 一次性收集静态分析结果（仅本次 solveIssue 执行一次）
+    // 一次性收集静态分析结果（仅本次 solveIssue 执行一次）
     // 由 Reviewer 完成语言探测 + 白名单命令执行（tsc / eslint），失败不影响主流程。
     // 结果将透传给 VerifyCritiqueLoop，在 critique 阶段以 <static_analysis_result> 块形式注入，
     // 让模型在自我复盘时能“看见”编译/类型/ lint 错误（根治“灯下黑”）。
@@ -308,7 +307,7 @@ export class PanshalachChaser {
       benchmarkType: taskStyle,
       critiqueFrequency: tierConfig.critiqueFrequency,
       ironLawInjectionLevel: tierConfig.ironLawInjectionLevel,
-      // P0-B: 把静态分析结果传给 Loop，供 critique 阶段注入
+      // 把静态分析结果传给 Loop，供 critique 阶段注入
       staticAnalysis: staticAnalysisResults,
     };
 
@@ -332,7 +331,7 @@ export class PanshalachChaser {
         const useLegacyParser = process.env.PANSHA_USE_LEGACY_PARSER === '1';
         const originalClient = this.modelClient;
 
-        // P1.2: streaming-aware wrapper (protocol v2 deltas).
+        // 流式感知 wrapper（协议 v2 增量）。
         // When the underlying client exposes streamChat(), consume the token
         // stream, re-emit throttled thinking.delta / message.delta events via
         // onStep, and return the accumulated raw text so VerifyCritiqueLoop's
@@ -386,13 +385,13 @@ export class PanshalachChaser {
 
         const streamingComplete = makeStreamingComplete();
 
-        // P0-1: Prefer ToolCallFormatDetector (new call site)
-        // Falls back to legacy behavior when PANSHA_USE_LEGACY_PARSER=1
+        // 优先 ToolCallFormatDetector
+        // PANSHA_USE_LEGACY_PARSER=1 切回原始 client 的直连路径
         const effectiveClient = useLegacyParser ? originalClient : {
           complete: streamingComplete,
         };
 
-        // M1-2.1/2.5: real tool execution with approval passthrough.
+        // 真实工具执行 + 审批透传。
         // The old inline stub ({ execute() { return 'ALL_TESTS_PASSED' } }) is
         // gone. Toolset = executor registry ∩ approval semantics (the adapter
         // gates bash via the readonly allowlist, writes via classify()).
@@ -503,7 +502,7 @@ export class PanshalachChaser {
         isStrongTarget: isHighRigor,
         benchmarkType: taskStyle,
         taskStyle,
-        // D-parallel: high+ tiers run rollouts concurrently (Promise.allSettled,
+        // high+ 档位 rollout 并发执行（Promise.allSettled,
         // write-mutex for shared workspace, budget aggregation); quick/standard
         // stay serial (cost-sensitive).
         parallel: ['high', 'max', 'ex', 'pangu'].includes(tierConfig.tier),
@@ -511,7 +510,7 @@ export class PanshalachChaser {
     );
 
     const success = best.score >= 80;
-    // M3.1: 任务边界 → 投影重建（下一任务反映最新衰减与记忆）
+    // 任务边界 → 投影重建（下一任务反映最新衰减与记忆）
     try { this.memStoreForInvalidate?.invalidateProjection?.(); } catch {}
     const budgetReport: BudgetReport = {
       budgetTokens,

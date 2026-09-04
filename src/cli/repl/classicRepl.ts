@@ -15,7 +15,7 @@ export interface ClassicReplOptions {
 }
 
 export async function startClassicRepl(opts: ClassicReplOptions = {}): Promise<void> {
-  // P0-fix: shared provider singleton (lazily created) keeps hot config state
+  // 共享 provider 单例（懒创建）保持热配置状态
   // consistent with the interactive runner and /serve.
   const provider = getSharedModelProvider();
   const repl = new Repl({ provider, ...(opts.session ? { session: opts.session } : {}) });

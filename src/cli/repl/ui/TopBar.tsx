@@ -30,7 +30,7 @@ export function TopBar(props: {
   const pct = Math.max(0, Math.min(100, Math.floor((budgetRatio || 0) * 100)));
   const budgetColor = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green';
 
-  // P0.3 + M2.3: context meter — "N% context used"; past the 70% warning line
+  // P0.3 + context meter — "N% context used"; past the 70% warning line
   // it flips to a CC-style countdown "N% until auto-compact" (auto at 85%).
   const ctxPct = ctxRatio != null
     ? Math.max(0, Math.min(100, Math.floor(ctxRatio * 100)))

@@ -294,7 +294,7 @@ const command: Command = {
       name = name.slice(6);
     }
 
-    // P3: Pre-validate with provider before switching
+    // Pre-validate with provider before switching
     if (provider && typeof provider.isModelAvailable === 'function') {
       const okDirect = provider.isModelAvailable(name);
       const okScnet = provider.isModelAvailable('scnet:' + name);

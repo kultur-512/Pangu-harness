@@ -1,5 +1,5 @@
 // src/tools/approval.ts
-// M1-2.4: approval layer — three modes, session allowlist, interactive bridges.
+// 审批层 — 三种模式、会话允许清单、交互桥。
 //
 // Semantics (per M1 instruction):
 //   readonly : all writes and non-allowlisted bash → DENIED (no confirm card)

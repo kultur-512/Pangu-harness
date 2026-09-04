@@ -1,5 +1,5 @@
 // src/cli/repl/rolloutStore.ts
-// M2.2: append-only session rollouts (crash-resilient resume).
+// append-only session rollouts (crash-resilient resume).
 //
 // Layout: ~/.panshalach/rollouts/<sessionId>.jsonl
 // Event kinds:
@@ -261,7 +261,7 @@ export function directBranches(sessionId: string): string[] {
   return out.sort();
 }
 
-/** P2-T18 (Pi): session tree — origin + recursive branch nodes (edges = branchOf). */
+/** session tree — origin + recursive branch nodes (edges = branchOf). */
 export interface SessionTreeNode {
   id: string;
   children: SessionTreeNode[];

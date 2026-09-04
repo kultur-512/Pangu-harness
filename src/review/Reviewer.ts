@@ -47,7 +47,7 @@ export interface ReviewReport {
   };
   /** 摘要 */
   summary: string;
-  /** 静态分析结果（P0-3 新增） */
+  /** 静态分析结果 */
   staticAnalysis?: StaticAnalysisResult[];
 }
 
@@ -185,7 +185,7 @@ export class Reviewer {
       });
     }
 
-    // 4) 静态分析（P0-3 新增） - 仅修改本文件
+    // 4) 静态分析 - 仅修改本文件
     try {
       report.staticAnalysis = await this.runStaticAnalysis(workspaceRoot);
     } catch {
@@ -256,7 +256,7 @@ export class Reviewer {
   }
 
   /**
-   * 语言感知静态分析（P0-3）
+   * 语言感知静态分析
    * 仅允许白名单命令：npx tsc / npx eslint
    * 超时 30s，输出截断 4000 字符
    */
@@ -291,7 +291,7 @@ export class Reviewer {
 
       const errorCount = (output.match(/error TS\d+/g) || []).length;
       const warningCount = (output.match(/warning TS\d+/g) || []).length;
-      // M2.5: tool-level failure (e.g. the fake `tsc` npm package or a missing
+      // tool-level failure (e.g. the fake `tsc` npm package or a missing
       // compiler) must NOT be reported as a clean pass.
       const toolFailed =
         output.includes('is not the tsc command') ||

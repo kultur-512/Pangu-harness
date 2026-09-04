@@ -6,7 +6,7 @@ import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierConfig.js';
 
-// ==================== M2.1: L0 硬约束（≤3 条，非整段注入） ====================
+// ==================== L0 硬约束（≤3 条，非整段注入） ====================
 export const L0_INVARIANTS: string[] = [
   '写前必读（RBW）：修改文件前先读目标文件',
   '变更需可验证：验证命令显式列出，不允许“逻辑上应该通过”',
@@ -18,7 +18,7 @@ export function assertL0Count(): void {
   if (L0_INVARIANTS.length > 3) throw new Error('L0_INVARIANTS 超过 3 条（M2.1 预算红线）');
 }
 
-/** M2.1: 确定性 token 估算 — ceil(asciiLen/4 + cjkLen×1.5)。纯函数。 */
+/** 确定性 token 估算 — ceil(asciiLen/4 + cjkLen×1.5)。纯函数。 */
 export function estTokens(text: string): number {
   let ascii = 0;
   let cjk = 0;
@@ -135,7 +135,7 @@ export interface InjectionSummary {
   duplicatesSkipped: number;
 }
 
-/** M3.2: buildForTask 扩展元信息（buildForTask 本体仍返回 string，元信息经 lastBuildMeta 暴露） */
+/** buildForTask 扩展元信息（buildForTask 本体仍返回 string，元信息经 lastBuildMeta 暴露） */
 export interface BuildResult {
   prompt: string;
   memoryCardCount: number;
@@ -149,13 +149,13 @@ export class PromptBuilder {
     private tierConfig: TierConfig
   ) {}
 
-  // P1-E: per-build dedup set (reset every buildForTask)
+  // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
   private duplicatesSkipped = 0;
-  // P1-T17: previous environment snapshot (for incremental env-delta injection)
+  // previous environment snapshot (for incremental env-delta injection)
   private prevEnvSnapshot: any = null;
 
-  // P2-D: collect relevant file hints from the current task for reference-based memory filtering
+  // collect relevant file hints from the current task for reference-based memory filtering
   private collectCurrentWorkspaceFiles(issue: string): string[] {
     if (!issue) return [];
     const files: string[] = [];
@@ -190,25 +190,25 @@ export class PromptBuilder {
     // reset dedup state for this build
     this.injectedKeys = new Set<string>();
     this.duplicatesSkipped = 0;
-    // M3.2: reset per-build auto-pull state at build START (L1 populates ids later)
+    // reset per-build auto-pull state at build START (L1 populates ids later)
     this.autoPulledThisBuild = false;
     this.lastInjectedCardIds = [];
     this.lastKeywords = [];
 
     const lines: string[] = [];
 
-    // P2-D: collect relevant workspace files from this task (for reference filtering)
+    // collect relevant workspace files from this task (for reference filtering)
     const currentWsFiles = this.collectCurrentWorkspaceFiles(issue);
 
     // === System identity (always) ===
     const systemLine = `你是烛龙（Zhulong），一个基于 openPangu 的记忆增强长程上下文智能体，面向软件工程长期维护场景（内部代号 Panshalach / 盘沙拉克）。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
     lines.push(systemLine);
 
-    // === M2.1: L0 硬约束（≤3 条精选，非整段注入） ===
+    // === L0 硬约束（≤3 条精选，非整段注入） ===
     assertL0Count();
     this.tryInject('l0-invariants', `\n【硬约束】\n${L0_INVARIANTS.map((i) => `- ${i}`).join('\n')}`, lines);
 
-    // === P0-2: Structured tier_constraint — MUST ALWAYS be injected (no dedup) ===
+    // === Structured tier_constraint — MUST ALWAYS be injected (no dedup) ===
     const constraint = TierConstraintRegistry.get(this.session.tier);
     lines.push(constraint.xml);
     if (constraint.text) {
@@ -277,7 +277,7 @@ export class PromptBuilder {
       );
     }
 
-    // === M2.2: L1 — relevant memory cards (tier driven, kind-filtered,
+    // === L1 — relevant memory cards (tier driven, kind-filtered,
     // relevance-sorted, preference seat reserved; source labels + ghost hint)
     const memAdded = await this.appendMemoryCardsDedup(lines, currentWsFiles, issue);
     // memoryCardCount will be computed from actual cards later if needed
@@ -300,7 +300,7 @@ export class PromptBuilder {
       // skills are best-effort; never break the prompt build
     }
 
-    // === M2.2: L1 — active feature injection (only when an in-progress
+    // === L1 — active feature injection (only when an in-progress
     // feature exists; prompt-cache friendly, Pi semantics) ===
     try {
       const { loadFeatures, activeFeature } = await import('./FeatureTracker.js');
@@ -319,7 +319,7 @@ export class PromptBuilder {
       // feature tracking is best-effort
     }
 
-    // === M2.2: L1 — ENV self-description summary, KEYWORD-GATED (build|compile|
+    // === L1 — ENV self-description summary, KEYWORD-GATED (build|compile|
     // 构建|test|测试|依赖|install in the task) — not resident ===
     const ENV_KEYWORDS = /build|compile|构建|test|测试|依赖|install/i;
     if (ENV_KEYWORDS.test(issue || '')) {
@@ -334,7 +334,7 @@ export class PromptBuilder {
       }
     }
 
-    // === P1-T17 (Codex): incremental environment context — only CHANGED
+    // === incremental environment context — only CHANGED
     // fields are injected (cwd/branch/changed files); unchanged runs inject
     // nothing (token savings). ===
     try {
@@ -372,7 +372,7 @@ export class PromptBuilder {
     const joined = lines.join('\n');
     const compacted = this.compactIfNeeded(joined);
 
-    // === M3.2: 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===
+    // === 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===
     const AUTO_PULL_TIERS = new Set(['standard', 'high']);
     const preAutoPullCount = this.lastInjectedCardIds.length; // L1 已注入 ids 数
     if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier)) {
@@ -415,7 +415,7 @@ export class PromptBuilder {
     const joined2 = lines.join('\n');
     const compacted2 = this.compactIfNeeded(joined2);
 
-    // === P1-E: injection summary at the very top (debug block) ===
+    // === injection summary at the very top (debug block) ===
     const summary: InjectionSummary = this.buildInjectionSummary();
     const summaryBlock = `<injection_summary>\n${JSON.stringify(summary, null, 2)}\n</injection_summary>\n`;
 
@@ -428,7 +428,7 @@ export class PromptBuilder {
     return summaryBlock + compacted2;
   }
 
-  /** M3.2: 本 build 的元信息（buildForTask 返回值扩展——不破坏既有 string 返回） */
+  /** 本 build 的元信息（buildForTask 返回值扩展——不破坏既有 string 返回） */
   lastBuildMeta: BuildResult | null = null;
   private autoPulledThisBuild = false;
   private lastInjectedCardIds: string[] = [];
@@ -455,9 +455,9 @@ export class PromptBuilder {
     try {
       const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
       const memStore = new RefinedMemoryStore(this.session.workspace);
-      // P2-D: use pre-collected relevant files (from caller) for reference filtering
+      // use pre-collected relevant files (from caller) for reference filtering
       const currentFiles = currentWorkspaceFiles && currentWorkspaceFiles.length ? currentWorkspaceFiles : undefined;
-      // M2.2: 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
+      // 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
       const keywords = (issue ?? '').split(/\s+/).map(w => w.replace(/^[/@#]/, '')).filter(w => w.length >= 2);
       this.lastKeywords = keywords;
       const allCards = memStore.loadFiltered({
@@ -469,7 +469,7 @@ export class PromptBuilder {
       const overflow = allCards.length > maxCards;
       const cards = allCards.slice(0, maxCards);
       if (cards.length > 0) {
-        // M2.2: 来源标签（注入安全：preference 必须有 [用户偏好] 标签）
+        // 来源标签（注入安全：preference 必须有 [用户偏好] 标签）
         const label = (c: any): string => c.kind === 'preference' ? '[用户偏好]' : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
         const ghost = overflow ? `\n（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
         const added = this.tryInject('memory-cards', [
@@ -480,7 +480,7 @@ export class PromptBuilder {
           }),
           ghost,
         ], lines);
-        this.lastInjectedCardIds = cards.map(c => c.id); // M3.2: record for overflow exclusion
+        this.lastInjectedCardIds = cards.map(c => c.id); // 供溢出排除用
         return added;
       }
       this.lastInjectedCardIds = [];
@@ -510,7 +510,7 @@ export class PromptBuilder {
     try {
       const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
       const memStore = new RefinedMemoryStore(this.session.workspace);
-      // P2-D: collect from a neutral string (best effort for legacy path)
+      // collect from a neutral string (best effort for legacy path)
       const currentFiles = this.collectCurrentWorkspaceFiles('');
       const cards = memStore.loadFiltered({
         tier: this.session.tier,

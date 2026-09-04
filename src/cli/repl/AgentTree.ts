@@ -1,14 +1,10 @@
 // src/cli/repl/AgentTree.ts
-// P5-5.3: sub-agent rollout tree — pure state model, fully testable.
+// sub-agent rollout tree — pure state model, fully testable.
 //
-// Honesty contract: since D-parallel, high+ tiers run rollouts CONCURRENTLY
-// (TestTimeOrchestrator Promise.allSettled + write-mutex), so the tree renders
-// a real parallel view (multiple running nodes coexist); quick/standard run
-// serially and show a sequential progress list. Never fakes status — nodes
-// are upserted only from real onEvent step/critique data.
-//
-// (Comment updated in fix-p2: previously claimed the engine was always serial,
-// contradicting the parallel rollout engine shipped in D-parallel.)
+// 诚实契约：high+ 档位的 rollout 并发执行（TestTimeOrchestrator
+// Promise.allSettled + 写互斥），树渲染真实并行视图（多个 running 节点并存）；
+// quick/standard 串行执行，展示顺序进度列表。从不伪造状态——节点仅从
+// 真实 onEvent step/critique 数据 upsert。
 
 export interface AgentNode {
   id: string;                 // rolloutId (e.g. rollout-0)
@@ -19,7 +15,7 @@ export interface AgentNode {
   lastPhase?: string;
 }
 
-// P2-T19 (L14): graph edges — dependency / rollback / approval routing.
+// 图边 — 依赖 / 回滚 / 审批路由。
 export interface AgentEdge {
   from: string;
   to: string;
@@ -51,7 +47,7 @@ export class AgentTree {
     this.nodes.set(node.id, merged);
   }
 
-  /** P2-T19: add an edge (dedup by from+to+kind). No-op for missing endpoints. */
+  /** 加一条边（from+to+kind 去重）。端点缺失时为 no-op。 */
   addEdge(edge: AgentEdge): void {
     if (!this.nodes.has(edge.from) || !this.nodes.has(edge.to)) return;
     if (this.edgesList.some((e) => e.from === edge.from && e.to === edge.to && e.kind === edge.kind)) return;
@@ -62,7 +58,7 @@ export class AgentTree {
     return [...this.edgesList];
   }
 
-  /** P2-T19: nodes reachable FROM `id` via edges of the given kind. */
+  /** 从 `id` 出发沿指定 kind 的边可达的节点。 */
   route(id: string, kind: AgentEdge['kind']): string[] {
     const seen = new Set<string>();
     const out: string[] = [];

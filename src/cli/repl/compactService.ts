@@ -1,5 +1,5 @@
 // src/cli/repl/compactService.ts
-// M2.3: context compaction — summarize old turns with the model, keep the
+// context compaction — summarize old turns with the model, keep the
 // most recent ones verbatim, and report the token-estimate drop.
 //
 // Claude-Code-style context accounting (heuristic chars/4):
@@ -18,7 +18,7 @@ import path from 'node:path';
 const KEEP_RECENT = 6;
 const EST_CHARS_PER_TOKEN = 4;
 
-// P1-T15: configured strategy id, cached per workspace (read once per process).
+// configured strategy id, cached per workspace (read once per process).
 const strategyCache = new Map<string, string>();
 function resolveStrategyId(session: Session): string {
   const ws = session.workspace || process.cwd();
@@ -55,7 +55,7 @@ export function estimateSessionTokens(session: Session): number {
 }
 
 function buildSummaryPrompt(removed: Turn[]): string {
-  // P1-T15: now delegates to the configured strategy (kept as a compat shim).
+  // now delegates to the configured strategy (kept as a compat shim).
   return getStrategy('default').buildPrompt(removed);
 }
 
@@ -91,7 +91,7 @@ export async function compactSession(
   const removed = session.turns.slice(0, session.turns.length - KEEP_RECENT);
   const kept = session.turns.slice(-KEEP_RECENT);
 
-  // M1.3: compact 补漏提炼 — 被移除轮次若有成功信号（result.summary 含 score≥85）
+  // compact 补漏提炼 — 被移除轮次若有成功信号（result.summary 含 score≥85）
   // 且同内容 hash 尚未存在（回合结束已提炼则跳过 → 防双重计数）。turn 级无
   // attemptCount 信息（申报：compact 补漏以 score≥85 为唯一信号）。
   try {

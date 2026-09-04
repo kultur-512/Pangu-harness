@@ -1,5 +1,5 @@
 // src/cli/repl/usageService.ts
-// M2.4: local usage/cost accounting — no network, no secrets.
+// local usage/cost accounting — no network, no secrets.
 //
 // Sources:
 // - session.stats (accumulated by addTurn from budgetReports)

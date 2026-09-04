@@ -5,7 +5,7 @@
 import { FailureCategory } from './FailureMemory.js';
 
 /**
- * P1-C (v2): 新的记忆类别，用于分层加载与阶梯衰减
+ * 新的记忆类别，用于分层加载与阶梯衰减
  */
 export type MemoryCategory = 'architecture' | 'failure' | 'implementation' | 'insight' | 'general';
 
@@ -18,14 +18,14 @@ export interface RefinedMemoryCard {
   /** 卡片唯一 ID（hash 摘要） */
   id: string;
   /**
-   * M1: 卡片种类 — failure（失败教训）/ success（正向经验）/ preference（用户偏好）。
+   * 卡片种类 — failure（失败教训）/ success（正向经验）/ preference（用户偏好）。
    * 旧卡加载默认 'failure'（向后兼容）。kind 决定注入来源标签与衰减基线。
    */
   kind?: 'failure' | 'success' | 'preference';
   /** 失败类别（保留原有 taxonomy，便于追溯具体失败模式；success/preference 用 'OTHER'） */
   category: FailureCategory;
   /**
-   * P1-C (v2): 记忆类别（用于 tier 可见性 + 阶梯衰减）
+   * 记忆类别（用于 tier 可见性 + 阶梯衰减）
    * 老文件无此字段时，加载时默认 'general'
    */
   memoryCategory?: MemoryCategory;
@@ -46,17 +46,17 @@ export interface RefinedMemoryCard {
   /** 来源描述（不包含完整代码或敏感信息） */
   sourceContext: string;
 
-  // ===== P1-C (v2) 新增字段 =====
+  // ===== 分层加载与阶梯衰减字段 =====
   /** 衰减后的当前权重系数（0-1），用于 loadFiltered 时计算 effectiveWeight */
   decayWeight?: number;
   /** 最后被使用（加载/命中）的时间戳，用于刷新衰减 */
   lastUsedAt?: number;
 
-  // ===== M1.2 新增字段 =====
+  // ===== 正向记忆与偏好字段 =====
   /** pin 卡冻结衰减（decayWeight 恒 1.0）—— /remember --pin */
   pinned?: boolean;
 
-  // ===== M3.3a 新增字段（确定性合并归档语义） =====
+  // ===== 确定性合并归档字段 =====
   /** active（默认）/ archived（合并后原卡软删除，不物理删） */
   status?: 'active' | 'archived';
   /** 合并卡记录来源卡 id（可回滚）；本期只写不读 */

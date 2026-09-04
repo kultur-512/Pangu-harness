@@ -1,5 +1,5 @@
 // src/cli/repl/ModelProvider.ts
-// P3: ModelProvider abstraction (per ModelProvider blueprint)
+// ModelProvider 抽象
 // - Never throw on unavailable model; return null
 // - Default "default" model can be backed by an optional fallbackComplete
 // - Supports registration of named factories
@@ -22,7 +22,7 @@ export class DefaultModelProvider implements ModelProvider {
 
   // Cached provider registry for scnet etc. (lazy)
   private _providerRegistry: ProviderRegistry | null = null;
-  // M2.5: when the caller passed an explicit providersConfig, it is
+  // when the caller passed an explicit providersConfig, it is
   // AUTHORITATIVE — getProviderRegistry must never silently replace it with
   // a config discovered from the filesystem (isolation for tests/embedders).
   private _configIsAuthoritative = false;
@@ -74,7 +74,7 @@ export class DefaultModelProvider implements ModelProvider {
   }
 
   private getProviderRegistry(): ProviderRegistry | null {
-    // M2.5: explicit config wins — no filesystem discovery, no rebuild.
+    // explicit config wins — no filesystem discovery, no rebuild.
     if (this._configIsAuthoritative) {
       return this._providerRegistry;
     }
@@ -533,7 +533,7 @@ export function createDefaultModelProvider(opts?: {
   return new DefaultModelProvider(opts);
 }
 
-// ==================== Shared singleton (P0-fix: provider 兜底必达) ====================
+// ==================== 共享单例（provider 兜底必达） ====================
 // Problem this solves: runAgentTask() used to construct a FRESH provider per
 // call, losing the REPL's hot state (/model switches, adoptRemoteModels caches,
 // forceScnetConfig injections) and sometimes missing .panshalach.json root discovery.

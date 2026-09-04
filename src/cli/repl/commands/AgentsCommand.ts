@@ -1,5 +1,5 @@
 // src/cli/repl/commands/AgentsCommand.ts
-// P5-5.3: /agents — sub-agent rollout tree (serial progress list per the
+// /agents — sub-agent rollout 树（按
 // current engine; never fakes parallelism).
 //
 //   /agents            → tree view + summary

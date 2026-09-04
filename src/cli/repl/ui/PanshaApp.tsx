@@ -49,7 +49,7 @@ export function PanshaApp(props: {
     return undefined;
   }, []);
 
-  // P0.1: transcript mode (ctrl+o) — expands every thought to its full text,
+  // transcript mode (ctrl+o) — expands every thought to its full text,
   // Claude Code style ("in the conversation and in the transcript view").
   const [transcriptMode, setTranscriptMode] = R.useState
     ? R.useState(false)
@@ -133,7 +133,7 @@ export function PanshaApp(props: {
           return { ...state, streamMessage: '' };
         }
         return { ...state, streamThinking: '', streamMessage: '' };
-      // M2.0: real approval confirm state (serializable request only; the
+      // real approval confirm state (serializable request only; the
       // resolver lives in bridge.currentConfirm)
       case 'SET_CONFIRM_STATE':
         return { ...state, confirm: action.confirm };
@@ -197,7 +197,7 @@ export function PanshaApp(props: {
 
   const feedNode = createElement(FeedComp, { items: state.feed, transcript: transcriptMode, height: feedHeight });
 
-  // P1.4: live streaming zone (visible only while a turn is running and has content)
+  // live streaming zone (visible only while a turn is running and has content)
   const streamNode = StreamingAssistantComp
     ? createElement(StreamingAssistantComp, {
         thinking: state.streamThinking,
@@ -206,7 +206,7 @@ export function PanshaApp(props: {
       })
     : null;
 
-  // M2.0: real approval ConfirmBar — state.confirm is the serializable request;
+  // real approval ConfirmBar — state.confirm is the serializable request;
   // decisions flow through bridge.resolveConfirm which resolves the engine's
   // awaiting promise. InputBar is hidden while a decision is pending.
   const inputNode = state.confirm

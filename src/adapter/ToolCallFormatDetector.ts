@@ -1,5 +1,5 @@
 // src/adapter/ToolCallFormatDetector.ts
-// P0-1: Format detection layer with confidence scoring.
+// 工具调用格式探测层：带置信度打分。
 // Strategy: Try OpenAI JSON first (high confidence threshold), then XML structured strict, then loose plain.
 // Never modifies the original StrictStructuredToolAdapter or UniversalToolCallAdapter.
 
@@ -198,7 +198,7 @@ export class ToolCallFormatDetector {
       attempts.push({ format: 'loose-plain', success: false, reason: e?.message || 'parse error' });
     }
 
-    // P0.5-B (v2): Automatic fallback chain
+    // 自动兜底链
     // Rule C: trigger when we have NO calls at all OR confidence is still low.
     let fallbackUsed = false;
     if (best.toolCalls.length === 0 || best.confidence < 0.5) {

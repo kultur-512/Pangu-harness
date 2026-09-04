@@ -1,7 +1,7 @@
 // src/cli/repl/InputReader.ts
 // Basic readline wrapper for REPL input.
 // Supports history, completer (Tab), multiline accumulation, and key events.
-// P2-E: gated keypress and multiline behavior via TerminalCapabilities
+// 基于 TerminalCapabilities 的按键与多行行为门控
 
 import * as readline from 'node:readline';
 import type { InputReader } from './types.js';
@@ -75,7 +75,7 @@ export class InputReaderImpl implements InputReader {
       for (const fn of this.listeners.line) fn(line);
     });
 
-    // P2-E: Enable keypress events only when capabilities allow
+    // 仅在能力允许时启用 keypress 事件
     // (avoids garbage on old Windows cmd / ISE where raw mode is fragile).
     // picker-③: non-TTY / caps.keypress=false → NO menu (Tab completer stays).
     const caps = getTerminalCapabilities();

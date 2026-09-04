@@ -19,18 +19,18 @@ export interface RefineInput {
   applicableTiers?: string[];
   /** 当前时间戳 */
   now?: number;
-  // ===== M1.1 (Positive Memory) 新增 =====
+  // ===== Positive Memory =====
   /** 尝试次数（1 = 一次通过） */
   attemptCount?: number;
   /** 用户反馈文本（正向词触发 success 提炼） */
   userFeedback?: string;
 }
 
-/** M1.1: 正向反馈词（一次通过 + 正向反馈 → success 卡）。
+/** 正向反馈词（一次通过 + 正向反馈 → success 卡）。
  * 注：CJK 无 \b 词界（'很不错' 内 '不错' 前后均汉字），故中文直接匹配，
  * OK 用 ASCII 边界（申报：指令原 regex 的 \b 对 CJK 无效）。 */
 export const POSITIVE_FEEDBACK_RE = /(完美|可以|很好|不错|好的|没问题)|(?<![A-Za-z0-9])OK(?![A-Za-z0-9])/i;
-/** M1.1: score 兜底阈值（写盘成功 ≠ 任务成功） */
+/** score 兜底阈值（写盘成功 ≠ 任务成功） */
 export const POSITIVE_SCORE_THRESHOLD = 85;
 
 export interface LoadFilter {
@@ -43,33 +43,33 @@ export interface LoadFilter {
   /** 当前时间戳（用于衰减计算） */
   now?: number;
   /**
-   * P2-D: 当前 workspace 相关文件列表（用于引用过滤）
+   * 当前 workspace 相关文件列表（用于引用过滤）
    * 只加载 referencedFiles 与此列表有交集的记忆；为空则回退全量
    */
   currentWorkspaceFiles?: string[];
   /**
-   * M2.2: 任务高频词 — 卡片 summary 含关键词 relevance +1（相关性排序用）。
+   * 任务高频词 — 卡片 summary 含关键词 relevance +1（相关性排序用）。
    * 排序 = 0.7×effectiveWeight + 0.3×relevance（防高权重旧卡压制相关新卡）。
    */
   keywords?: string[];
-  /** M2.2: preference 保留 1 席位（即使排序靠后） */
+  /** preference 保留 1 席位（即使排序靠后） */
   reservePreferenceSeat?: boolean;
 }
 
-/** M3.1: 投影缓存条目（快照冻结） */
+/** 投影缓存条目（快照冻结） */
 export interface MemoryProjection {
   key: string;
   builtAt: number;
   cards: RefinedMemoryCard[];
 }
 
-/** M3.1: 衰减阶梯粗粒度 bucket（30d 对齐 DECAY_HALF_LIFE_DAYS）—
+/** 衰减阶梯粗粒度 bucket（30d 对齐 DECAY_HALF_LIFE_DAYS）—
  *  跨 bucket 必然跨某卡的衰减段 → key 变 → 自动重建。 */
 function decayStep(now: number): number {
   return Math.floor(now / (MEMORY_LIMITS.DECAY_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000));
 }
 
-/** M3.1: filter key 值归一（确定性）— 路径分隔符统一 /、数组排序、空值 '∅'。 */
+/** filter key 值归一（确定性）— 路径分隔符统一 /、数组排序、空值 '∅'。 */
 function normFilterValue(v: unknown): string {
   if (v === undefined || v === null) return '∅';
   if (typeof v === 'string') return v.trim().toLowerCase().replace(/\\/g, '/');
@@ -94,7 +94,7 @@ export class RefinedMemoryStore {
   private filePath: string;
   private cache: RefinedMemoryFile | null = null;
 
-  // M3.1 (方案 B+): 投影缓存 — 多槽 Map（上限 8，超限删最旧）。
+  // 投影缓存 — 多槽 Map（上限 8，超限删最旧）。
   // 一致性语义：任务内快照冻结（有意）；任务边界/写入 invalidateProjection 重建；
   // 跨衰减阶梯（decayStep 变化）→ key 变化 → 自动重建。
   private projections = new Map<string, MemoryProjection>();
@@ -107,7 +107,7 @@ export class RefinedMemoryStore {
   /**
    * 提炼：从原始轨迹提炼为教训卡片
    * 核心：从失败信号中生成可持久化的轻量卡片，不保留完整轨迹
-   * M1.1: 新增 Positive Memory — 一次通过（attemptCount===1）且（正向反馈 或
+   * 新增 Positive Memory — 一次通过（attemptCount===1）且（正向反馈 或
    * score≥85）→ kind:'success' 卡。写盘成功 ≠ 任务成功（触发红线）。
    */
   refine(input: RefineInput): RefinedMemoryCard[] {
@@ -117,7 +117,7 @@ export class RefinedMemoryStore {
     // 1) 收集所有失败信号
     const failureSignals = this.extractFailureSignals(input.trajectory);
 
-    // P2-D: 提取本次写入的文件路径（用于 referencedFiles）
+    // 提取本次写入的文件路径（用于 referencedFiles）
     const writtenFiles = this.extractWrittenFilesFromTrajectory(input.trajectory);
 
     // 2) 为每个失败信号生成或更新一张卡片
@@ -126,7 +126,7 @@ export class RefinedMemoryStore {
       newCards.push(card);
     }
 
-    // M1.1: Positive Memory — 一次通过 + 正向信号 → success 卡
+    // Positive Memory — 一次通过 + 正向信号 → success 卡
     if (input.attemptCount === 1) {
       const fb = (input.userFeedback || '').trim();
       const score = input.trajectory?.score ?? 0;
@@ -141,7 +141,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * M1.1: 生成 Positive（success）卡片
+   * 生成 Positive（success）卡片
    * 摘要："已验证可行的做法：..."（建设性、可复用）
    */
   private createPositiveCard(
@@ -196,7 +196,7 @@ export class RefinedMemoryStore {
     // 写入
     writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
     this.cache = file;
-    this.invalidateProjection(); // M3.1: save() write → rebuild
+    this.invalidateProjection(); // save() 写入 → 重建
 
     // 确保 .gitignore 包含
     this.ensureGitIgnore();
@@ -225,7 +225,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * M3.1 (方案 B+): 投影缓存加载 — key = filter 归一 + '|step=' + decayStep(now)。
+   * 投影缓存加载 — key = filter 归一 + '|step=' + decayStep(now)。
    * 命中 → 返回 builtAt 快照（任务内冻结是有意的会话投影语义）；
    * 未命中 → loadFiltered 后缓存（多槽 ≤8 LRU）。跨衰减阶梯 key 变化 → 自动重建。
    */
@@ -248,18 +248,18 @@ export class RefinedMemoryStore {
     return cards;
   }
 
-  /** M3.1: 清空全部投影槽（写入/提炼/任务边界调用 → 重建反映最新衰减）。 */
+  /** 清空全部投影槽（写入/提炼/任务边界调用 → 重建反映最新衰减）。 */
   invalidateProjection(): void {
     this.projections.clear();
   }
 
-  /** M3.1: 当前投影槽数（测试/调试可见性）。 */
+  /** 当前投影槽数（测试/调试可见性）。 */
   projectionCount(): number {
     return this.projections.size;
   }
 
   /**
-   * M3.2: 探索阶段自动拉取 — top-N 之外的相关卡（≤5），排除已注入卡。
+   * 探索阶段自动拉取 — top-N 之外的相关卡（≤5），排除已注入卡。
    * 走投影 Map（独立键：maxCards 未设 → 与 L1 注入键不同槽，不重算 loadFiltered）。
    */
   getOverflowCards(filter: LoadFilter, alreadyInjected: string[]): { pulled: RefinedMemoryCard[]; totalRemaining: number } {
@@ -271,21 +271,21 @@ export class RefinedMemoryStore {
 
   /**
    * 过滤加载
-   * P1-C (v2): 支持 memoryCategory 分层 + 阶梯衰减
-   * P2-D: 支持 currentWorkspaceFiles 引用过滤（交集匹配）
+   * 支持 memoryCategory 分层 + 阶梯衰减
+   * 支持 currentWorkspaceFiles 引用过滤（交集匹配）
    */
   loadFiltered(filter: LoadFilter = {}): RefinedMemoryCard[] {
     const file = this.load();
     const now = filter.now ?? Date.now();
     const tierName = filter.tier ? (TierRegistry.isTier(filter.tier as string) ? filter.tier as Tier : undefined) : undefined;
 
-    // 规范化老卡片（无 memoryCategory 的老文件兼容；M1: 无 kind 默认 'failure'）
+    // 规范化老卡片（无 memoryCategory 时按 kind 补默认）
     const normalized = file.cards.map(c => {
       const mc = (c as any).memoryCategory || 'general';
       const lastUsed = (c as any).lastUsedAt ?? c.lastSeen ?? now;
       const dw = (c as any).decayWeight ?? 1.0;
       const refs: string[] = (c as any).referencedFiles || [];
-      const kind = (c as any).kind ?? 'failure'; // M1: 旧卡默认 failure
+      const kind = (c as any).kind ?? 'failure'; // 无 kind 默认 failure
       return {
         ...c,
         kind,
@@ -326,7 +326,7 @@ export class RefinedMemoryStore {
       return true;
     });
 
-    // P2-D: 引用过滤（referencedFiles 与 currentWorkspaceFiles 有交集）
+    // 引用过滤（referencedFiles 与 currentWorkspaceFiles 有交集）
     // 语义：
     // - 先做 tier / style / decay 等常规过滤得到候选集 preReference
     // - 若提供了 currentWorkspaceFiles（非空），计算与 referencedFiles 有交集的子集 refSet
@@ -353,7 +353,7 @@ export class RefinedMemoryStore {
       })
       .filter(c => (c as any)._effective >= 0.3);
 
-    // M2.2: 相关性（任务关键词命中 summary → +1，cap 3）
+    // 相关性（任务关键词命中 summary → +1，cap 3）
     const kws = (filter.keywords ?? []).map(k => String(k).toLowerCase()).filter(Boolean);
     if (kws.length > 0) {
       filtered = filtered.map(c => {
@@ -364,7 +364,7 @@ export class RefinedMemoryStore {
       });
     }
 
-    // M2.2: 排序 = 0.7×effectiveWeight + 0.3×relevance（默认降序权重一致）
+    // 排序 = 0.7×effectiveWeight + 0.3×relevance（默认降序权重一致）
     filtered.sort((a, b) => {
       const ea = (a as any)._effective ?? 0;
       const eb = (b as any)._effective ?? 0;
@@ -376,7 +376,7 @@ export class RefinedMemoryStore {
     });
 
     if (filter.maxCards && filter.maxCards > 0) {
-      // M2.2: preference 保留 1 席位（排序靠后也保留，其余按 top-N）
+      // preference 保留 1 席位（排序靠后也保留，其余按 top-N）
       if (filter.reservePreferenceSeat !== false) {
         const pref = filtered.find(c => c.kind === 'preference');
         const rest = filtered.filter(c => c.kind !== 'preference').slice(0, Math.max(1, filter.maxCards - 1));
@@ -387,7 +387,7 @@ export class RefinedMemoryStore {
       }
     }
 
-    // M2.5: loadFiltered 是纯读 —— 不再把 lastUsedAt/decayWeight 刷成 now。
+    // loadFiltered 是纯读 —— 不再把 lastUsedAt/decayWeight 刷成 now。
     // 旧实现让每一次读取都“刷新使用”，使时间衰减永远无法生效（读即使用，
     // 自我挫败），也让外部无法验证衰减分段。使用刷新应由真实的注入路径
     // （markUsed）承担。
@@ -400,7 +400,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * M2.5: public decay math — exposes the 4-segment ladder so callers/tests
+   * public decay math — exposes the 4-segment ladder so callers/tests
    * can verify effective weight without depending on loadFiltered's cutoff.
    */
   effectiveWeightOf(card: RefinedMemoryCard, now: number): number {
@@ -430,7 +430,7 @@ export class RefinedMemoryStore {
     existing.meta.lastUpdated = Date.now();
     writeFileSync(this.filePath, JSON.stringify(existing, null, 2), 'utf-8');
     this.cache = existing;
-    this.invalidateProjection(); // M3.1: clear() write
+    this.invalidateProjection(); // clear() 写入
     return { removed };
   }
 
@@ -462,7 +462,7 @@ export class RefinedMemoryStore {
       };
       writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
       this.cache = file;
-      this.invalidateProjection(); // M3.1: import write
+      this.invalidateProjection(); // import 写入
     }
 
     return { imported: parsed.cards.length, total: this.load().cards.length };
@@ -504,10 +504,10 @@ export class RefinedMemoryStore {
     const existing = this.load().cards.find(c => c.category === signal.category);
     const summary = LESSON_TEMPLATES[signal.category] ?? signal.sourceContext;
 
-    // P1-C (v2): 推断 memoryCategory
+    // 推断 memoryCategory
     const memCat = this.inferMemoryCategory(signal.category, summary);
 
-    // P2-D: 规范化 written files
+    // 规范化 written files
     const newRefs = writtenFiles.map(f => this.normPath(f)).filter(Boolean);
 
     if (existing) {
@@ -519,7 +519,7 @@ export class RefinedMemoryStore {
       if (!existing.memoryCategory || existing.memoryCategory === 'general') {
         (existing as any).memoryCategory = memCat;
       }
-      // P2-D: 合并 referencedFiles
+      // 合并 referencedFiles
       const prevRefs: string[] = (existing as any).referencedFiles || [];
       const merged = Array.from(new Set([...prevRefs.map(this.normPath.bind(this)), ...newRefs]));
       (existing as any).referencedFiles = merged;
@@ -547,7 +547,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * P1-C (v2): 根据 FailureCategory + 关键词推断 memoryCategory
+   * 根据 FailureCategory + 关键词推断 memoryCategory
    */
   private inferMemoryCategory(category: FailureCategory, summary: string): MemoryCategory {
     const s = (summary || '').toLowerCase();
@@ -582,7 +582,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * P1-C (v2): 按类别返回半衰期（天）
+   * 按类别返回半衰期（天）
    */
   private getHalfLifeForCategory(mc: MemoryCategory): number {
     switch (mc) {
@@ -595,23 +595,23 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * P1-C (v2): 阶梯衰减（4 段分段函数）
+   * 阶梯衰减（4 段分段函数）
    * 验收：超过 2 倍半衰期权重降至 10% 以下
-   * M1 (阻断 3 对齐): 沿用现有阶梯机制（申报），叠加 kind 基线 —
+   * 沿用阶梯机制（申报），叠加 kind 基线 —
    *   failure/success 基线 1.0；preference 基线 0.6（修正 3）；
    *   pin 卡冻结（decayWeight 恒 1.0，无衰减）；count≥2 半衰期 ×count（常用升权）。
    */
   private calculateEffectiveWeight(card: RefinedMemoryCard, now: number): number {
-    // M1: pin 卡冻结衰减
+    // pin 卡冻结衰减
     if ((card as any).pinned) return 1.0;
     const mc = (card.memoryCategory || 'general') as MemoryCategory;
     const last = (card as any).lastUsedAt ?? card.lastSeen ?? now;
     const ageInDays = (now - last) / (24 * 60 * 60 * 1000);
-    // M1: count≥2 → 半衰期 ×count（常用卡衰减更慢）
+    // count≥2 → 半衰期 ×count（常用卡衰减更慢）
     const halfLifeBase = this.getHalfLifeForCategory(mc);
     const halfLife = halfLifeBase * Math.max(1, card.count ?? 1);
     const base = (card as any).decayWeight ?? card.weight ?? 1;
-    // M1: kind 基线（preference 0.6 — 偏好默认低于事实类）
+    // kind 基线（preference 0.6 — 偏好默认低于事实类）
     const kindBaseline = (card.kind === 'preference' ? 0.6 : 1.0);
     let factor = 1.0;
     if (ageInDays < halfLife * 0.5) factor = 1.0;
@@ -622,7 +622,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * M1.2: /remember — 用户偏好卡
+   * /remember — 用户偏好卡
    * kind:'preference'，weight 0.6（默认）；--pin → weight 1.0 + pinned（冻结衰减）
    */
   addRemember(content: string, pin: boolean, now = Date.now()): RefinedMemoryCard {
@@ -654,14 +654,14 @@ export class RefinedMemoryStore {
     return card;
   }
 
-  /** M1.2: /remember 持久化（合并 + 保存） */
+  /** /remember 持久化（合并 + 保存） */
   remember(content: string, pin: boolean): { ok: boolean; card?: RefinedMemoryCard } {
     const card = this.addRemember(content, pin);
     this.save([card]);
     return { ok: true, card };
   }
 
-  /** M1.2: /forget <id> — 删除卡片 */
+  /** /forget <id> — 删除卡片 */
   forget(id: string): { removed: boolean } {
     const file = this.load();
     const before = file.cards.length;
@@ -672,20 +672,20 @@ export class RefinedMemoryStore {
       file.meta.lastUpdated = Date.now();
       writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
       this.cache = file;
-      this.invalidateProjection(); // M3.1: forget write
+      this.invalidateProjection(); // forget 写入
     }
     return { removed };
   }
 
   /**
-   * M1.3: 内容 hash（compact 补漏提炼去重用）— hashId(success-<summary>) 同款
+   * 内容 hash（compact 补漏提炼去重用）— hashId(success-<summary>) 同款
    */
   hashOfSuccessSummary(summary: string): string {
     return this.hashId(`success-${summary}`);
   }
 
   /**
-   * M1.3: compact 补漏提炼 — 防双重计数
+   * compact 补漏提炼 — 防双重计数
    * - 已存在同 hash 的 success 卡 → count+1 + 刷新（升权），不新增
    * - 未提炼且有信号（score≥85）→ 补提新卡
    * - 直接改写文件卡片数组单次写盘（经 save() 合并会 double-count 同一对象）
@@ -715,13 +715,13 @@ export class RefinedMemoryStore {
       file.meta.lastUpdated = Date.now();
       writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
       this.cache = file;
-      this.invalidateProjection(); // M3.1: refineCompactSignals write
+      this.invalidateProjection(); // refineCompactSignals 写入
     }
     return out;
   }
 
   /**
-   * M3.3a: 确定性同主题合并（LLM 路径后置 M4）。
+   * 确定性同主题合并（LLM 路径后置）。
    * - 候选：status!=='archived' && effectiveWeight ≥ 0.5
    * - 分组：2-gram 公共词元 ≥2 → 同组；每组 ≤6（超 6 拆多组）
    * - 合并：summary 拼接 ≤800；firstSeen = min；weight = max；count = Σ；
@@ -784,7 +784,7 @@ export class RefinedMemoryStore {
         firstSeen: Math.min(...g.map(c => c.firstSeen)),
         applicableTiers: [],
         sourceContext: `合并自 ${sourceIds.join(', ')}`,
-        decayWeight: 1.0, // M3.3a: 按 now 起算，不继承源卡衰减
+        decayWeight: 1.0, // 按 now 起算，不继承源卡衰减
         lastUsedAt: now,
         status: 'active',
         mergedFrom: sourceIds,
@@ -802,7 +802,7 @@ export class RefinedMemoryStore {
       file.meta.lastUpdated = now;
       writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
       this.cache = file;
-      this.invalidateProjection(); // M3.3a: 合并后缓存重建
+      this.invalidateProjection(); // 合并后缓存重建
     }
     return results;
   }
@@ -860,7 +860,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * P2-D: 从轨迹的 action/toolCalls 中提取本次写入/编辑的文件路径
+   * 从轨迹的 action/toolCalls 中提取本次写入/编辑的文件路径
    * 支持 Write/Edit/MultiEdit 类 + Bash 重定向（> / >>）
    */
   private extractWrittenFilesFromTrajectory(trajectory: Trajectory): string[] {

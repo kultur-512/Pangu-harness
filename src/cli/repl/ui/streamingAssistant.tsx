@@ -1,5 +1,5 @@
 // src/cli/repl/ui/streamingAssistant.tsx
-// P1.4: live in-flight zone between Feed and InputBar.
+// live in-flight zone between Feed and InputBar.
 //
 // - 💭 live thinking tail (dim, bounded, plain text — cheapest per delta)
 // - streaming assistant message rendered INCREMENTALLY via the frozen-blocks

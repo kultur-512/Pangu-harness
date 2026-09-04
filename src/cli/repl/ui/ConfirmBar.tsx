@@ -1,5 +1,5 @@
 // src/cli/repl/ui/ConfirmBar.tsx
-// M2.0: REAL approval confirm bar (first live wiring of this component).
+// REAL approval confirm bar (first live wiring of this component).
 // Props carry the serializable ApprovalRequest from the engine; decisions are
 // delivered via onDecision ('y' | 'n' | 'a'); Esc/Enter default to 'n' (safe).
 // Shows tool name + description + danger badge + first 8 diff lines.

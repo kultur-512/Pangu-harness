@@ -5,8 +5,8 @@
 //   pangu memory clear [--category X]
 //   pangu memory export [file]
 //   pangu memory import <file>
-//   pangu memory remember [--pin] <内容>    (M1.2)
-//   pangu memory forget <id>                (M1.2)
+//   pangu memory remember [--pin] <内容>    (
+//   pangu memory forget <id>                (
 
 import { RefinedMemoryStore } from '../memory/RefinedMemoryStore.js';
 import { writeFileSync, readFileSync } from 'fs';
@@ -30,7 +30,7 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
       return renderList(filtered, kind);
     }
     case 'search': {
-      // M2.3: /memory search <词> — 关键词检索（不占注入预算，人工按需）
+      // /memory search <词> — 关键词检索（不占注入预算，人工按需）
       const q = args.slice(1).join(' ').trim().toLowerCase();
       if (!q) return '用法: memory search <关键词>';
       const hits = store.list().filter(c => (c.summary || '').toLowerCase().includes(q));
@@ -38,7 +38,7 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
       return renderList(hits, `匹配 "${q}"`);
     }
     case 'merge': {
-      // M3.3a: /memory merge — 确定性同主题合并（2-gram；原卡 archived 软删）
+      // /memory merge — 确定性同主题合并（2-gram；原卡 archived 软删）
       const results = store.mergeSimilarCards();
       if (results.length === 0) return '没有可合并的同主题卡（需 ≥2 张 active 且有效权重 ≥0.5）。';
       const lines = [`✓ 合并 ${results.length} 组：`];
@@ -49,7 +49,7 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
       return lines.join('\n');
     }
     case 'remember': {
-      // M1.2: /remember [--pin] <内容>
+      // /remember [--pin] <内容>
       const pin = args.includes('--pin');
       const rest = args.slice(1).filter(a => a !== '--pin');
       const content = rest.join(' ').trim();
@@ -63,7 +63,7 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
       return r.ok ? `✓ 已记住偏好: ${r.card!.summary}（weight ${r.card!.weight}${r.card!.pinned ? '，已 pin 冻结衰减' : ''}）` : '✗ 保存失败';
     }
     case 'forget': {
-      // M1.2: /forget <id>
+      // /forget <id>
       const id = args[1];
       if (!id) return '用法: memory forget <id>（/memory list --kind preference 查看 id）';
       const r = store.forget(id);

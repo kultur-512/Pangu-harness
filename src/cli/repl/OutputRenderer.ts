@@ -1,14 +1,14 @@
 // src/cli/repl/OutputRenderer.ts
 // Output rendering with chalk fallback to hand-written ANSI.
 // Follows the exact interface in types.ts
-// P2-B: progressBar (single active, 20-char █/░ + %)
-// P2-E: TerminalCapabilities for color/keypress/multiline/progress/ansiCursor
+// progressBar (single active, 20-char █/░ + %)
+// TerminalCapabilities for color/keypress/multiline/progress/ansiCursor
 
 import type { OutputRenderer, ColorName, SpinnerHandle } from './types.js';
 import * as ansi from '../../utils/ansi.js';
 import { getTerminalCapabilities } from './TerminalCapabilities.js';
 
-// P2-B: Local interface augmentation
+// Local interface augmentation
 declare module './types.js' {
   interface OutputRenderer {
     progressBar(current: number, total: number, label?: string): ProgressBarHandle;
@@ -157,7 +157,7 @@ class SimpleSpinner implements SpinnerHandle {
 }
 
 export class OutputRendererImpl implements OutputRenderer {
-  // P2-B: single active progress bar (event-driven, no timers)
+  // single active progress bar (event-driven, no timers)
   private currentProgress: ActiveProgressBar | null = null;
 
   write(text: string): void {
@@ -233,7 +233,7 @@ export class OutputRendererImpl implements OutputRenderer {
     this.pushToFeedIfAny(text);
   }
 
-  // P2-B + P2-E: progress bar gated by TTY + capabilities.progress
+  // P2-B + progress bar gated by TTY + capabilities.progress
   // @deprecated (fix-p2): no caller remains in the codebase — the rich UI
   // uses TopBar budget bars and the line mode uses the gerund spinner. Kept
   // for API compatibility; consider removing in a future major bump.

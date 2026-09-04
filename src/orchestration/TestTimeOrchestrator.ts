@@ -1,6 +1,5 @@
 // Test-Time Compute + Trajectory System (Panshalach 记忆增强引擎)
-// 打分以"长程记忆保持 + 验证密度"为核心，去掉旧版打分 format 加分/扣分与 terminal/automation 风格专属惩罚。
-// 保留 RBW 惩罚（通用安全价值）与早验证奖励（轻量）。
+// 打分以"长程记忆保持 + 验证密度"为核心，附 RBW 惩罚（通用安全价值）与早验证奖励（轻量）。
 
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
 
@@ -148,7 +147,7 @@ export class TestTimeOrchestrator {
     budget: { maxTokens?: number } = {},
     options: { isStrongTarget?: boolean; benchmarkType?: string; taskStyle?: string; parallel?: boolean } = {}
   ): Promise<Trajectory> {
-    // D-parallel: quick/standard stay SERIAL; high+ tiers run parallel
+    // 并行策略：quick/standard 串行；high+ 档位并行
     const isStrongTarget = !!options.isStrongTarget;
     const taskStyle = options.taskStyle ?? options.benchmarkType;
     const parallel = (options as any).parallel === true;
@@ -161,7 +160,7 @@ export class TestTimeOrchestrator {
         traj.isStrongTarget = isStrongTarget;
         traj.benchmarkType = taskStyle;
         traj.taskStyle = taskStyle;
-        // D-parallel (declared tweak): a caller-provided score is respected
+        // 调用方提供的分数优先
         // (PanshalachChaser computes a richer verification-aware score); the
         // orchestrator's TrajectoryScorer is the fallback when absent.
         if (traj.score === undefined || traj.score === null) {

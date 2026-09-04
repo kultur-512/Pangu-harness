@@ -1,5 +1,5 @@
 // src/cli/repl/compactStrategies.ts
-// P1-T15 (Pi): compaction strategy is a pluggable interface — swap the
+// compaction strategy is a pluggable interface — swap the
 // summarization prompt without touching compactService. Built-ins: 'default'
 // (existing template) + 'topic' (cluster by userInput keywords, sectioned).
 // Custom strategies register via registerStrategy; unknown ids fall back to

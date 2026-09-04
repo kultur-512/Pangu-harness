@@ -1,5 +1,5 @@
 // src/tools/editFile.ts
-// M1-2.3: edit_file with Claude-Code-Edit semantics + RBW iron law:
+// edit_file：Claude-Code-Edit 语义 + RBW 纪律规则：
 // - file_path + old_string + new_string (+ replace_all?)
 // - uniqueness: without replace_all, old_string must appear EXACTLY once
 //   (error message mirrors CC: 'old_string must appear exactly once (found N)')

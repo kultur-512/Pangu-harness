@@ -314,7 +314,7 @@ export class Repl {
   }
 
   private async executeTask(issue: string, simulate = false) {
-    // P3: Resolve a real client via provider; never pass null to PanshalachChaser
+    // Resolve a real client via provider; never pass null to PanshalachChaser
     const provider = this.session.provider as (import('./types.js').ModelProvider | undefined);
     const client = this.resolveClient();
     if (!client) {
@@ -418,7 +418,7 @@ export class Repl {
           return;
         }
 
-        // P1.2: protocol-v2 streaming deltas are consumed by the SSE/rich path;
+        // protocol-v2 streaming deltas are consumed by the SSE/rich path;
         // the classic REPL keeps step-granular output and must not render them
         // (the final else-branch would otherwise pushFeed raw delta objects).
         if (
@@ -512,7 +512,7 @@ export class Repl {
   }
 
   /**
-   * P3: Resolve a usable ModelClient from session.provider.
+   * Resolve a usable ModelClient from session.provider.
    * Tries session.model first, then provider's default.
    * Returns null if no usable client (caller must not create PanshalachChaser(null)).
    */

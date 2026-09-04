@@ -81,7 +81,7 @@ export class FailureMemory {
   toPromptInjection(): string {
     if (this.memory.size === 0) return '';
 
-    // P0-3 修复：软化惩罚性语言
+    // 建设性口吻（软化惩罚性语言）
     // 旧措辞："致命失败记忆"、"100% 避免"、"强制要求"等会加重模型负担，违背建设性原则
     // 新措辞：建设性、工程化口吻，强调"重要教训 / 建议重点避免"
     let out = '\n【历史任务的重要教训】\n';
