@@ -39,3 +39,22 @@ W1 起步：把仓库从"已完成改名+命题骨架"推到"4 主力可并行�
 ## 开工前必查（已完成）
 - [x] git fetch origin master develop
 - [x] cat docs/agent/handover/feature-*.md（首次建立，全空）
+
+## 21:40 旧模型品牌残留清理（三区并行）
+
+**想法/目的**：按用户指示"不要留下 glm 相关"，把重命名后遗留的旧品牌类名、文件名、格式串、provider 特化分支全部清理，不留兼容别名。
+
+**动作内容**：3 个 subagent 并行分区 + 主会话统一收尾
+- adapter 层：git mv ExtremeGlmToolCallAdapter→StrictStructuredToolAdapter、GlmToolCallParser→XmlStructuredToolParser；格式串 glm-xml-strict/glm-loose-plain→xml-strict/loose-plain；adapter README 重写；2 个测试文件同步改名
+- 核心链路：StructuredReasoner 三方法改名（getEngineeringIronLawsHeader 等）、isStrictGlm 选项删除、VerifyCritiqueLoop/PanshalachChaser/FailureMemory 等 14 文件中性化
+- provider 层：ModelProvider 删 bare glm/glm5 shorthand、_pickBestGLMModel→_pickBestProviderModel；ModelCommand 文案通用化；maoyulin 客户端默认模型改 openPangu-7B
+- 删除：src/Glm53SweProChaser.ts（兼容 stub）、scripts/test-glm-shorthand.mjs（主会话执行 git rm）
+- 文档：ROADMAP-NEXT P1.4 标记完成、REFACTOR-ASSESSMENT/CHANGELOG/AGENT-CONTRIBUTION 措辞中性化
+
+**结果**：commit 17851f9（51 files, +652/-737）
+- tsc --noEmit EXIT 0
+- 505 tests: 504 pass / 0 fail / 1 skip
+- verify-panshalach-cleanup.mjs PASS
+- grep -ri glm src/ tests/ scripts/ examples/ = 0 命中
+
+**给其他分支的提示**：detectedFormat 值已从 glm-xml-strict/glm-loose-plain 改为 xml-strict/loose-plain；Glm53SweProChaser 类与 glm shorthand 已删除——若有分支引用需同步（详见 docs/agent/handover/）。
