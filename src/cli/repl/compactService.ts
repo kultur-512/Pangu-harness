@@ -12,6 +12,7 @@
 import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import { getStrategy, turnBrief } from './compactStrategies.js';
+import { appendCompactMarker } from './rolloutStore.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -34,6 +35,13 @@ function resolveStrategyId(session: Session): string {
   return id;
 }
 
+export interface CompactGeneration {
+  /** 快照时的轮次总数 */
+  turnCount: number;
+  /** 快照时最后一轮的 id（rewind/steering 下 count 相同内容不同的守卫） */
+  lastTurnId: string;
+}
+
 export interface CompactResult {
   ok: boolean;
   removed: number;
@@ -42,6 +50,14 @@ export interface CompactResult {
   beforeTokens: number;
   afterTokens: number;
   message: string;
+  /** 接口契约 v3：快照代际——apply 时与活体会话比对，防 T0→T1 新增轮次被静默丢弃 */
+  generation?: CompactGeneration;
+  /** 被摘要覆盖的轮次 id（权威账本；apply 以此为界做安全合并，禁止重切 kept） */
+  coveredTurnIds?: string[];
+  /** 摘要来源显式化：model=模型生成；fallback=确定性逐轮 brief（不再静默） */
+  summarySource?: 'model' | 'fallback' | '';
+  /** 完整 synthetic turn（compact 标记事件内嵌它，使 replay 无需模型即可重建） */
+  syntheticTurn?: Turn;
 }
 
 export function estimateSessionTokens(session: Session): number {
@@ -90,6 +106,12 @@ export async function compactSession(
 
   const removed = session.turns.slice(0, session.turns.length - KEEP_RECENT);
   const kept = session.turns.slice(-KEEP_RECENT);
+  // N2：generation 必须在替换前定格（压缩前总数），否则与 computeCompactResult 语义冲突
+  const generation: CompactGeneration = {
+    turnCount: session.turns.length,
+    lastTurnId: kept[kept.length - 1]?.id ?? '',
+  };
+  const coveredIds = removed.map(t => t.id);
 
   // compact 补漏提炼 — 被移除轮次若有成功信号（result.summary 含 score≥85）
   // 且同内容 hash 尚未存在（回合结束已提炼则跳过 → 防双重计数）。turn 级无
@@ -111,10 +133,12 @@ export async function compactSession(
   }
 
   let summary = '';
+  let summarySource: 'model' | 'fallback' = 'fallback';
   if (client && typeof client.complete === 'function') {
     try {
       const out = await client.complete(getStrategy(resolveStrategyId(session)).buildPrompt(removed, { instruction: undefined }));
       summary = typeof out === 'string' ? out.trim() : String(out?.content ?? '').trim();
+      if (summary) summarySource = 'model';
     } catch {}
   }
   if (!summary) summary = fallbackSummary(removed);
@@ -131,6 +155,10 @@ export async function compactSession(
   session.turns = [synthetic, ...kept];
   const afterTokens = estimateSessionTokens(session);
 
+  // 接口契约 v3：压缩标记事件——rollout 是 turn 的唯一权威源，resume 端
+  // replayInto 消费本标记即可无模型重建压缩后状态。
+  appendCompactMarker(session.id, synthetic, coveredIds, beforeTokens, afterTokens);
+
   return {
     ok: true,
     removed: removed.length,
@@ -138,7 +166,11 @@ export async function compactSession(
     summary,
     beforeTokens,
     afterTokens,
-    message: `已压缩 ${removed.length} 轮 → 保留 ${kept.length} 轮 + 摘要；估算上下文 ${beforeTokens} → ${afterTokens} tokens`,
+    generation,
+    coveredTurnIds: coveredIds,
+    summarySource,
+    syntheticTurn: synthetic,
+    message: `已压缩 ${removed.length} 轮 → 保留 ${kept.length} 轮 + 摘要（${summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）；估算上下文 ${beforeTokens} → ${afterTokens} tokens`,
   };
 }
 
@@ -162,6 +194,34 @@ export interface CompactHandle {
 
 const inFlight = new Set<string>();
 
+/**
+ * 异常兜底结果（可导出测试）。N4（对抗评审 D3）：兜底也必须携带覆盖账本
+ * （coveredTurnIds/generation/syntheticTurn），否则 apply 会在最易出错的路径上
+ * 退回旧的"新增轮静默丢弃"行为。
+ */
+export function buildFallbackCompactResult(session: Session): CompactResult {
+  const removed = session.turns.slice(0, Math.max(0, session.turns.length - KEEP_RECENT));
+  const kept = session.turns.slice(-KEEP_RECENT);
+  const summary = fallbackSummary(removed);
+  return {
+    ok: true, removed: removed.length, kept: kept.length,
+    summary,
+    beforeTokens: estimateSessionTokens(session), afterTokens: estimateSessionTokens(session),
+    generation: { turnCount: session.turns.length, lastTurnId: session.turns[session.turns.length - 1]?.id ?? '' },
+    coveredTurnIds: removed.map(t => t.id),
+    summarySource: 'fallback',
+    syntheticTurn: {
+      id: 'compact-' + Date.now().toString(36),
+      timestamp: Date.now(),
+      userInput: `[COMPACT] 已压缩 ${removed.length} 轮历史`,
+      userInputType: 'command' as const,
+      tier: session.tier,
+      result: { success: true, summary },
+    },
+    message: '后台压缩（异常兜底，确定性摘要）',
+  };
+}
+
 /** Pure computation — never touches session.turns. */
 async function computeCompactResult(
   session: Session,
@@ -177,25 +237,37 @@ async function computeCompactResult(
     };
   }
 
-  // SNAPSHOT the removed turns — later mutations (new tasks) must not race us
+  // SNAPSHOT the removed turns — later mutations (new tasks) must not race us.
+  // 接口契约 v3：generation 在快照时刻定格（apply 时比对，防中间轮丢失）
+  const generation: CompactGeneration = {
+    turnCount: session.turns.length,
+    lastTurnId: session.turns[session.turns.length - 1]?.id ?? '',
+  };
   const removed = session.turns.slice(0, session.turns.length - KEEP_RECENT).map((t) => ({ ...t }));
   const kept = session.turns.slice(-KEEP_RECENT).map((t) => ({ ...t }));
 
   let summary = '';
+  let summarySource: 'model' | 'fallback' = 'fallback';
   if (client && typeof client.complete === 'function') {
     try {
       const out = await client.complete(getStrategy(resolveStrategyId(session)).buildPrompt(removed, { instruction: undefined }));
       summary = typeof out === 'string' ? out.trim() : String(out?.content ?? '').trim();
+      if (summary) summarySource = 'model';
     } catch {}
   }
   if (!summary) summary = fallbackSummary(removed);
 
-  // Estimates: apply into a THROWAWAY view of the snapshot so we never mutate
-  const estView = { turns: [{
-    id: 'compact-x', timestamp: Date.now(), userInput: `[COMPACT] 已压缩 ${removed.length} 轮历史`,
-    userInputType: 'command' as const, tier: session.tier,
+  const syntheticTurn: Turn = {
+    id: 'compact-' + Date.now().toString(36),
+    timestamp: Date.now(),
+    userInput: `[COMPACT] 已压缩 ${removed.length} 轮历史`,
+    userInputType: 'command' as const,
+    tier: session.tier,
     result: { success: true, summary },
-  } as Turn, ...kept] } as Session;
+  };
+
+  // Estimates: apply into a THROWAWAY view of the snapshot so we never mutate
+  const estView = { turns: [{ ...syntheticTurn }, ...kept] } as Session;
   const afterTokens = estimateSessionTokens(estView);
 
   return {
@@ -205,7 +277,11 @@ async function computeCompactResult(
     summary,
     beforeTokens,
     afterTokens,
-    message: `后台压缩就绪：${removed.length} 轮 → 摘要；估算 ${beforeTokens} → ${afterTokens} tokens`,
+    generation,
+    coveredTurnIds: removed.map(t => t.id),
+    summarySource,
+    syntheticTurn,
+    message: `后台压缩就绪：${removed.length} 轮 → 摘要（${summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）；估算 ${beforeTokens} → ${afterTokens} tokens`,
   };
 }
 
@@ -233,12 +309,7 @@ export function startBackgroundCompact(
       if (cancelled) return;
       result = await computeCompactResult(session, client);
     } catch {
-      result = {
-        ok: true, removed: Math.max(0, session.turns.length - KEEP_RECENT),
-        kept: Math.min(KEEP_RECENT, session.turns.length), summary: fallbackSummary(session.turns.slice(0, -KEEP_RECENT)),
-        beforeTokens: estimateSessionTokens(session), afterTokens: estimateSessionTokens(session),
-        message: '后台压缩（模型失败，确定性摘要）',
-      };
+      result = buildFallbackCompactResult(session);
     } finally {
       ready = true;
       // remove from inFlight lazily: keep guard until result consumed? The
@@ -259,15 +330,38 @@ export function startBackgroundCompact(
 }
 
 /**
- * Apply a ready background result onto the session at a task boundary
- * (synchronous, atomic replacement — same shape as compactSession).
+ * Apply a ready background result onto the session at a task boundary.
+ * 接口契约 v3（对抗评审 F5/A5 修复）：
+ * - 禁止从活体 turns 重切 kept（旧行为 `slice(-KEEP_RECENT)` 会静默丢弃
+ *   快照→apply 之间新增的轮次）；
+ * - 以快照 coveredTurnIds 为权威边界做安全合并：被摘要覆盖的轮次移除，
+ *   其余全部保留（旧 kept ∪ 快照后新增轮）；
+ * - 摘要正文/来源/代际随 CompactResult 携带，并写入 rollout compact 标记。
  */
 export function applyCompactResult(session: Session, res: CompactResult): CompactResult {
   if (!res || !res.ok || res.removed === 0) {
     return res ?? { ok: false, removed: 0, kept: session.turns.length, summary: '', beforeTokens: 0, afterTokens: 0, message: '无可用后台压缩结果' };
   }
-  const kept = session.turns.slice(-KEEP_RECENT);
-  const synthetic: Turn = {
+
+  const liveIds = new Set(session.turns.map(t => t.id));
+
+  // N1（血统校验，fail-safe）：快照的最后一轮已不在活体（rewind 到 covered 区间等）→
+  // 覆盖账本不可信，拒绝本次 apply，绝不触碰 session.turns（对抗评审 D1：防数据全灭）。
+  if (res.generation?.lastTurnId && !liveIds.has(res.generation.lastTurnId)) {
+    return {
+      ...res,
+      ok: false,
+      message: `✗ 已拒绝应用压缩：快照代际与当前会话血统断开（lastTurnId=${res.generation.lastTurnId} 不存在，可能发生 rewind）。会话未修改。`,
+    };
+  }
+
+  const covered = new Set(res.coveredTurnIds ?? []);
+  const remaining = covered.size > 0
+    ? session.turns.filter(t => !covered.has(t.id))
+    : session.turns.slice(-KEEP_RECENT); // 无账本的旧结果：退回旧行为（兼容）
+
+  const before = session.turns.length;
+  const synthetic: Turn = res.syntheticTurn ?? {
     id: 'compact-' + Date.now().toString(36),
     timestamp: Date.now(),
     userInput: `[COMPACT] 已压缩 ${res.removed} 轮历史`,
@@ -275,7 +369,22 @@ export function applyCompactResult(session: Session, res: CompactResult): Compac
     tier: session.tier,
     result: { success: true, summary: res.summary },
   };
-  session.turns = [synthetic, ...kept];
+  session.turns = [synthetic, ...remaining];
   const afterTokens = estimateSessionTokens(session);
-  return { ...res, kept: kept.length, afterTokens, message: `✓ 已自动压缩 ${res.removed} 轮历史（后台）` };
+
+  // rollout 是 turn 的唯一权威源：压缩必须留下可 replay 的标记
+  appendCompactMarker(session.id, synthetic, [...covered], res.beforeTokens, afterTokens);
+
+  // 代际漂移检测：快照后新增了轮（before > generation.turnCount）或实际移除数
+  // 与账本不符（rewind 等场景）→ 提示已按覆盖账本安全合并
+  const dropped = before - remaining.length;
+  const staleGen = !!res.generation
+    && (before > res.generation.turnCount || dropped !== res.removed);
+  return {
+    ...res,
+    kept: remaining.length,
+    afterTokens,
+    message: `✓ 已自动压缩 ${res.removed} 轮历史（后台，${res.summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）`
+      + (staleGen ? '；快照后发生变更，已按覆盖账本安全合并' : ''),
+  };
 }

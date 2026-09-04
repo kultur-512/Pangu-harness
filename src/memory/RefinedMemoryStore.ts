@@ -313,7 +313,11 @@ export class RefinedMemoryStore {
       }
     };
 
-    let filtered = normalized.filter(c => {
+    // 对抗评审修正（第二轮攻击1c）：归档卡必须退出注入——否则 merge 软删后
+    // 原卡与合并卡同时注入，"合并"净增重复内容，中期遗忘机制结构失效。
+    const activeCards = normalized.filter(c => (c as any).status !== 'archived');
+
+    let filtered = activeCards.filter(c => {
       // 任务风格
       if (filter.taskStyle && c.taskStyle !== 'all' && c.taskStyle !== filter.taskStyle) {
         return false;
@@ -389,14 +393,61 @@ export class RefinedMemoryStore {
 
     // loadFiltered 是纯读 —— 不再把 lastUsedAt/decayWeight 刷成 now。
     // 旧实现让每一次读取都“刷新使用”，使时间衰减永远无法生效（读即使用，
-    // 自我挫败），也让外部无法验证衰减分段。使用刷新应由真实的注入路径
-    // （markUsed）承担。
+    // 自我挫败），也让外部无法验证衰减分段。使用刷新由 markVerified 承担；
+    // markInjected 仅记账（不影响衰减），二者见下方实现（接口契约 v3：二态语义）。
 
     // 去掉内部 _effective/_relevance 后返回
     return filtered.map(c => {
       const { _effective, _relevance, ...rest } = c as any;
       return rest as RefinedMemoryCard;
     });
+  }
+
+  /**
+   * markInjected（接口契约 v3 · 二态之一）：注入即记账。
+   * - 仅记录内存账本（lastInjectedAt），不写盘、不改 count/lastUsedAt；
+   * - 事件（memory_injected）由调用方经 rollout 'context'/'agent' 事件落盘；
+   * - 有意不影响衰减：count 驱动维持现状（refine/merge/refineCompactSignals），
+   *   避免"注入≠使用"的自激励循环（对抗评审 A1/攻击1.1 的结论）。
+   */
+  private lastInjectedAt = new Map<string, number>();
+  markInjected(cardIds: string[], now = Date.now()): { injected: number; cardIds: string[] } {
+    for (const id of cardIds) {
+      if (id) this.lastInjectedAt.set(id, now);
+    }
+    return { injected: cardIds.filter(Boolean).length, cardIds: cardIds.filter(Boolean) };
+  }
+
+  /** 查询注入账本（/memory stats 与 ContextSnapshot 事件可用）。 */
+  injectedAtOf(cardId: string): number | undefined {
+    return this.lastInjectedAt.get(cardId);
+  }
+
+  /**
+   * markVerified（接口契约 v3 · 二态之二）：机器判定的"真实使用"。
+   * 判定来源由调用方提供（确定性规则：任务内工具写入/验证文件集 ∩ 卡.referencedFiles ≠ ∅），
+   * 本方法只负责效果：lastUsedAt=now + count+1 + 单次写盘 + 投影失效。
+   * 这是衰减语义中唯一把"卡被真实复用"转为保鲜的通道。
+   */
+  markVerified(cardIds: string[], now = Date.now()): { updated: number; path: string } {
+    if (cardIds.length === 0) return { updated: 0, path: this.filePath };
+    const file = this.load();
+    let updated = 0;
+    for (const c of file.cards) {
+      if (cardIds.includes(c.id)) {
+        (c as any).lastUsedAt = now;
+        c.count = (c.count ?? 0) + 1;
+        updated++;
+      }
+    }
+    if (updated === 0) return { updated: 0, path: this.filePath };
+    // 注意：不能走 save()——mergeAndCap 会把传入卡与已有卡按 count 累加（同一批
+    // 对象 → 翻倍）。markVerified 是原位刷新，直写持久化。
+    file.meta.lastUpdated = now;
+    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+    this.cache = file;
+    this.invalidateProjection();
+    return { updated, path: this.filePath };
   }
 
   /**
@@ -605,7 +656,7 @@ export class RefinedMemoryStore {
     // pin 卡冻结衰减
     if ((card as any).pinned) return 1.0;
     const mc = (card.memoryCategory || 'general') as MemoryCategory;
-    const last = (card as any).lastUsedAt ?? card.lastSeen ?? now;
+    const last = Math.max(card.lastSeen ?? now, (card as any).lastUsedAt ?? 0); // 修复：?? 短路曾让复发卡的 lastSeen 刷新不可见
     const ageInDays = (now - last) / (24 * 60 * 60 * 1000);
     // count≥2 → 半衰期 ×count（常用卡衰减更慢）
     const halfLifeBase = this.getHalfLifeForCategory(mc);

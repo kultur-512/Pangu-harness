@@ -10,6 +10,8 @@ import { Session } from '../cli/repl/Session.js';
 import { PromptBuilder } from '../cli/repl/PromptBuilder.js';
 import { TierRegistry } from '../tiers/TierConfig.js';
 import { resolveSharedClient } from '../cli/repl/ModelProvider.js';
+import { appendContextSnapshot, appendAgentEvent } from '../cli/repl/rolloutStore.js';
+import { createHash } from 'node:crypto';
 import type { ModelProvider } from '../cli/repl/types.js';
 
 export interface RunRequest {
@@ -79,6 +81,39 @@ export async function runAgentTask(
   const tierConfig = TierRegistry.get(session.tier);
   const pb = new PromptBuilder(session, tierConfig);
   const enriched = await pb.buildForTask(req.task);
+
+  // 接口契约 v3：逐任务 ContextSnapshot + memory_injected 事件（注入审计账本）。
+  // 评测由此回答"模型当时到底看见了什么"；lastBuildMeta 在此消费（不改变 buildForTask 的 string 返回契约）。
+  try {
+    const meta = pb.lastBuildMeta;
+    const injected = meta?.injectedCardIds ?? [];
+    appendContextSnapshot(session.id, {
+      model: session.model,
+      memoryCardCount: meta?.memoryCardCount ?? 0,
+      overflowCount: meta?.memoryOverflowCount ?? 0,
+      injectedCardIds: injected,
+      promptChars: enriched.length,
+      promptHash: createHash('sha1').update(enriched).digest('hex').slice(0, 12),
+    });
+    if (injected.length > 0) {
+      // 双账本对齐：事件账本（HOME rollout）+ 卡账本（工作区 store，纯内存记账）
+      try {
+        const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
+        if (session.workspace) {
+          new RefinedMemoryStore(session.workspace).markInjected(injected);
+        }
+      } catch {}
+      appendAgentEvent(session.id, {
+        id: 'evt-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+        ts: Date.now(),
+        kind: 'memory_injected',
+        topic: 'injection',
+        summary: `本次任务注入 ${injected.length} 张记忆卡`,
+        refs: injected,
+        sessionId: session.id,
+      });
+    }
+  } catch {} // 审计账本 best-effort，绝不阻塞任务
 
   ctx.onEvent({ type: 'phase', phase: 'explore' });
 

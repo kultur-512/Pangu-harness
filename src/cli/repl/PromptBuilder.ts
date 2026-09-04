@@ -194,6 +194,7 @@ export class PromptBuilder {
     this.autoPulledThisBuild = false;
     this.lastInjectedCardIds = [];
     this.lastKeywords = [];
+    this.memoryNumberSeq = 0;
 
     const lines: string[] = [];
 
@@ -389,12 +390,15 @@ export class PromptBuilder {
           const l1Tokens = estTokens(lines.filter((l) => l.includes('相关记忆')).join('\n'));
           let budget = 700 - l1Tokens;
           const addedCards: string[] = [];
+          const n0 = this.memoryNumberSeq;
+          let accepted = 0;
           for (const c of overflow.pulled) {
-            const line = `  - ${label(c)} ${c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary}`;
+            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary}`;
             const cost = estTokens(line);
             if (budget - cost < 0) break; // 超预算放弃（不降级不重试）
             lines2.push(line);
             addedCards.push(c.id);
+            accepted++;
             budget -= cost;
           }
           if (addedCards.length > 0) {
@@ -433,6 +437,8 @@ export class PromptBuilder {
   private autoPulledThisBuild = false;
   private lastInjectedCardIds: string[] = [];
   private lastKeywords: string[] = [];
+  /** [M1] 卡号单一序列：跨 L1 记忆块与溢出块连续编号，顺序与 lastInjectedCardIds 严格一致（接口契约 v3） */
+  private memoryNumberSeq = 0;
 
   private tryInject(key: string, block: string | string[], lines: string[]): boolean {
     if (this.injectedKeys.has(key)) {
@@ -472,15 +478,18 @@ export class PromptBuilder {
         // 来源标签（注入安全：preference 必须有 [用户偏好] 标签）
         const label = (c: any): string => c.kind === 'preference' ? '[用户偏好]' : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
         const ghost = overflow ? `\n（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
+        const n0 = this.memoryNumberSeq;
         const added = this.tryInject('memory-cards', [
           '\n【相关记忆】',
-          ...cards.map(c => {
+          ...cards.map((c, i) => {
             const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
-            return `  - ${label(c)} ${one}`;
+            return `  - [M${n0 + i + 1}] ${label(c)} ${one}`;
           }),
           ghost,
         ], lines);
-        this.lastInjectedCardIds = cards.map(c => c.id); // 供溢出排除用
+        if (added) this.memoryNumberSeq += cards.length;
+        // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
+        this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
         return added;
       }
       this.lastInjectedCardIds = [];
@@ -608,7 +617,7 @@ export class PromptBuilder {
       .map((t, i) => {
         const input = t.userInput.length > 80 ? t.userInput.slice(0, 77) + '...' : t.userInput;
         const ok = t.result?.success ? '✓' : (t.result ? '✗' : '?');
-        const score = t.result ? `score=${t.result.summary || '?'}` : '';
+        const score = t.result ? (t.result.summary || '?') : ''; // 修复：summary 本身已是 "score=NN"，勿再加前缀
         return `Turn ${i + 1} [${t.tier}] ${ok} ${input} ${score}`.trim();
       })
       .join('\n');
