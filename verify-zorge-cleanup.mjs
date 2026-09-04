@@ -1,6 +1,8 @@
 // verify-zorge-cleanup.mjs
 // Run with: node verify-zorge-cleanup.mjs
-// Checks brand/API consistency after Zorge six-tier migration.
+// Static hygiene checks for Panshalach (brand alias ZorgeChaser / legacy Glm53SweProChaser).
+// NOTE: internal class names keep historical identifiers until ROADMAP P6 rename;
+// this script guards the compatibility-alias layer in the meantime.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -110,7 +112,7 @@ try {
                   || /new\s+ZorgeChaser\(/.test(sb);
 } catch {}
 
-console.log('=== Zorge Cleanup Verification ===');
+console.log('=== Panshalach Cleanup Verification (internal alias layer) ===');
 console.log('package.json main -> dist/ZorgeChaser.js :', packageMainOk ? 'OK' : 'FAIL');
 console.log('src/cli.ts uses ZorgeChaser            :', cliUsesZorge ? 'OK' : 'FAIL');
 console.log('sandbox-test-runner.ts uses ZorgeChaser :', sandboxUsesZorge ? 'OK' : 'FAIL');

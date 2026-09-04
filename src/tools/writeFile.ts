@@ -1,5 +1,5 @@
 // src/tools/writeFile.ts
-// M1-2.3: write_file with Claude-Code-Write semantics + Zorge RBW iron law:
+// M1-2.3: write_file with Claude-Code-Write semantics + Panshalach RBW iron law:
 // ORDER IS FIXED BY THE M1 INSTRUCTION — diff FIRST, disk write SECOND.
 //
 // - file_path + content (cap 1MB)

@@ -1,12 +1,16 @@
 {
-  "model": "glm-4-plus",
+  "model": "openpangu:openPangu-7B",
   "providers": {
-    "scnet": {
+    "openpangu": {
       "type": "openai-compatible",
-      "baseUrl": "https://api.scnet.cn/api/llm/v1",
-      "apiKey": "sk-tp-***PUT_YOUR_KEY_HERE***",
-      "models": [],
-      "modelContexts": {}
+      "baseUrl": "http://127.0.0.1:8000/v1",
+      "apiKey": "EMPTY",
+      "models": ["openPangu-1B", "openPangu-7B", "openPangu-7B-VL"],
+      "modelContexts": {
+        "openPangu-1B": 4096,
+        "openPangu-7B": 8192,
+        "openPangu-7B-VL": 8192
+      }
     }
   }
 }

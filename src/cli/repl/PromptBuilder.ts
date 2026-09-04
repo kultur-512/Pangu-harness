@@ -97,7 +97,7 @@ const TIER_CONSTRAINTS: Record<Tier, TierConstraint> = {
   <require>explicit_plan, exhaustive_verification, budget_acknowledgment</require>
   <execution_style>ultimate_rigor</execution_style>
 </tier_constraint>`,
-    text: '当前档位：zorge（锻神模式）。极致追求，所有操作必须确认并遵守预算。'
+    text: '当前档位：zorge（终极长程记忆模式）。极致追求，所有操作必须确认并遵守预算。'
   },
 };
 
@@ -201,7 +201,7 @@ export class PromptBuilder {
     const currentWsFiles = this.collectCurrentWorkspaceFiles(issue);
 
     // === System identity (always) ===
-    const systemLine = `你是 Zorge，一个高工程强度的编码 Agent。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
+    const systemLine = `你是 Panshalach，一个基于 openPangu 的记忆增强长程上下文智能体，面向软件工程长期维护场景。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
     lines.push(systemLine);
 
     // === M2.1: L0 硬约束（≤3 条精选，非整段注入） ===
@@ -572,7 +572,7 @@ export class PromptBuilder {
       case 'medium': return '中等（常规铁律 + 格式 + 证据要求）';
       case 'medium_high': return '中高（强格式 + 证据 + 边界覆盖）';
       case 'high': return '高（严格铁律 + 多轮自查 + 证据链）';
-      case 'highest': return '极高（Zorge 锻神级，全面铁律 + 最高证据密度）';
+      case 'highest': return '极高（终极长程记忆级，全面铁律 + 最高证据密度）';
       default: return String(level);
     }
   }
@@ -619,7 +619,7 @@ export class PromptBuilder {
    */
   buildSystemHeader(): string {
     return [
-      `你是 Zorge，档位 ${this.session.tier}。`,
+      `你是 Panshalach，档位 ${this.session.tier}。`,
       this.buildTierContract()
     ].join('\n');
   }

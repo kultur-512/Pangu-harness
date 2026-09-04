@@ -1,5 +1,5 @@
 // src/cli/repl/types.ts
-// ZIS (Zorge Interactive Shell) 类型定义
+// Panshalach (ZIS: Zorge Interactive Shell 的历史简称，保留内部注释名) 类型定义
 // 严格遵守蓝图 v1.1
 
 import type { Tier } from '../../tiers/TierConfig.js';

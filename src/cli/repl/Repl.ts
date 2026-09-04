@@ -251,21 +251,13 @@ export class Repl {
   private buildPrompt(): string {
     const tier = String(this.session.tier).toUpperCase();
     const ws = this.session.workspace.replace(process.env.HOME || '', '~');
-    return this.renderer.color(`Zorge [${tier}] · ${ws}\n  ▸ `, 'cyan');
+    return this.renderer.color(`Panshalach [${tier}] · ${ws}\n  ▸ `, 'cyan');
   }
 
   private printWelcome() {
-    // ZORGE 霸气大号渐变 ASCII（6 行，字母 7 列 + 分隔，水平 Z→E 重到轻，垂直顶底重）
-    // 使用 █▓▒░ 四级块字符，避免重复竖纹，正确 Z O R G E 顺序
-    this.renderer.writeLine(`
-███████  ▓▓▓▓▓▓▓  ███████  ▓▓▓▓▓▓▓  ██████▓
-     ▓▓  ▓▒   ▒▓       ▓▒  ▓▒       █      
-   ▓▓▓▒  ▓▒   ▒▓  █████▓░  ▓▓▓▓▓▓   █████▓ 
- ▓▓▓▒░   ▓▒   ▒▓  █  ▓▒░░  ▓▒    ▓  █      
-▓▓▒░░░   ▓▒   ▒▓  █   ▓▒░  ▓▒    ▓  █     ░
-███████  ▓▓▓▓▓▓▓  █    ▓▓  ▓▓▓▓▓▓▓  ███████
-`);
-    this.renderer.writeLine(this.renderer.color('Zorge Interactive Shell', 'bold'));
+    // Panshalach 欢迎语（简洁文案，不使用旧 Zorge ASCII 图）
+    this.renderer.writeLine(this.renderer.color('Panshalach Interactive Shell', 'bold'));
+    this.renderer.writeLine('基于 openPangu 的记忆增强长程上下文智能体 — 面向软件工程长期维护场景。');
     this.renderer.writeLine(`默认档位: ${this.session.tier} · 工作区: ${this.session.workspace}`);
     this.renderer.writeLine('输入 /help 查看命令，/exit 退出\n');
   }

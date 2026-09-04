@@ -1,5 +1,5 @@
 // src/server/agentServer.ts
-// Minimal HTTP + SSE server to expose Zorge agent runs to a frontend.
+// Minimal HTTP + SSE server to expose Panshalach agent runs to a frontend.
 // Optional and non-intrusive: the default CLI now consumes runAgentTask()
 // directly in-process; this server exists for remote/browser clients and
 // the explicit `serve` command.
@@ -227,7 +227,7 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
         // Use the pre-bound wrappers (log/logErr) so even if someone adds logs later,
         // quiet path stays completely silent.
         if (!opts.quiet) {
-          log(`[zorge] SSE agent server listening on http://${host}:${actualPort}`);
+          log(`[panshalach] SSE agent server listening on http://${host}:${actualPort}`);
           log(`  POST /api/run   -> stream events via SSE`);
         }
         resolve(actualPort);

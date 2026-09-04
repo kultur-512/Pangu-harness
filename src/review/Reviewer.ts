@@ -1,4 +1,4 @@
-// Zorge Review 命令实现（P1-3 修复：真实落地）
+// Panshalach Review 命令实现（P1-3 修复：真实落地）
 // 定位：只读审查，不修改代码，可执行测试类只读验证
 // 允许的工具：Read / Glob / Grep / Ls / cat（受限 Bash）
 // 允许的测试读取：白名单测试命令（npm test -- --passWithNoTests / pytest 等）

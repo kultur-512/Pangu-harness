@@ -1,10 +1,11 @@
 {
-  "name": "zorge",
-  "version": "0.4.0",
-  "description": "Zorge: 零强依赖的工程 Agent CLI——真实工具执行、四档审批、会话资产（resume/branch/undo/rewind/compact）、MCP 生态接入。对标 Claude Code 的国产单体型 agent，六档强度体系。",
+  "name": "panshalach",
+  "version": "0.5.0",
+  "description": "Panshalach: 基于 openPangu 的记忆增强长程上下文智能体——记忆卡 + 会话资产（resume/branch/compact）+ 真实工具执行与验证铁律，面向软件工程长期维护等长周期任务场景。",
   "type": "module",
   "main": "dist/ZorgeChaser.js",
   "bin": {
+    "panshalach": "dist/cli.js",
     "zorge": "dist/cli.js"
   },
   "scripts": {
@@ -13,9 +14,9 @@
     "cli": "tsx src/cli.ts",
     "test": "node --test --import tsx \"tests/**/*.test.ts\"",
     "simulate": "tsx src/cli.ts simulate --issue \"example issue\" --workspace .",
-    "dogfood": "zorge --headless run"
+    "dogfood": "panshalach --headless run"
   },
-  "keywords": ["zorge", "coding-agent", "engineering", "terminal", "automation", "verification-heavy", "strong-engineering", "cli", "mcp"],
+  "keywords": ["panshalach", "openpangu", "memory", "coding-agent", "engineering", "terminal", "automation", "long-context", "memory-augmented-agent", "cli", "mcp"],
   "author": "",
   "license": "MIT",
   "devDependencies": {

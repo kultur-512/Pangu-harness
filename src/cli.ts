@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * Zorge CLI 兼容层 (蓝图 v1.1)
- * 
+ * Panshalach CLI 兼容层
+ *
  * 行为：
  * - 无参数 → 启动完整交互式 REPL
  * - 有参数 → 作为 REPL 单条命令执行后退出（兼容旧 simulate/memory/review/debug-adapter）
  * 
  * 旧命令映射：
- *   zorge simulate ...   → REPL 一次性执行 run/simulate
- *   zorge memory ...     → REPL 一次性执行 /memory ...
- *   zorge review ...     → REPL 一次性执行 /review ...
+ *   panshalach simulate ...   → REPL 一次性执行 run/simulate
+ *   panshalach memory ...     → REPL 一次性执行 /memory ...
+ *   panshalach review ...     → REPL 一次性执行 /review ...
  */
 
 const rawArgs = process.argv.slice(2);

@@ -34,7 +34,7 @@ const command: Command = {
       serveToken = process.env.ZORGE_SERVE_TOKEN;
     }
 
-    ctx.renderer.info(`Starting Zorge SSE agent server on http://${host}:${port} ...`);
+    ctx.renderer.info(`Starting Panshalach SSE agent server on http://${host}:${port} ...`);
     ctx.renderer.writeLine('Endpoints:');
     ctx.renderer.writeLine(`  POST /api/run   { task, tier?, workspace?, model?, simulate? } → SSE stream`);
     ctx.renderer.writeLine(`  GET  /health`);

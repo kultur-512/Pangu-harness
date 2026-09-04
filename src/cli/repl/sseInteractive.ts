@@ -1035,7 +1035,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // === Line streaming terminal (same in-process events, structured colored lines) ===
   // "通道升级" when rich UI (ink) is not available or TTY caps insufficient.
   renderer.clearScreen();
-  renderer.writeLine(renderer.color('Zorge', 'bold'));
+  renderer.writeLine(renderer.color('Panshalach', 'bold'));
   renderer.writeLine(renderer.color('流式终端（进程内事件直连）。输入任务后实时输出思考、工具调用与验证过程。', 'gray'));
   renderer.writeLine(renderer.color('命令: /help /exit /status /tier /clear /edit /undo /approvals   |  Ctrl+C 中断\n', 'gray'));
   if (resumedInfo) {

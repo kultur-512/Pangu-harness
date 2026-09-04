@@ -1,0 +1,191 @@
+# 重构评估报告：贴近华为命题《基于 openPangu 的记忆增强智能体架构设计与优化》
+
+> 项目代号：**Panshalach**（现仓库工程代码名曾为 Zorge / GLM-5.x 血统）
+> 命题企业：华为技术有限公司 · 国产操作系统软件组
+> 命题要点：基于 **openPangu-1B / 7B / 7B-VL** 系列模型，构建具备**长程上下文管理能力**的记忆增强智能体，解决长交互 / 多轮任务 / 长文档 / 持续状态跟踪带来的**中期遗忘**与**上下文断裂**问题；交（1）架构设计文档、（2）效果评估报告（含与无记忆/基线方案对比）。
+> 评估基准日：2026-09-03（Git 仅一次初始化提交，分支 `zhaiyuanhao1`；当前可见统计：62 组 `*.test.ts`）。
+
+---
+
+## 1. 命题拆解 → 验收标准
+
+| 命题要求 | 拆成可验收标准 | 现状 |
+|---|---|---|
+| (1) 必须使用 openPangu 系列作为基础模型 | 模型接入层能切到 openPangu（OpenAI 兼容端点或昇腾部署），并跑真实验证 | ❌ 模型层硬编码绑定 GLM/scnet（含 magic shorthand、/model list 特化、铁律 prompt 里 GLM 字样）；❌ 无 openPangu provider 示例与文档 |
+| (2) 选一个有价值的长周期任务场景 | 一个业务场景 + 对应的演示/评测任务集 | 场景候选：软件工程长期维护（跨多轮需求演进 / 跨文件长文档分析 / 持续状态跟踪）；资产天然支持（真实 read/write/bash/glob/grep + 验证铁律） |
+| (3) 长程上下文管理能力 + 合理基线对比 | 显式的记忆/上下文机制 + 可运行的基线对比评测 | 有记忆卡 / 会话资产 / 压缩雏形，但**缺若干关键长程机制**（见 §3），且无任何基线评测工程 |
+| 交付 (1) 架构设计文档 | 分层架构 / 记忆模块设计 / 训练与推理流程 / 资源消耗 / 核心创新点 | 旧文档全为 Zorge 叙事；需重建 Panshalach 命题文档 |
+| 交付 (2) 效果评估报告 | 本方案 vs 无记忆基线对比；长程保持与历史利用能力 | 无。需先建评测方法，再用**真实 openPangu** 填数据 |
+
+---
+
+## 2. 代码资产逐模块对照（现状 → 契合度 → 处置）
+
+> 路径均相对仓库根。下面"契合度"以命题能力为准（不是以工程成熟度为准）。
+
+### 2.1 记忆系统（命题核心，契合度 ★★★★ 骨架）
+
+| 模块/文件 | 能力 | 命题契合点 | 差距 | 处置 |
+|---|---|---|---|---|
+| `src/memory/RefinedMemoryCard.ts` | 持久卡：`kind(failure/success/preference)`、`category`、`memoryCategory(architecture/failure/implementation/insight/general)`、`summary`、`weight`、`count`、`lastSeen/firstSeen`、`applicableTiers`、`sourceContext`、`decayWeight`、`lastUsedAt`、`pinned`、`status`、`mergedFrom`、`referencedFiles`；容量 每类10/总200、半衰期 30d | 结构化记忆卡 schema 完备，直接是"结构化记忆"技术路线的实体 | 无 | **保留** |
+| `src/memory/RefinedMemoryStore.ts` | `refine()`(从轨迹抽失败信号 + 一次通过正向提炼 success)、`save()`(mergeAndCap + gitignore)、`load()`、`loadFiltered()`(tier/style 可见性 + **P2-D 参照文件交集过滤** + 4 段阶梯衰减 + count≥2 升半衰期 + preference seat + keyword relevance 排序)、`loadFilteredCached()`(8 槽投影缓存/30d 阶梯 key/快照冻结)、`refineCompactSignals()`、`remember/forget/clear/import/export`、`mergeSimilarCards()`(2-gram 去重合并) | 记忆卡加载/过滤/衰减/去重/合并基本完备；**参照文件过滤**贴近"任务状态关联" | 见 §3.1（回合写闭环缺失、无 markUsed、无语义检索、无事件/任务状态） | **保留 + 演进** |
+| `src/memory/FailureMemory.ts` | 进程内 `Map<FailureCategory, string[]>` 失败记忆；`record/getRelevant/toPromptInjection/autoExtractFromTrajectory/injectIntoPrompt` | 会话内实时失败反馈（喂给循环与每步 prompt） | 不持久化、与 RefinedMemoryStore 双轨（代码注释已声明最终收敛到 Store） | **保留为会话内实时信号源**；长期收敛到 Store 提炼 |
+
+### 2.2 上下文 / 锚点 / 提示工程（契合度 ★★★★）
+
+| 模块/文件 | 能力 | 处置 |
+|---|---|---|
+| `src/context/RepoExplorer.ts` | 仓库扫描(ignore node_modules/.git/dist)、按档位深度、`scoreFile` 打分推荐锚点、读锚点内容限 80 行 + `redact`(脱敏 key/token)、`AnchorMemory` 注入(每文件≤6000 chars) | **保留**；补：锚点生命周期版本化 + 跨会话锚点持久化（演进点） |
+| `src/context/ContextManager.ts` | 内存锚点+高重要性历史，预算估算 | **保留**；Chaser 实际用它注入锚点上下文 |
+| `src/cli/repl/PromptBuilder.ts` | 回合 prompt 最终组装：身份 → L0(≤3) → tier XML 约束 → 档位契约 → 负向工具清单 → 项目验证块 → plan-mode → thinking 阶梯 → **L1 记忆卡注入(去重/截 120/来源标签/按档位 3/6/8/10)** → skills → 当前特性 → ENV 增量 → 最近3轮 → 当前任务 → 压缩 → standard/high 探索自动拉取(预算 700) → injection_summary | **保留**；L1 是"长程记忆注入"主通道；演进点：语义检索替换/辅助子串 keyword、`markUsed` 刷新 |
+| `src/reasoning/StructuredReasoner.ts`、`src/benchmarks/BenchmarkProfiles.ts` | 思维链阶梯/铁律头/复盘 prompt；任务风格(swe/terminal/automation) profile | **保留**；去 GLM 措辞泛化为"工程纪律"（见 §4-P4） |
+
+### 2.3 会话资产（契合度 ★★★★，直接支撑"长程上下文"）
+
+| 模块/文件 | 能力 | 处置 |
+|---|---|---|
+| `src/cli/repl/Session.ts` + `SessionStore.ts` | 会话(轮次/tier/workspace/model/审批)持久化 `~/.zorge/sessions/` | **保留**（存储名迁移见 §4-P6） |
+| `src/cli/repl/rolloutStore.ts` | **追加式 jsonl 事件**(meta/turn/approval/rewind)、崩溃容错 resume、branch 只读分叉 + session tree | **保留**；这就是"事件日志"的技术底座——演进为结构化**事件记忆**（§4-P3） |
+| `src/cli/repl/compactService.ts` + `compactStrategies.ts` | **上下文压缩**：移除保留最近6轮、模型摘要(默认≤300字保核心/或主题分组)、失败回退确定性逐轮 brief、后台预压缩 + 原子应用、**compact 补漏提炼** | **保留**；这就是"上下文压缩"路径；演进：滚动多级摘要、压缩后一致性校验 |
+| `src/cli/repl/FeatureTracker.ts` | `feature_list.json`：单一 in-progress feature + nextStep + evidence | **保留并演进**：这就是"任务状态管理"雏形 → 多轮任务状态机(进度/约束/已决/待决) |
+| usage / approvals / undo / rewind / file-history | 用量、审批、回滚、文件历史 | **保留**（审计与可回滚支撑长周期可靠性） |
+
+### 2.4 执行循环 / 工具引擎（契合度 ★★★★★ 差异化资产）
+
+| 模块/文件 | 能力 | 处置 |
+|---|---|---|
+| `src/loop/VerifyCritiqueLoop.ts` | 验证密度 / Read-Before-Write / Verify-Before-Claim 铁律 / critique 节奏 / 失败保护 / 每步轨迹 → FailureMemory | **保留**；工具格式强约束泛化（见 §4-P4） |
+| `src/tools/*`（readFile/glob/grep/bash/writeFile/editFile/diff/executor/approval/engineAdapter/fileHistory/mcpClient） | 真实工具执行 + 四档审批 + RBW + LCS diff + 原子写 + allowlist + MCP | **保留**；这是"持续任务执行"硬底座 |
+| `src/orchestration/TestTimeOrchestrator.ts` + `Trajectory` | 串/并行 rollout、best-of-N、token 预算、early-stop | **保留**；可演进为"记忆增益对照评测驱动器"(同一 rollout 引擎跑 with/without memory) |
+| `src/server/`（agentServer/runAgentTask/sse） | SSE 服务化、复用会话跑任务 | **保留**；是"服务化部署 + 前端评测演示"通道 |
+
+### 2.5 模型接入（契合度 ★★，最需改造）
+
+| 文件 | 现状 | 处置 |
+|---|---|---|
+| `src/model/openai-compatible.ts` | 零依赖 OpenAI 兼容 client（listModels/complete/streamChat）；返回仅 `content`(丢弃原生 tool_calls) | **保留并增强**：返回结构化 `{content, raw, toolCalls, detectedFormat}`；为 openPangu 网关若用原生 OpenAI 工具调用做透传 |
+| `src/model/ProviderRegistry.ts` | 多 provider 通用路由(配置驱动，provider:model 均可)，但 import ScnetClient 实为通用 | **保留**；无脑支持 `openpangu` 作为另一 provider |
+| `src/model/ScnetClient.ts` / `UniversalMaoyulinClient.ts` / `maoyulin-client.cjs` | scnet 特化 factory；maoyulin 历史未接线 | Scnet 保留（作为既有网关）；maoyulin 建议标注 deprecated |
+| `src/cli/repl/ModelProvider.ts` | `ZORGE_MODEL` 注入、SCNET_API_KEY 硬编码、GLM shorthand `_pickBestGLMModel`、bare name→scnet | **去 GLM 独占化**：保留通用 `provider:model` 路由，GLM 变可选别名；新增 openPangu env/key 注入与示例 |
+| `src/cli/repl/commands/ModelCommand.ts` | `/model` 深层 scnet 特化(直读 scnet cfg/baseUrl/提示) | `/model list` 改 provider 无关读取(遍历 providers 各调 `/models`)；提示文案不再"只教你配 scnet" |
+| `src/adapter/*`（ExtremeGlmToolCallAdapter / UniversalToolCallAdapter / GlmToolCallParser / ToolCallFormatDetector / universal-tool-parser.cjs） | GLM `<>` 严格解析、OpenAI JSON tool_calls、松散文本三路解析 + 探测与容错 | **保留为自适应解析链**；这正是"多模型可移植"的关键——openPangu 若输出 JSON tool_calls 已被探测器(confidence .95)覆盖，若输出文本协议走 loose 容错；`<>` 严格路径仅"对支持该格式的高档位模型"开启 |
+
+---
+
+## 3. 现有代码离"长程记忆增强"的缺口（本次重构核心动力）
+
+### 3.1 记忆"写入闭环"缺失（最高优先级）
+- `RefinedMemoryStore.refine(input)` 目前在**生产路径没有任何真实调用点**——仅 `tests/` 与 `compactService` 的 `refineCompactSignals()`（score≥85 补漏）。也就是说：每个真实完成的任务回合（REPL `executeTask` / `runAgentTask` / sseInteractive 回合落定）都不会把本次轨迹提炼成记忆卡并写盘。
+- 后果：`/memory list` 里除了 `/remember` 偏好与压缩补漏，几乎没有自动沉淀的教训/成功经验——"从经验中学习"停在进程内 FailureMemory 与文档承诺。
+- 修复点：任务结束时（拿到 `bestTrajectory`/得分/用户反馈）调 `refine({trajectory, taskStyle, applicableTiers, attemptCount, userFeedback})` → `save()`；配套 `markUsed()` 在卡片注入时刷新 `lastUsedAt`（现 `loadFiltered` 明确不做刷新，且无 `markUsed` 实现——读即用永不衰减问题已注释声明但方法未落地）。
+
+### 3.2 检索机制单一（无语义检索）
+- 仅 summary 子串 keyword(+1 cap 3) 与 `/memory search` 子串过滤；无 embedding / 向量库 / 语义召回。
+- 命题点名"向量检索"是可选路径之一。零依赖约束下：字符级 n-gram 词袋向量 + 余弦（纯本地）作为 v0，文档注明可选替换国产向量库 / openPangu embedding。
+
+### 3.3 缺"事件记忆 / 任务状态"两层
+- 命题点名"事件日志、任务状态管理"。现有：
+  - 事件日志形态 = `rolloutStore` jsonl（回合级审计），但没有按**业务事件语义**（决策/需求/约束/已验证/失败模式/引用文件）抽取的可查询事件流。
+  - 任务状态 = `FeatureTracker`（一个 in-progress feature + nextStep），没有多轮跨任务状态机（用户原始需求长期保持、未决项、风险清单、进度里程碑）。
+- 这两层正是"持续状态跟踪 + 需求持续跟进"的直接载体，是评估报告里对比"无记忆基线"的加分叙事。
+
+### 3.4 无滚动多级摘要
+- 压缩 = 一次 model 摘要 + 保留最近6轮（合成一卡），非"多级滚动（粗→细）"。命题中点名"上下文压缩"；目前策略已可用，演进为层级摘要(长期粗粒度 + 中期结构化 + 短期逐字)会更贴"长程"。
+
+### 3.5 模型层 GLM/scnet 绑定（阻碍 openPangu 验证）
+- 绑定清单：`ModelProvider` 的 GLM shorthand 与 `_pickBestGLMModel`、`getModelContextLength` 只查 scnet、bare-name→scnet 路由、`ModelCommand` 全 scnet 特化文案与直读、`SCNET_API_KEY` env 注入、`StructuredReasoner`/`VerifyCritiqueLoop`/`RepoExplorer` 内 `GLM-5.x` 措辞与 `buildGlmFormatEnforcementPrompt`、adapter 名 Glm/ExtremeGlm、高强度 `strictGlmOnly` 路径、提示中"标准 `<>` 工具调用格式"铁律。
+- 影响：不改造则 openPangu 即便以 provider 接入，"用户可见/模型可见"仍是 GLM 血统，无法宣称"基于 openPangu 验证"。
+
+### 3.6 品牌/文档全是 Zorge 叙事（阻碍命题交付物）
+- 大量 src 注释、README、docs 均是 Zorge / GLM-5.3 / 30-rounds 复盘。需重建 Panshalach 命题文档并物理清理（本次已执行）。
+
+---
+
+## 4. 贴合盘古的改造路径（分阶段里程碑）
+
+> 本期已执行 A/B/C/D（见 REFACTOR 计划）；下述 P1–P6 为后续里程碑。
+
+### P1 — openPangu 泛化接入（代码，边界清晰）
+- `.zorge.json`（内部名暂保留）示例新增：
+  ```json
+  "providers": {
+    "openpangu": {
+      "type": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:8000/v1",   // 本机/昇腾 vLLM-ascend、MindIE 或 ModelArts 网关
+      "apiKey": "EMPTY",                        // 本地网关常为 EMPTY；生产用真实 key
+      "models": ["openPangu-1B", "openPangu-7B", "openPangu-7B-VL"],
+      "modelContexts": { "openPangu-7B": 8192 }
+    }
+  }
+  ```
+  运行 `panshalach` 后 `/model list` 或 `ZORGE_MODEL=openpangu:openPangu-7B`（见下文存储名迁移前兼容名）。
+- `ModelProvider`：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；去掉"bare name 必走 scnet"与"GLM magic shorthand"的独占假设（保留为可选别名，不阻断通用 `provider:model`）。
+- `ModelCommand`：`/model list` 改为遍历所有已配置 provider，逐个 `listProviderModelsWithContext`；缺省 fallback 优先非 scnet 的第一可用 provider。
+- `openai-compatible.complete`：解析 `message.tool_calls` 并返回 `ModelClientOutput`（Keep GLM 文本格式探测作为后备）。`VerifyCritiqueLoop` 已能消费对象输出（`preParsedToolCalls`）。
+- GLM 措辞泛化：`StructuredReasoner` 的"GLM-5.x 工程纪律"头改为"工程纪律"（Read-Before-Write / Verify-Before-Claim / 标准格式 / 零幻觉不变）；adapter 保留 Glm/Extreme 作为**严格 XML 解析器**但不再由品牌强制绑定（`strictGlmOnly` → 由 tier + 模型能力联合决定）。
+
+### P2 — 记忆写入闭环 + markUsed（本次缺口修复核心）
+- 在任务落定点调用 `RefinedMemoryStore` 提炼写盘：
+  - REPL `Repl.executeTask` 完成分支；`runAgentTask` 成功/失败后；sseInteractive 回合落定。
+  - 输入：`{ trajectory: bestTrajectory, taskStyle, applicableTiers:[tier], attemptCount, userFeedback: 末轮/用户显式反馈 }`。
+  - 落盘：`store.refine(...)` → `store.save(cards)` → `invalidateProjection()`。
+- 实现 `markUsed(cardId/ids)`：在 PromptBuilder/Chaser 注入命中的卡片上调 `lastUsedAt=now` 并写盘（注意频控：任务边界批量刷新，避免每步写盘）。
+- 验收：连续做 3 个同风格任务后 `/memory list` 自动出现教训/成功卡（无需 `/remember`）。
+
+### P3 — 事件记忆 + 任务状态机 + 语义检索 v0
+- **事件记忆**：在 `rolloutStore` 之上加语义事件层 `memory/events.ts`（append-only，字段：`ts / kind(decision|constraint|requirement|verified|failure|progress|preference) / topic / summary / detailPath / refs[] / sessionId`），写入由 P2 闭环与压缩补漏共用，`/memory events [--since] [--topic]` 可查；注入采用"近事件 + 高重要性 + 按任务 topic 命中"预算。
+- **任务状态机**：演进 `FeatureTracker` → `TaskState`（跨多轮：原始需求(不可变的长期锚)、决策清单、未决问题、进度里程碑、已验证清单、风险）。每轮落定更新；注入优先级高于普通记忆卡（因为它直接防"中期遗忘导致决策偏离用户原始需求"）。
+- **语义检索 v0（零依赖）**：字符 2-gram 词袋 + 余弦的本地索引 `memory/embed.ts`（对卡片 summary + 事件 summary 建索引，离线构建 ~O(n·k)）；L1 注入排序加一项 semanticScore；文档注明可选替换：国产向量库(Milvus-lite / Qdrant) 或 openPangu embedding，接口已留 provider 位。
+- 这三点共同形成评估报告的"全能力（事件+状态+检索）"档位。
+
+### P4 — openPangu 小模型适配（推理行为）
+- openPangu-1B/7B 在长格式遵循/深推理弱于 GLM-5 系 → 采取"外化状态 + 结构化记忆 + 低成本可验证动作"：
+  - 加大记忆卡/事件/任务状态注入的结构化程度，减少对模型记忆窗口的依赖（把关键事实放到 prompt 而不是"指望模型记住"）。
+  - 工具调用协议自适应：优先探测 OpenAI JSON tool_calls（openPangu 网关常见）；文本协议 loose 兜底；`<>` 严格格式只对明确声明支持的模型在高档位开。
+  - Critique/验证频度按模型能力调低初始值并看门狗化，避免小模型长格式爆token。
+- 提供 `taskStyle=maintenance` 场景 profile（软件工程长期维护的验证风格与失败模式）。
+
+### P5 — 资源与软硬件亲和（昇腾/麒麟）
+- 部署形态文档：昇腾 310P/910 推理(vLLM-ascend / MindIE) 或本机 CPU/GPU 小模型端点；NPU 显存与上下文预算估算表（1B ~4GB 内、7B ~16GB int8）；Kylin 桌面/服务器 OS 运行验证步骤。
+- 推理优化面：`max_tokens`/温度在 `ModelCommand`/完整 `complete` 已透传；长上下文预算由 `ZORGE_CTX_WINDOW` 与 compact 触发阈值驱动；补一次"低档位高轮次长会话"成本核算演示。
+
+### P6 — 存储名/env 全量迁移（品牌收尾，可与 P1 并行或之后）
+- `.zorge.json`→`.panshalach.json`、`.zorge-memory.json`→`.panshalach-memory.json`、`~/.zorge`→`~/.panshalach`、`ZORGE_*`→`PANG_*`；一次性迁移脚本(读旧写新 + 移动 sessions/rollouts/file-history/skills)。
+- `ZorgeChaser.ts`→`Panshalach.ts`、`cli.ts` bin 文案、`src/cli/repl/commands/*` 文案扫尾；`Glm53SweProChaser`/`Zorge` bin 作为 deprecated alias 保留一版期。
+
+---
+
+## 5. 评测基线设计（供效果评估报告 + 后续里程碑）
+
+- **场景主线**：软件工程长期维护。演示集可取自本仓库/示例仓库：跨 30+ 轮"需求演进式"任务（早期需求约束 → 中段新增功能 → 尾部回归验证早期约束是否仍被遵守）、跨文件长文档关联修改、进程中断后 resume 续接任务状态。
+- **维度与指标**：
+  1. **中期信息保持**：将早期关键约束埋入多轮历史，随后在 1/5/15/30 轮处召回；指标 = 约束召回率 / 遵循率。基线 = 无记忆直连(只靠对话窗口，或强压缩后)。
+  2. **跨文件/跨章节关联**：长文档 A 的约束在文档 B 中被正确引用执行；指标 = 关联命中率。
+  3. **压缩后保持**：compact 触发前后对早期约束的保持（现策略 vs 加事件记忆后）。
+  4. **任务状态续接**：中断 resume 后，模型对"进行到哪/未决项/下一步"的判断准确率。
+- **对比档**：`无记忆基线(压缩窗口)` vs `记忆卡(现状)` vs `全能力(记忆卡+事件+状态+检索, P2+P3 后)`。
+- **运行方式**：仅真实 openPangu（本机/昇腾 OpenAI 兼容端点），真实结果才写入 `docs/panshalach/EVALUATION.md`；不虚报离线/合成数据为真模型结果。评估报告需声明：模型版本、端点、上下文窗口、每档任务量、种子与成本。
+- **复用点**：`TestTimeOrchestrator.runMultiple` 可封装"同任务开关记忆"的 A/B runner；scorer 侧加"约束遵守/召回"专用打分，而非沿用现有工程风格分。
+
+---
+
+## 6. 风险与取舍
+
+| 风险 | 说明 | 缓解 |
+|---|---|---|
+| 小模型(1B)在真实工具执行链上能力有限 | openPangu-1B 可能不足以做完整 agentic 循环 | 文档如实报告模型档位能力差异；主线以 7B 为主、1B 报低资源形态 |
+| 评测成本/时长 | 真模型 30 轮×多任务 × 多基线 较贵 | 任务集控制在可复现的小集合(每档 5–10 任务)，上报成本与 token |
+| 零依赖 vs 向量库 | 语义检索 v0 用字符 n-gram 余弦 | 接口抽象 + provider 位，后续可切国产向量库而不改注入层 |
+| 存储名迁移破坏既有资产 | resume/branch/记忆文件路径变化 | P6 迁移脚本 + 读旧写新 fallback；文档标注兼容窗口 |
+| 品牌/文档叙事与内部名长期不一致 | 代码注释仍 Zorge | 本期可见层全改 Panshalach；内部名在 ROADMAP 里按 P6 排期收敛，注释标注"兼容别名" |
+
+---
+
+## 7. 本次重构执行边界回顾（已完成部分）
+
+- **A** 本评估报告。
+- **B** 物理删除 docs/ 下全部 Zorge/GLM/30-rounds 旧文档与 docs/agents、.agents 过时流程元数据（保留 CHANGELOG.md/examples/scripts）。
+- **C** 新写 `docs/panshalach/` 命题文档集（README 目录页 / ARCHITECTURE / MEMORY-DESIGN / EVALUATION / USER-GUIDE / ROADMAP），根 README 重写为 Panshalach 版。
+- **D** 源码**可见层**改名 Panshalach（package/bin、欢迎语与提示符、模型身份串、server 文案、memory 管理器标题、tier 描述、/init 文档指针），**保留**内部存储名/类名/GLM adapter（P1/P6 排期）。
+
+> 内部兼容名说明：`.zorge.json`、`.zorge-memory.json`、`~/.zorge/`、`ZORGE_*` 环境变量、`ZorgeChaser` 类、`Glm53SweProChaser` alias、`zorge` bin 均为**内部存储/旧兼容名**，不影响对外品牌 Panshalach；迁移见 `docs/panshalach/ROADMAP.md` P6。

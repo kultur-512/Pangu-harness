@@ -81,7 +81,7 @@ describe('P1-D MemoryCommand submode (v2)', () => {
     // Should not have entered submode loop
     const joined = outputs.join('');
     // Even with no cards, runMemoryCommand returns a message
-    assert.ok(!joined.includes('Zorge Memory Manager'), 'should not print submode menu for direct args');
+    assert.ok(!joined.includes('Panshalach Memory Manager'), 'should not print submode menu for direct args');
     // It should have produced some output via renderer (the list result or empty message)
     assert.ok(outputs.length > 0 || res, 'should produce output or result');
   });
@@ -95,7 +95,7 @@ describe('P1-D MemoryCommand submode (v2)', () => {
     const joined = outputs.join('\n');
 
     // Menu header
-    assert.ok(joined.includes('Zorge Memory Manager'), 'should show submode header');
+    assert.ok(joined.includes('Panshalach Memory Manager'), 'should show submode header');
     assert.ok(joined.includes('list / clear'), 'should show menu options');
 
     // After "list", runMemoryCommand should have been called (even if no cards)

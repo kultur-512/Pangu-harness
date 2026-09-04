@@ -164,7 +164,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   },
   zorge: {
     tier: 'zorge',
-    typicalUseCase: '极致追求（Zorge 锻神模式）',
+    typicalUseCase: '极致追求（终极长程记忆模式）',
     maxRollouts: 5,
     maxStepsPerRollout: 40,
     critiqueFrequency: { periodicEvery: 2, onProblem: true, longNoVerifyThreshold: 2, skipFirstN: 1 },

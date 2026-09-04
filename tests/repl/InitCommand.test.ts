@@ -66,10 +66,10 @@ describe('InitCommand (P1-T13)', () => {
     assert.ok(agents.includes('Verification commands'));
   });
 
-  it('AGENTS.md links the ZIS directory page (A-T10)', async () => {
+  it('AGENTS.md links the Panshalach directory page (A-T10)', async () => {
     await initCommand.execute(ctx('y'), []);
     const agents = fs.readFileSync(path.join(ws, '.zorge', 'AGENTS.md'), 'utf-8');
     assert.ok(agents.includes('目录页'), 'AGENTS.md is a directory page');
-    assert.ok(agents.includes('ZIS.md'), 'links the ZIS directory page');
+    assert.ok(agents.includes('panshalach/README.md'), 'links the Panshalach docs directory page');
   });
 });
