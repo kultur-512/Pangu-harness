@@ -19,7 +19,7 @@ const CONTENT = 'function add(a, b) {\n  return a - b;\n}\n';
 
 describe('editFile tool', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-edit-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-edit-'));
     fs.mkdirSync(path.join(root, 'sub'));
     fs.writeFileSync(path.join(root, FILE), CONTENT);
     fs.writeFileSync(path.join(root, 'sub', FILE), CONTENT);

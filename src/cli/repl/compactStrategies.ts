@@ -3,7 +3,7 @@
 // summarization prompt without touching compactService. Built-ins: 'default'
 // (existing template) + 'topic' (cluster by userInput keywords, sectioned).
 // Custom strategies register via registerStrategy; unknown ids fall back to
-// default. compactService reads .zorge.json compaction.strategy.
+// default. compactService reads .panshalach.json compaction.strategy.
 
 import type { Turn } from './types.js';
 

@@ -16,11 +16,11 @@ import {
   MAX_MATCHED_SKILLS,
 } from '../../src/cli/repl/skillsLoader.js';
 
-const USER_ROOT = path.join(os.homedir(), '.zorge', 'skills');
+const USER_ROOT = path.join(os.homedir(), '.panshalach', 'skills');
 const saved = {
   user: null as string | null,
 };
-const MOCK = path.join(os.tmpdir(), 'zorge-skills-' + Date.now());
+const MOCK = path.join(os.tmpdir(), 'pangu-skills-' + Date.now());
 
 function writeSkill(base: string, name: string, body: string) {
   const dir = path.join(base, name);
@@ -34,12 +34,12 @@ function skill(name: string, desc: string, triggers: string[], content = 'BODY-'
 
 describe('skillsLoader', () => {
   beforeEach(() => {
-    saved.user = process.env.ZORGE_SKILLS_USER ?? null;
-    process.env.ZORGE_SKILLS_USER = MOCK; // NOTE: loader uses os.homedir(), not env — see below
+    saved.user = process.env.PANSHA_SKILLS_USER ?? null;
+    process.env.PANSHA_SKILLS_USER = MOCK; // NOTE: loader uses os.homedir(), not env — see below
   });
   afterEach(() => {
     fs.rmSync(MOCK, { recursive: true, force: true });
-    if (saved.user) process.env.ZORGE_SKILLS_USER = saved.user;
+    if (saved.user) process.env.PANSHA_SKILLS_USER = saved.user;
   });
 
   it('parseSkillMarkdown parses frontmatter + body; unclosed → null', () => {
@@ -55,9 +55,9 @@ describe('skillsLoader', () => {
   it('loadSkills scans user + project dirs; project wins on collision', () => {
     const ws = path.join(MOCK, 'ws');
     writeSkill(MOCK, 'shared', skill('shared', 'user version', ['alpha'], 'USER-BODY'));
-    writeSkill(path.join(ws, '.zorge', 'skills'), 'shared', skill('shared', 'project version', ['alpha'], 'PROJECT-BODY'));
+    writeSkill(path.join(ws, '.panshalach', 'skills'), 'shared', skill('shared', 'project version', ['alpha'], 'PROJECT-BODY'));
     writeSkill(MOCK, 'only-user', skill('only-user', 'user only', ['gamma']));
-    writeSkill(path.join(ws, '.zorge', 'skills'), 'only-proj', skill('only-proj', 'proj only', ['delta']));
+    writeSkill(path.join(ws, '.panshalach', 'skills'), 'only-proj', skill('only-proj', 'proj only', ['delta']));
 
     const all = loadSkills(ws);
     const shared = all.find((s) => s.name === 'shared');

@@ -83,7 +83,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 | `referencedFiles` | 相关文件路径 | **P2-D 参照文件交集过滤**：只加载"本任务将触碰文件"相关的卡，命中为空回退全量 |
 | `pinned / status / mergedFrom` | 冻结衰减 / 软删除 / 合并溯源 | 偏好 pin、同主题合并可回滚 |
 
-容量：单类 ≤10、总 ≤200；默认落盘 `<workspace>/.zorge-memory.json`（内部名，见 ROADMAP P6 迁移）。注入时经 8 槽投影缓存（任务内快照冻结、写入失效重建）。
+容量：单类 ≤10、总 ≤200；默认落盘 `<workspace>/.panshalach-memory.json`（内部名，见 ROADMAP P6 迁移）。注入时经 8 槽投影缓存（任务内快照冻结、写入失效重建）。
 
 ### 2.2 记忆写入（提炼 → 保存）
 - **信号源 A（循环实时）**：VerifyCritiqueLoop 每步把 RBW/未验证/命令失败/状态不符/自动化未验证等信号喂给进程内 FailureMemory（会话内即时纠偏）。
@@ -93,7 +93,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ### 2.3 记忆读取与注入（loadFiltered，已实现）
 1. 归一化旧卡（无 kind 默认 failure，无 memoryCategory 默认 general）。
-2. 过滤：任务风格匹配 → tier 可见性（architecture 始终可见；quick 仅 failure；standard 加 implementation；high 加 insight；max/ex/zorge 全量）。
+2. 过滤：任务风格匹配 → tier 可见性（architecture 始终可见；quick 仅 failure；standard 加 implementation；high 加 insight；max/ex/pangu 全量）。
 3. **参照文件交集过滤**（提供 currentWorkspaceFiles 时）：只保留 referencedFiles 与当前相关文件有交集的卡；空则回退全量（不"无卡可用"）。
 4. 有效权重：kind 基线（preference 0.6 / 其余 1.0）· pin 冻结 · 分类半衰期×count · 4 段因子；`effective < 0.3` 丢弃。
 5. 相关性：任务关键词命中 summary +1（cap 3）；排序 = 0.7×权重 + 0.3×相关性，再按 count。
@@ -121,7 +121,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
   L1 记忆卡注入(参照文件/关键词/tier 过滤 + 预算) · skills · 当前特性
   最近上下文(3轮) · 当前任务 → 一条"带记忆"的初始 prompt
   │
-  ▼ ZorgeChaser.solveIssue（按 tier 决定 rollout 数 / 并行度 / 预算）
+  ▼ PanshalachChaser.solveIssue（按 tier 决定 rollout 数 / 并行度 / 预算）
     Phase 探索：RepoExplorer 扫仓库 → 选锚点文件(读≤80行+脱敏) → 注入锚点上下文
     Phase rollout（high+ 档并行）：VerifyCritiqueLoop 迭代
         思维链(think/plan/verify/critique) → 工具调用(探测格式)
@@ -156,7 +156,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 |---|---|---|
 | 推理底座 | openPangu-7B 约 7–16GB（int8/昇腾）· 1B < 4GB | 端点外置，Agent 侧无模型驻留 |
 | Agent 进程 | 内存 < 200MB、零运行时依赖 | Node ≥18 + TypeScript 产物；`dependencies: {}` |
-| 上下文预算 | 默认 128K token 软窗(`ZORGE_CTX_WINDOW`) | compact 触发：ctxRatio≥0.85 且 >12 轮 |
+| 上下文预算 | 默认 128K token 软窗(`PANSHA_CTX_WINDOW`) | compact 触发：ctxRatio≥0.85 且 >12 轮 |
 | 记忆文件 | 卡 ≤200、事件 jsonl 追加 | 单项目记忆体积 KB 级 |
 | 每任务 token | 由 tier（1–5 rollout × 10–40 步）与预算软限控制 | 预算触发 → 步数减半 + critique 降频 + 铁律降档 |
 | 成本核算 | `/usage` 基于配置单价 | 可选 |
@@ -168,7 +168,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ## 6. 核心创新点（相对常规长上下文方案）
 
 1. **记忆写入闭环 + 使用刷新**：回合结束自动提炼写盘 + `markUsed` 刷新注入即使用（修"读即用永不衰减"）——记忆会随真实任务生长，且不因读取而失效。
-2. **分档记忆注入预算**：六档强度(quick→zorge)把记忆加载量、衰减、探索深度、并行度做成可量化行为契约；轻档省 token、高档全量。
+2. **分档记忆注入预算**：六档强度(quick→pangu)把记忆加载量、衰减、探索深度、并行度做成可量化行为契约；轻档省 token、高档全量。
 3. **参照文件交集过滤（P2-D）**：不是"什么都注入"，而是按"本任务实际触碰的文件"只载入相关记忆，命中为空自动回退——精准防上下文污染。
 4. **确定性记忆维护**：四段阶梯衰减 × 类别半衰期、同主题 2-gram 合并(原卡归档可回滚)、容量上限、投影缓存快照——离线可测，不依赖 LLM 判断记忆要不要留。
 5. **上下文压缩 + 补漏提炼**：压缩不只丢历史——被移除轮次中的成功信号被确定性地补提为记忆卡(hash 去重)，压缩反而成为记忆沉淀入口。

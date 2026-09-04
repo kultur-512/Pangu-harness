@@ -1,5 +1,5 @@
 // src/cli/repl/sseInteractive.ts
-// Default interactive CLI for plain `zorge` (no args).
+// Default interactive CLI for plain `pangu` (no args).
 //
 // Transport (P0.2): the default path consumes runAgentTask() DIRECTLY in-process.
 // No loopback HTTP, no port. The HTTP+SSE server remains available explicitly
@@ -55,7 +55,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // resumed sessions already carry __resumed marker from repl.ts
   const resumedInfo = (session as any).__resumed as { from: string; turns: number } | undefined;
 
-  // P5-5.2: MCP stdio servers from .zorge.json mcpServers (append-only config).
+  // P5-5.2: MCP stdio servers from .panshalach.json mcpServers (append-only config).
   // Clients spawn lazily at first task; closed on process exit (hang discipline).
   const mcpClients = new Map<string, any>();
   let mcpToolsReady: any[] = [];
@@ -99,7 +99,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   });
 
   // Nominal context window for the top-bar meter (heuristic chars/4 estimate).
-  const CTX_WINDOW_TOKENS = Number(process.env.ZORGE_CTX_WINDOW || 128000);
+  const CTX_WINDOW_TOKENS = Number(process.env.PANSHA_CTX_WINDOW || 128000);
   let ctxUsedChars = 0;
   function bumpCtx(text: any) {
     if (typeof text === 'string') ctxUsedChars += text.length;
@@ -436,7 +436,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
       if (cmd === '/tier' || cmd === '/t') {
         const t = arg.trim().toLowerCase();
-        const TIERS = ['quick', 'standard', 'high', 'max', 'ex', 'zorge'];
+        const TIERS = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
         if (t && TIERS.includes(t)) {
           session.tier = t as any;
           emit(`档位已切换: ${t}（下次任务生效）`, 'success');
@@ -502,7 +502,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
       if (cmd === '/init') {
         // P1-T13: rich-local /init — probe workspace + write
-        // .zorge/AGENTS.md + feature_list.json. B-dual: reuses the SAME
+        // .panshalach/AGENTS.md + feature_list.json. B-dual: reuses the SAME
         // probe/build logic as the registry InitCommand (the old inline
         // simplified copy diverged in output — now unified).
         try {
@@ -512,10 +512,10 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           const ws = session.workspace || process.cwd();
           const probe = probeWorkspace(ws);
           const agents = buildAgentsMd(ws, probe);
-          const agentsPath = path.join(ws, '.zorge', 'AGENTS.md');
+          const agentsPath = path.join(ws, '.panshalach', 'AGENTS.md');
           const existed = fs.existsSync(agentsPath);
           if (existed && arg !== '--force' && arg !== '-f') { emit('AGENTS.md 已存在（/init --force 覆盖）', 'warn'); return; }
-          fs.mkdirSync(path.join(ws, '.zorge'), { recursive: true });
+          fs.mkdirSync(path.join(ws, '.panshalach'), { recursive: true });
           fs.writeFileSync(agentsPath, agents, 'utf-8');
           const { saveFeatures, featureListPath } = await import('./FeatureTracker.js');
           if (!fs.existsSync(featureListPath(ws))) saveFeatures(ws, []);
@@ -1035,7 +1035,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // === Line streaming terminal (same in-process events, structured colored lines) ===
   // "通道升级" when rich UI (ink) is not available or TTY caps insufficient.
   renderer.clearScreen();
-  renderer.writeLine(renderer.color('Panshalach', 'bold'));
+  renderer.writeLine(renderer.color('烛龙（Zhulong）', 'bold'));
   renderer.writeLine(renderer.color('流式终端（进程内事件直连）。输入任务后实时输出思考、工具调用与验证过程。', 'gray'));
   renderer.writeLine(renderer.color('命令: /help /exit /status /tier /clear /edit /undo /approvals   |  Ctrl+C 中断\n', 'gray'));
   if (resumedInfo) {

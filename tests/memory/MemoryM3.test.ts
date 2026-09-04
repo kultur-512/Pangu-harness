@@ -11,7 +11,7 @@ import { RefinedMemoryStore } from '../../src/memory/RefinedMemoryStore.js';
 
 let ws: string;
 function makeStore(): RefinedMemoryStore {
-  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-m3-'));
+  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-m3-'));
   return new RefinedMemoryStore(ws);
 }
 function cleanup() { fs.rmSync(ws, { recursive: true, force: true }); }

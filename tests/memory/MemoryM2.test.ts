@@ -14,7 +14,7 @@ import { estTokens, L0_INVARIANTS, assertL0Count } from '../../src/cli/repl/Prom
 
 let ws: string;
 function makeStore(): RefinedMemoryStore {
-  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-m2-'));
+  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-m2-'));
   return new RefinedMemoryStore(ws);
 }
 function cleanup() { fs.rmSync(ws, { recursive: true, force: true }); }

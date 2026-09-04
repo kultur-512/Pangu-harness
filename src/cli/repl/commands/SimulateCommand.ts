@@ -24,7 +24,7 @@ const command: Command = {
     }
     const finalTask = (cleaned && cleaned.trim()) ? cleaned : task;
 
-    // P3: Resolve a usable client via provider; never pass null to ZorgeChaser
+    // P3: Resolve a usable client via provider; never pass null to PanshalachChaser
     const provider: ModelProvider | undefined = ctx.provider || ctx.session.provider;
     const client = provider?.createClient(ctx.session.model) ?? provider?.createDefaultClient();
     if (!client) {
@@ -34,8 +34,8 @@ const command: Command = {
       return { message: '未提供模型，模拟未执行。' };
     }
 
-    const { ZorgeChaser } = await import('../../../ZorgeChaser.js');
-    const chaser = new ZorgeChaser(client, ctx.session.tier);
+    const { PanshalachChaser } = await import('../../../PanshalachChaser.js');
+    const chaser = new PanshalachChaser(client, ctx.session.tier);
 
     // Use the same rich prompt builder as run (tier contract + memory cards)
     const tierConfig = TierRegistry.get(ctx.session.tier);

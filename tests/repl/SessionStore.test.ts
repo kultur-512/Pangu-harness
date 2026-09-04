@@ -12,7 +12,7 @@ describe('SessionStore', () => {
   let store: SessionStore;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), 'zorge-test-sessions-'));
+    tmpRoot = mkdtempSync(join(tmpdir(), 'pangu-test-sessions-'));
     store = new SessionStore(join(tmpRoot, 'sessions'));
   });
 

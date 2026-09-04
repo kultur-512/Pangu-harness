@@ -1,4 +1,4 @@
-// src/cli/repl/ui/ZorgeApp.tsx
+// src/cli/repl/ui/PanshaApp.tsx
 // Root layout for ink mode (Path B) - polished per UX guidelines.
 // Three zones: TopBar (fixed), Feed (flexGrow, scroll window), Input/Confirm (docked bottom).
 // Respects: high contrast, clear states (running/confirm), keyboard primary, no layout shift on updates.
@@ -13,18 +13,18 @@ import { InputBar } from './InputBar.js';
 import { ConfirmBar } from './ConfirmBar.js';
 import { StreamingAssistant } from './streamingAssistant.js';
 
-export function ZorgeApp(props: {
+export function PanshaApp(props: {
   bridge: any;
   initialSession?: { tier?: string; model?: string; workspace?: string };
 }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
     useReducer: (reducer: any, initial: any) => [initial, () => {}],
     useEffect: (_fn: any, _deps?: any) => {},
     useState: (i: any) => [i, () => {}],
   };
 
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
 
   const { createElement, useReducer, useEffect, useState } = R;
 

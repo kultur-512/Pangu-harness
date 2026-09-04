@@ -60,7 +60,7 @@ describe('S1 /model list key-leak regression', () => {
   let ws: string;
 
   beforeEach(() => {
-    ws = mkdtempSync(join(tmpdir(), 'zorge-s1-'));
+    ws = mkdtempSync(join(tmpdir(), 'pangu-s1-'));
   });
 
   afterEach(() => {
@@ -69,7 +69,7 @@ describe('S1 /model list key-leak regression', () => {
 
   it('never prints key material when the workspace config contains a key', async () => {
     // Workspace with a config that DOES contain a scnet key (worst case).
-    writeFileSync(join(ws, '.zorge.json'), JSON.stringify({
+    writeFileSync(join(ws, '.panshalach.json'), JSON.stringify({
       model: 'GLM-5.1',
       providers: {
         scnet: {
@@ -102,7 +102,7 @@ describe('S1 /model list key-leak regression', () => {
   it('never prints key material even when the config file is malformed', async () => {
     // Malformed JSON that still contains the raw key text (worst case for
     // the old regex/snippet probe).
-    writeFileSync(join(ws, '.zorge.json'),
+    writeFileSync(join(ws, '.panshalach.json'),
       `{ "providers": { "scnet": { "apiKey": "${FAKE_KEY}", `,
       'utf-8');
 
@@ -117,7 +117,7 @@ describe('S1 /model list key-leak regression', () => {
   });
 
   it('leaves no global state behind (S2 regression)', async () => {
-    writeFileSync(join(ws, '.zorge.json'), JSON.stringify({
+    writeFileSync(join(ws, '.panshalach.json'), JSON.stringify({
       providers: { scnet: { type: 'openai-compatible', baseUrl: 'http://127.0.0.1:1', apiKey: FAKE_KEY } },
     }), 'utf-8');
 
@@ -129,7 +129,7 @@ describe('S1 /model list key-leak regression', () => {
   });
 
   it('does not write the key back into the persisted config on failure', async () => {
-    writeFileSync(join(ws, '.zorge.json'), JSON.stringify({
+    writeFileSync(join(ws, '.panshalach.json'), JSON.stringify({
       providers: { scnet: { type: 'openai-compatible', baseUrl: 'http://127.0.0.1:1', apiKey: FAKE_KEY } },
     }), 'utf-8');
 
@@ -137,7 +137,7 @@ describe('S1 /model list key-leak regression', () => {
     await ModelCommand.execute(ctx, ['list']);
 
     // Failure path must not persist models (persist happens only on success).
-    const p = join(ws, '.zorge.json');
+    const p = join(ws, '.panshalach.json');
     const raw = existsSync(p) ? readFileSync(p, 'utf-8') : '';
     assert.ok(!raw.includes('"models"'), 'failed /model list persisted models list');
   });

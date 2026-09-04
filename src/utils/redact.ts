@@ -1,5 +1,5 @@
 // src/utils/redact.ts
-// S3 (security): secret redaction shared by the anchor reader (ZorgeChaser)
+// S3 (security): secret redaction shared by the anchor reader (PanshalachChaser)
 // and the read_file tool. Covers:
 //   - `sk-...` prefixed API keys (OpenAI-style, any length, quoted or bare)
 //   - `Bearer <token>` headers
@@ -26,7 +26,7 @@ export function redactSecrets(text: string): string {
 
 /**
  * Anchor-specific variant: line-oriented, keeps the first 80 lines (caller
- * slices), redacts each line. Used by ZorgeChaser exploration anchors.
+ * slices), redacts each line. Used by PanshalachChaser exploration anchors.
  */
 export function redactAnchorLines(content: string, maxLines = 80): string {
   const lines = String(content || '').split('\n').slice(0, maxLines);

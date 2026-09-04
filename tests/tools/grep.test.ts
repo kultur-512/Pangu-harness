@@ -15,7 +15,7 @@ let ctx: ToolContext;
 
 describe('grep tool', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-grep-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-grep-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'const alpha = 1;\nconst beta = 2;\nconst gamma = 3;\n');
     fs.writeFileSync(path.join(root, 'src', 'b.ts'), 'alpha again\nnothing here\n');

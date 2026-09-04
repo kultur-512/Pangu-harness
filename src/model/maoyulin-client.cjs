@@ -9,7 +9,7 @@ const DEFAULT_BASE_URL = 'https://api.maoyulin.xyz';
 const DEFAULT_MODEL = 'glm-5.2';   // user specifically mentioned glm-5.2
 
 /**
- * Creates a model client compatible with ZorgeChaser (and legacy Glm53SweProChaser alias)
+ * Creates a model client compatible with PanshalachChaser (and legacy Glm53SweProChaser alias)
  * @param {Object} options
  * @param {string} options.apiKey
  * @param {string} [options.baseUrl]

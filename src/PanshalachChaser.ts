@@ -1,12 +1,12 @@
-// ZorgeChaser - Zorge 框架（GLM-5.x 高工程强度 Agent）
+// PanshalachChaser - Panshalach 框架（GLM-5.x 高工程强度 Agent）
 // 目标：打造一个**既在工程里强，也在跑分里强**的工具。
 //
 // 核心理念：
 // - 高强度模式（High-Rigor / 由 tier 驱动）：高验证密度、结构化思考、工程纪律。
 // - 实用模式：token 更省、复盘更温和，适合常规日常开发。
-// - 六档强度体系（全部小写）：quick / standard / high / max / ex / zorge，默认 high。
+// - 六档强度体系（全部小写）：quick / standard / high / max / ex / pangu，默认 high。
 //
-// 推荐新代码使用 ZorgeChaser。旧名 Glm53SweProChaser 仅为兼容别名。
+// 推荐新代码使用 PanshalachChaser。旧名 Glm53SweProChaser 仅为兼容别名。
 //
 // 客户端不做限流（按用户要求）。
 
@@ -81,10 +81,10 @@ export interface ChaserConfig {
 }
 
 /**
- * ZorgeChaser 主类
- * 推荐：import { ZorgeChaser } from './ZorgeChaser.js'
+ * PanshalachChaser 主类
+ * 推荐：import { PanshalachChaser } from './PanshalachChaser.js'
  */
-export class ZorgeChaser {
+export class PanshalachChaser {
   // M3.1: 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
   private memStoreForInvalidate: any = null;
   private extremeAdapter = new ExtremeGlmToolCallAdapter();
@@ -136,7 +136,7 @@ export class ZorgeChaser {
       maxRollouts = tierConfig.maxRollouts,
       maxStepsPerRollout = tierConfig.maxStepsPerRollout,
       earlyStopOnHighScore = true,
-      budgetTokens = tierConfig.tier === 'zorge' ? 250_000
+      budgetTokens = tierConfig.tier === 'pangu' ? 250_000
                    : tierConfig.tier === 'ex' ? 200_000
                    : tierConfig.tier === 'max' ? 150_000
                    : tierConfig.tier === 'high' ? 120_000
@@ -148,7 +148,7 @@ export class ZorgeChaser {
     const taskStyle = config.taskStyle ?? (config as any).benchmarkType;
     const profile = BenchmarkProfiles.get(taskStyle);
 
-    // 用户确认（max/ex/zorge）
+    // 用户确认（max/ex/pangu）
     if (tierConfig.userConfirmationRequired && !config.yes && !config.dryRun) {
       const { renderConfirmationPanel, waitForUserConfirmation } = await import('./cli/UserConfirmation.js');
       const panel = renderConfirmationPanel({
@@ -166,7 +166,7 @@ export class ZorgeChaser {
     }
 
     if (config.dryRun) {
-      console.log(`\n[dry-run] Zorge 任务预估`);
+      console.log(`\n[dry-run] Panshalach 任务预估`);
       console.log(`Tier        : ${tierConfig.tier} (${tierConfig.typicalUseCase})`);
       console.log(`Task Style  : ${taskStyle ?? 'auto'}`);
       console.log(`Budget      : ${budgetTokens} tokens`);
@@ -189,7 +189,7 @@ export class ZorgeChaser {
 
     const anchorMemory = new AnchorMemory();
     let anchors = [...exploration.recommendedAnchors];
-    if (['high','max','ex','zorge'].includes(tierConfig.tier)) {
+    if (['high','max','ex','pangu'].includes(tierConfig.tier)) {
       const must = ['package.json', 'tsconfig.json', 'src', 'README.md'];
       for (const m of must) {
         if (!anchors.includes(m) && existsSync(join(workspaceRoot, m))) anchors.push(m);
@@ -332,7 +332,7 @@ export class ZorgeChaser {
           else if (dynamicOptions.ironLawInjectionLevel === 'medium_high') dynamicOptions.ironLawInjectionLevel = 'medium';
         }
 
-        const useLegacyParser = process.env.ZORGE_USE_LEGACY_PARSER === '1';
+        const useLegacyParser = process.env.PANSHA_USE_LEGACY_PARSER === '1';
         const originalClient = this.modelClient;
 
         // P1.2: streaming-aware wrapper (protocol v2 deltas).
@@ -390,7 +390,7 @@ export class ZorgeChaser {
         const streamingComplete = makeStreamingComplete();
 
         // P0-1: Prefer ToolCallFormatDetector (new call site)
-        // Falls back to legacy behavior when ZORGE_USE_LEGACY_PARSER=1
+        // Falls back to legacy behavior when PANSHA_USE_LEGACY_PARSER=1
         const effectiveClient = useLegacyParser ? originalClient : {
           complete: streamingComplete,
         };
@@ -509,7 +509,7 @@ export class ZorgeChaser {
         // D-parallel: high+ tiers run rollouts concurrently (Promise.allSettled,
         // write-mutex for shared workspace, budget aggregation); quick/standard
         // stay serial (cost-sensitive).
-        parallel: ['high', 'max', 'ex', 'zorge'].includes(tierConfig.tier),
+        parallel: ['high', 'max', 'ex', 'pangu'].includes(tierConfig.tier),
       }
     );
 
@@ -532,4 +532,4 @@ export class ZorgeChaser {
 }
 
 /** 兼容别名 @deprecated */
-export { ZorgeChaser as Glm53SweProChaser };
+export { PanshalachChaser as Glm53SweProChaser };

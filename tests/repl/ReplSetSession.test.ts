@@ -20,7 +20,7 @@ describe('B4 Repl.setSession (session swap takes effect)', () => {
   });
 
   it('setSession replaces the session subsequent commands run against', () => {
-    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-b4-'));
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-b4-'));
     dirs.push(d);
 
     const s1 = new Session({ tier: 'quick', workspace: path.join(d, 'ws1') });
@@ -43,7 +43,7 @@ describe('B4 Repl.setSession (session swap takes effect)', () => {
   });
 
   it('setSession persists the outgoing session before swapping', () => {
-    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-b4b-'));
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-b4b-'));
     dirs.push(d);
 
     const s1 = new Session({ tier: 'high', workspace: d, name: 'outgoing' });

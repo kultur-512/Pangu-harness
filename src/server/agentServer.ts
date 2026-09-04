@@ -24,7 +24,7 @@ export function isAuthorizedRequest(
   authHeader: string | undefined,
   serveToken: string | undefined
 ): boolean {
-  const token = serveToken || process.env.ZORGE_SERVE_TOKEN || '';
+  const token = serveToken || process.env.PANSHA_SERVE_TOKEN || '';
   const addr = (remoteAddress || '').replace(/^::ffff:/, '');
   if (token) {
     const m = /^Bearer\s+(.+)$/i.exec(authHeader || '');
@@ -67,7 +67,7 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
   const port = opts.port ?? 3456;
   const host = opts.host ?? '127.0.0.1';
   const isQuiet = !!opts.quiet;
-  const serveToken = opts.serveToken || process.env.ZORGE_SERVE_TOKEN || '';
+  const serveToken = opts.serveToken || process.env.PANSHA_SERVE_TOKEN || '';
   const corsOrigins = opts.corsOrigins ?? ['http://127.0.0.1', 'http://localhost'];
 
   const corsList: string[] = Array.isArray(corsOrigins)
@@ -134,7 +134,7 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
     // Health (no auth — liveness probes)
     if (url.pathname === '/health' || url.pathname === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, service: 'zorge-agent' }));
+      res.end(JSON.stringify({ ok: true, service: 'pangu-agent' }));
       return;
     }
 
@@ -214,7 +214,7 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
 
   // Absolute silence in quiet mode: route server errors through guarded log wrappers.
   server.on('error', (err: any) => {
-    logErr('[zorge-agent-server] error:', err && err.message ? err.message : err);
+    logErr('[pangu-agent-server] error:', err && err.message ? err.message : err);
   });
 
   function listen(): Promise<number> {
@@ -227,7 +227,7 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
         // Use the pre-bound wrappers (log/logErr) so even if someone adds logs later,
         // quiet path stays completely silent.
         if (!opts.quiet) {
-          log(`[panshalach] SSE agent server listening on http://${host}:${actualPort}`);
+          log(`[zhulong] SSE agent server listening on http://${host}:${actualPort}`);
           log(`  POST /api/run   -> stream events via SSE`);
         }
         resolve(actualPort);

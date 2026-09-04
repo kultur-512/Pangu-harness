@@ -1,5 +1,5 @@
-// Zorge 六档强度体系（TierConfig）
-// 全部使用小写：quick / standard / high / max / ex / zorge
+// Panshalach 六档强度体系（TierConfig）
+// 全部使用小写：quick / standard / high / max / ex / pangu
 // 默认档位：high（高强度 + 高验证密度 + 高适用编码）
 // 目标：让每个 tier 都有可量化的行为契约，差异化铁律、记忆、探索、预算
 
@@ -9,7 +9,7 @@ export type Tier =
   | 'high'
   | 'max'
   | 'ex'
-  | 'zorge';
+  | 'pangu';
 
 export const DEFAULT_TIER: Tier = 'high';
 
@@ -19,14 +19,15 @@ export const DEFAULT_TIER: Tier = 'high';
  *   rapid -> quick
  *   fast  -> standard
  *   strong -> max
- *   power -> zorge
+ *   power -> pangu
  *   (high / max / ex 在新六档中已存在，ex 来自 strong 的更激进含义)
  */
 const TIER_ALIASES: Record<string, Tier> = {
   rapid: 'quick',
   fast: 'standard',
   strong: 'max',
-  power: 'zorge',
+  power: 'pangu',
+  zorge: 'pangu', // 旧档位名 zorge → pangu（兼容既有会话/配置）
 };
 
 export interface CritiqueFrequencySpec {
@@ -162,8 +163,8 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
     isStrongMode: true,
     anchorMax: 12,
   },
-  zorge: {
-    tier: 'zorge',
+  pangu: {
+    tier: 'pangu',
     typicalUseCase: '极致追求（终极长程记忆模式）',
     maxRollouts: 5,
     maxStepsPerRollout: 40,

@@ -1,6 +1,6 @@
 // src/cli/repl/providerPrefetch.ts
 // fix-rich-local-cmds (②A): startup background prefetch of provider model
-// lists. Reads the project .zorge.json, and for every provider whose `models`
+// lists. Reads the project .panshalach.json, and for every provider whose `models`
 // array is empty, fetches the remote model list and writes it BACK into the
 // same file — PRESERVING all existing fields (apiKey/baseUrl/type/modelContexts
 // etc.). Offline/slow endpoints are skipped silently (retried next launch).
@@ -26,12 +26,12 @@ async function listModelsTimed(reg: ProviderRegistry, name: string): Promise<str
 }
 
 /**
- * Fire-and-forget: fill empty provider `models` arrays in .zorge.json from the
+ * Fire-and-forget: fill empty provider `models` arrays in .panshalach.json from the
  * remote /models endpoint, preserving every other field. Returns true when the
  * file was updated. Never throws.
  */
 export async function prefetchProviderModels(workspace: string): Promise<boolean> {
-  const cfgPath = path.join(workspace || process.cwd(), '.zorge.json');
+  const cfgPath = path.join(workspace || process.cwd(), '.panshalach.json');
   if (!fs.existsSync(cfgPath)) return false;
 
   let cfg: any;
@@ -74,7 +74,7 @@ export async function prefetchProviderModels(workspace: string): Promise<boolean
     const merged = mergeCurrentConfig(cfgPath, cfg);
     if (!merged) return false;
     const dir = path.dirname(cfgPath);
-    const tmp = path.join(dir, `.zorge.json.tmp-${crypto.randomBytes(4).toString('hex')}`);
+    const tmp = path.join(dir, `.panshalach.json.tmp-${crypto.randomBytes(4).toString('hex')}`);
     fs.writeFileSync(tmp, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
     try {
       fs.renameSync(tmp, cfgPath);

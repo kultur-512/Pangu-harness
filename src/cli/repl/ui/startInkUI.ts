@@ -81,16 +81,16 @@ export async function tryStartInkUI(
     const { render } = ink;
 
     // Dynamically import the root app (TSX). We do this after we already have React at runtime.
-    const appMod: any = await import('./ZorgeApp.js');
-    const ZorgeApp = appMod && (appMod.ZorgeApp || appMod.default);
+    const appMod: any = await import('./PanshaApp.js');
+    const PanshaApp = appMod && (appMod.PanshaApp || appMod.default);
 
-    // Stash runtime React & ink so ZorgeApp can pick them up without top-level imports
-    (globalThis as any).__ZORGE_INK__ = ink;
-    (globalThis as any).__ZORGE_INK_REACT__ = React;
+    // Stash runtime React & ink so PanshaApp can pick them up without top-level imports
+    (globalThis as any).__PANSHA_INK__ = ink;
+    (globalThis as any).__PANSHA_INK_REACT__ = React;
 
-    // Pass the bridge down. ZorgeApp is responsible for useReducer + layout.
+    // Pass the bridge down. PanshaApp is responsible for useReducer + layout.
     render(
-      React.createElement(ZorgeApp, {
+      React.createElement(PanshaApp, {
         bridge,
         initialSession: {
           tier: session.tier,

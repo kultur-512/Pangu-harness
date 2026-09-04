@@ -27,7 +27,7 @@ function mkTurn(i: number, task: string): Turn {
 }
 
 function fileHash(id: string): string {
-  const p = join(homedir(), '.zorge', 'rollouts', `${id}.jsonl`);
+  const p = join(homedir(), '.panshalach', 'rollouts', `${id}.jsonl`);
   return crypto.createHash('sha1').update(fs.readFileSync(p, 'utf-8')).digest('hex');
 }
 
@@ -116,7 +116,7 @@ describe('rollout branching (P3-3.5)', () => {
     appendMeta(new Session({ id: origin } as any));
     appendTurn(origin, mkTurn(1, 'good turn'));
     // inject a torn line
-    const p = join(homedir(), '.zorge', 'rollouts', `${origin}.jsonl`);
+    const p = join(homedir(), '.panshalach', 'rollouts', `${origin}.jsonl`);
     fs.appendFileSync(p, '{"type":"turn","ts":1,"turn":{"id":"bro');
 
     const branchId = track(`${origin}--branch-t`);

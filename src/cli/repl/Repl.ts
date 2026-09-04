@@ -251,12 +251,12 @@ export class Repl {
   private buildPrompt(): string {
     const tier = String(this.session.tier).toUpperCase();
     const ws = this.session.workspace.replace(process.env.HOME || '', '~');
-    return this.renderer.color(`Panshalach [${tier}] · ${ws}\n  ▸ `, 'cyan');
+    return this.renderer.color(`Zhulong [${tier}] · ${ws}\n  ▸ `, 'cyan');
   }
 
   private printWelcome() {
-    // Panshalach 欢迎语（简洁文案，不使用旧 Zorge ASCII 图）
-    this.renderer.writeLine(this.renderer.color('Panshalach Interactive Shell', 'bold'));
+    // 外部产品名：烛龙（Zhulong）。内部代号：盘沙拉克 Panshalach（不展示在启动文案）
+    this.renderer.writeLine(this.renderer.color('烛龙（Zhulong） Interactive Shell', 'bold'));
     this.renderer.writeLine('基于 openPangu 的记忆增强长程上下文智能体 — 面向软件工程长期维护场景。');
     this.renderer.writeLine(`默认档位: ${this.session.tier} · 工作区: ${this.session.workspace}`);
     this.renderer.writeLine('输入 /help 查看命令，/exit 退出\n');
@@ -314,7 +314,7 @@ export class Repl {
   }
 
   private async executeTask(issue: string, simulate = false) {
-    // P3: Resolve a real client via provider; never pass null to ZorgeChaser
+    // P3: Resolve a real client via provider; never pass null to PanshalachChaser
     const provider = this.session.provider as (import('./types.js').ModelProvider | undefined);
     const client = this.resolveClient();
     if (!client) {
@@ -339,8 +339,8 @@ export class Repl {
       ? (provider as any).getModelContextLength(modelName)
       : 256000;
 
-    const { ZorgeChaser } = await import('../../ZorgeChaser.js');
-    const chaser = new ZorgeChaser(client, this.session.tier);
+    const { PanshalachChaser } = await import('../../PanshalachChaser.js');
+    const chaser = new PanshalachChaser(client, this.session.tier);
 
     // Prepare richer prompt/context from REPL side (session history + tier rules + memory cards)
     const pb = this.getPromptBuilder();
@@ -514,7 +514,7 @@ export class Repl {
   /**
    * P3: Resolve a usable ModelClient from session.provider.
    * Tries session.model first, then provider's default.
-   * Returns null if no usable client (caller must not create ZorgeChaser(null)).
+   * Returns null if no usable client (caller must not create PanshalachChaser(null)).
    */
   private resolveClient(): import('./types.js').ModelClient | null {
     const provider = this.session.provider;

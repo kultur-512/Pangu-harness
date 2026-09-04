@@ -15,7 +15,7 @@ let ctx: ToolContext;
 
 describe('writeFile tool', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-write-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-write-'));
     ctx = { workspaceRoot: root, approvalMode: 'full' };
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));

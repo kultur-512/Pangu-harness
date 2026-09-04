@@ -20,7 +20,7 @@ export interface SlashCommand {
  * dispatcher commands and the classic Repl registry commands (superset), so
  * the menu is honest in both modes.
  */
-export const ZORGE_COMMANDS: SlashCommand[] = [
+export const PANSHA_COMMANDS: SlashCommand[] = [
   { name: 'help', description: '显示帮助' },
   { name: 'tier', description: '查看或切换档位' },
   { name: 'model', description: '查看/切换模型；/model list 拉远程列表' },
@@ -56,7 +56,7 @@ export interface MenuCandidate {
  * Only activates when value starts with '/'; prefix matches win, fuzzy
  * fallback; aliases participate; capped at MENU_CAP (P4-4.1 parity).
  */
-export function computeMenuItems(value: string, commands: SlashCommand[] = ZORGE_COMMANDS): MenuCandidate[] {
+export function computeMenuItems(value: string, commands: SlashCommand[] = PANSHA_COMMANDS): MenuCandidate[] {
   const v = String(value ?? '');
   if (!v.startsWith('/')) return [];
   const query = v.slice(1);

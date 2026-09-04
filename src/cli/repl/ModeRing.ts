@@ -7,7 +7,7 @@
 //         ExitPlanMode confirmation card — documented CC difference).
 // default: M2 semantics (writes confirm, bash allowlist free).
 // auto-accept / full : writes run without confirmation; danger stays flagged.
-//         (Zorge does not implement a bypass-permissions tier above this —
+//         (Panshalach does not implement a bypass-permissions tier above this —
 //          documented CC difference.)
 
 export type UiMode = 'plan' | 'default' | 'auto-accept' | 'full';

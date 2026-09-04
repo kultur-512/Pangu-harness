@@ -1,6 +1,6 @@
 // src/cli/repl/ui/streamingMarkdown.ts
 // P1.3: incremental markdown for in-flight assistant text (Hermes-style
-// frozen-blocks approach, adapted to Zorge's lightweight Markdown.tsx).
+// frozen-blocks approach, adapted to Panshalach's lightweight Markdown.tsx).
 //
 // Why: re-rendering the full text through the markdown parser on every delta
 // is O(total) x deltas. Instead we freeze settled top-level blocks (split on

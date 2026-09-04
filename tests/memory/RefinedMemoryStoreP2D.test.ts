@@ -15,14 +15,14 @@ import { RefinedMemoryStore } from '../../src/memory/RefinedMemoryStore.js';
 import type { RefinedMemoryCard } from '../../src/memory/RefinedMemoryCard.js';
 
 function makeTempWorkspace(): string {
-  const dir = join(tmpdir(), 'zorge-p2d-mem-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  const dir = join(tmpdir(), 'pangu-p2d-mem-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 function cleanup(dir: string) { if (existsSync(dir)) rmSync(dir, { recursive: true, force: true }); }
 
 function writeMemory(ws: string, cards: any[]) {
-  const fp = join(ws, '.zorge-memory.json');
+  const fp = join(ws, '.panshalach-memory.json');
   const file = {
     meta: { version: '1.0.0', lastUpdated: Date.now(), totalCards: cards.length },
     cards,

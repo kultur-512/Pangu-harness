@@ -27,7 +27,7 @@ const TASK = process.env.M1_TASK || [
 
 const { resolveSharedClient } = await import('../dist/cli/repl/ModelProvider.js');
 const { Session } = await import('../dist/cli/repl/Session.js');
-const { ZorgeChaser } = await import('../dist/ZorgeChaser.js');
+const { PanshalachChaser } = await import('../dist/PanshalachChaser.js');
 const { TierRegistry } = await import('../dist/tiers/TierConfig.js');
 const { PromptBuilder } = await import('../dist/cli/repl/PromptBuilder.js');
 
@@ -60,7 +60,7 @@ const tierConfig = TierRegistry.get(session.tier);
 const pb = new PromptBuilder(session, tierConfig);
 const enriched = await pb.buildForTask(TASK);
 
-const chaser = new ZorgeChaser(client, session.tier);
+const chaser = new PanshalachChaser(client, session.tier);
 
 const start = Date.now();
 try {

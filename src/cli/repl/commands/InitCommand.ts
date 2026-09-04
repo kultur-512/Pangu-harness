@@ -1,6 +1,6 @@
 // src/cli/repl/commands/InitCommand.ts
 // P1-T13 (L06): /init — generate a project instruction directory page
-// (.zorge/AGENTS.md) with verification commands + invariants, plus an empty
+// (.panshalach/AGENTS.md) with verification commands + invariants, plus an empty
 // feature_list.json template. Idempotent (asks before overwriting existing).
 // The buildAgentsMd + probeWorkspace logic is EXPORTED so the rich interactive
 // path (/init in sseInteractive) reuses the exact same output (B-dual: the
@@ -80,12 +80,12 @@ export function buildAgentsMd(ws: string, probe: ProbeResult): string {
 
 const command: Command = {
   name: 'init',
-  description: '生成项目指令目录页（.zorge/AGENTS.md）+ feature_list.json 模板',
+  description: '生成项目指令目录页（.panshalach/AGENTS.md）+ feature_list.json 模板',
   category: 'config',
   usage: '/init',
   async execute(ctx: CommandContext, args: string[]): Promise<CommandResult> {
     const ws = ctx.session.workspace || process.cwd();
-    const agentsPath = join(ws, '.zorge', 'AGENTS.md');
+    const agentsPath = join(ws, '.panshalach', 'AGENTS.md');
     const agentsExisting = existsSync(agentsPath);
 
     const probe = probeWorkspace(ws);
@@ -103,17 +103,17 @@ const command: Command = {
     }
 
     try {
-      mkdirSync(join(ws, '.zorge'), { recursive: true });
+      mkdirSync(join(ws, '.panshalach'), { recursive: true });
       writeFileSync(agentsPath, agents, 'utf-8');
       // feature_list.json template (only if missing — never clobber user data)
       const { featureListPath, loadFeatures } = await import('../FeatureTracker.js');
       if (!existsSync(featureListPath(ws))) saveFeatures(ws, []);
-      // A-T12 (L02): environment self-description → .zorge/ENV.md
+      // A-T12 (L02): environment self-description → .panshalach/ENV.md
       try {
         const { describeEnvironment, renderEnvSelfDescription } = await import('../EnvContext.js');
         const envMd = renderEnvSelfDescription(describeEnvironment(ws));
-        writeFileSync(join(ws, '.zorge', 'ENV.md'), envMd, 'utf-8');
-        ctx.renderer.info('已生成 .zorge/ENV.md（环境自描述）');
+        writeFileSync(join(ws, '.panshalach', 'ENV.md'), envMd, 'utf-8');
+        ctx.renderer.info('已生成 .panshalach/ENV.md（环境自描述）');
       } catch {}
       ctx.renderer.success(`已生成 ${agentsPath}`);
       ctx.renderer.writeLine('验证命令探测:');

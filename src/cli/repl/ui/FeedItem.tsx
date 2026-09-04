@@ -10,10 +10,10 @@ import { ThoughtBlock } from './ThoughtBlock.js';
 import { MarkdownBlock, renderMarkdown } from './Markdown.js';
 
 export function FeedItem(props: { item: any; transcript?: boolean }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Text, Box } = ink;
 
   const { item, transcript } = props;

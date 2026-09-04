@@ -13,7 +13,7 @@ import {
 } from '../../src/cli/repl/FeatureTracker.js';
 
 let ws: string;
-beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-feat-')); });
+beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-feat-')); });
 afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }); });
 
 describe('FeatureTracker', () => {

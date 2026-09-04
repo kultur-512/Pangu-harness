@@ -65,7 +65,7 @@ export class RepoExplorer {
 
     const importantExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.c', '.cpp', '.h']);
 
-    // Zorge 六档体系：根据档位调整探索深度
+    // Panshalach 六档体系：根据档位调整探索深度
     const tierAdjustedDepth = (() => {
       switch (tier) {
         case 'quick': return Math.min(maxDepth, 3);
@@ -73,7 +73,7 @@ export class RepoExplorer {
         case 'high': return Math.min(maxDepth, 5);
         case 'max': return Math.min(maxDepth, 6);
         case 'ex': return Math.min(maxDepth, 7);
-        case 'zorge': return Math.min(maxDepth, 8);
+        case 'pangu': return Math.min(maxDepth, 8);
         default: return maxDepth;
       }
     })();
@@ -215,7 +215,7 @@ export class RepoExplorer {
       recommended.push('package.json', 'src');
     }
 
-    // Zorge 六档体系：按档位决定推荐的锚点数量
+    // Panshalach 六档体系：按档位决定推荐的锚点数量
     const tierMaxAnchors = (() => {
       switch (tier) {
         case 'quick': return 4;
@@ -223,7 +223,7 @@ export class RepoExplorer {
         case 'high': return 8;
         case 'max': return 10;
         case 'ex': return 12;
-        case 'zorge': return 15;
+        case 'pangu': return 15;
         default: return glmBias ? 12 : 8;
       }
     })();

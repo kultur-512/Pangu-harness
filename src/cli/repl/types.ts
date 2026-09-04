@@ -1,9 +1,9 @@
 // src/cli/repl/types.ts
-// Panshalach (ZIS: Zorge Interactive Shell 的历史简称，保留内部注释名) 类型定义
+// Panshalach (ZIS: Panshalach Interactive Shell 的历史简称，保留内部注释名) 类型定义
 // 严格遵守蓝图 v1.1
 
 import type { Tier } from '../../tiers/TierConfig.js';
-import type { BudgetReport } from '../../ZorgeChaser.js';
+import type { BudgetReport } from '../../PanshalachChaser.js';
 import type { ToolCall } from '../../types/toolCall.js';
 
 // ==================== StepEvent ====================
@@ -87,7 +87,7 @@ export interface CommandContext {
   renderer: OutputRenderer;
   input: InputReader;
   repl: any;              // Repl instance
-  provider?: ModelProvider; // P3: ModelProvider for resolving clients (never pass null to ZorgeChaser)
+  provider?: ModelProvider; // P3: ModelProvider for resolving clients (never pass null to PanshalachChaser)
 }
 
 export interface CommandResult {
@@ -155,7 +155,7 @@ export interface ProviderConfig {
   modelContexts?: Record<string, number>;
 }
 
-export interface ZorgeConfig {
+export interface PanshalachConfig {
   tier?: Tier;
   workspace?: string;
   model?: string;
@@ -187,7 +187,7 @@ export type ModelStreamChunk =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string };
 
-/** 最小可调用模型客户端接口，与 ZorgeChaser 兼容 */
+/** 最小可调用模型客户端接口，与 PanshalachChaser 兼容 */
 export interface ModelClient {
   complete(prompt: string, opts?: CompleteOptions): Promise<string | ModelClientOutput>;
   /**
@@ -241,7 +241,7 @@ export interface ModelProvider {
   getEffectiveModel?(name: string): string;
 
   /**
-   * Force the provider to re-read .zorge.json and environment for providers (e.g. after user creates config).
+   * Force the provider to re-read .panshalach.json and environment for providers (e.g. after user creates config).
    */
   invalidateProviderCache?(): void;
 }

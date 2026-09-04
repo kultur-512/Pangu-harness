@@ -58,7 +58,7 @@ describe('rolloutStore', () => {
     appendMeta(s1);
     appendTurn(s1.id, mkTurn(1, 'good turn'));
     // Simulate crash mid-write: append a torn line
-    const file = path.join(os.homedir(), '.zorge', 'rollouts', `${s1.id}.jsonl`);
+    const file = path.join(os.homedir(), '.panshalach', 'rollouts', `${s1.id}.jsonl`);
     fs.appendFileSync(file, '{"type":"turn","ts":1,"turn":{"id":"bro');
 
     const s2 = new Session();

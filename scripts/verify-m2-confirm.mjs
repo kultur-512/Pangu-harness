@@ -54,9 +54,9 @@ console.log('[m2-confirm] bridge state machine: PASS');
 // TTY is required to pass the outer smoke gate; execution is FAKE (no spawn),
 // so no real-execution red line is crossed.
 Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true, writable: true });
-delete process.env.ZORGE_SMOKE;
+delete process.env.PANSHA_SMOKE;
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-m2confirm-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-m2confirm-'));
 fs.writeFileSync(path.join(root, 'rbw.txt'), 'original');
 
 const { createEngineAdapter } = await import('../dist/tools/engineAdapter.js');

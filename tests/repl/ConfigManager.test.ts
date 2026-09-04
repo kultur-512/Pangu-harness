@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { ConfigManager, deepMerge } from '../../src/cli/repl/ConfigManager.js';
 
 function makeTempDir(): string {
-  const dir = join(tmpdir(), 'zorge-p2c-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  const dir = join(tmpdir(), 'pangu-p2c-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -64,10 +64,10 @@ describe('P2-C ConfigManager load order + mergeProjectConfig (v2)', () => {
   beforeEach(() => {
     tmp = makeTempDir();
     // Redirect USER_CONFIG to a temp location for isolation
-    userDir = join(tmp, '.zorge-user');
+    userDir = join(tmp, '.panshalach-user');
     userCfg = join(userDir, 'config.json');
     // monkey-patch paths used inside module (they are consts at load time)
-    // We instead create project .zorge.json and use mergeProjectConfig directly.
+    // We instead create project .panshalach.json and use mergeProjectConfig directly.
   });
 
   afterEach(() => {
@@ -77,7 +77,7 @@ describe('P2-C ConfigManager load order + mergeProjectConfig (v2)', () => {
   it('three layer order: project -> user -> (CLI would override after getAll)', () => {
     // Write project config with nested repl
     const proj = { tier: 'standard', repl: { autoCompact: false, maxHistory: 5 } };
-    writeFileSync(join(tmp, '.zorge.json'), JSON.stringify(proj));
+    writeFileSync(join(tmp, '.panshalach.json'), JSON.stringify(proj));
 
     // Write user config with overlapping nested
     mkdirSync(userDir, { recursive: true });

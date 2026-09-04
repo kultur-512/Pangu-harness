@@ -19,7 +19,7 @@ import { Session } from '../../src/cli/repl/Session.js';
 const TMP_DIRS: string[] = [];
 
 function tmpWs(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-b2-'));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-b2-'));
   TMP_DIRS.push(d);
   return d;
 }

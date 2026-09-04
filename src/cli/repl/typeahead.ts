@@ -5,7 +5,7 @@
 // generateSuggestions. PURE (testable): files come via ctx.files callback so
 // the engine never touches the FS itself; everything else is local data.
 
-import { ZORGE_COMMANDS, type ProviderOption, parseCommandInput, argStageFor, filterArgCandidates, type SlashCommand } from './SlashPicker.js';
+import { PANSHA_COMMANDS, type ProviderOption, parseCommandInput, argStageFor, filterArgCandidates, type SlashCommand } from './SlashPicker.js';
 import { rankSlashCandidates } from './FuzzyMatcher.js';
 
 export type SuggestionType = 'command' | 'file' | 'directory' | 'path' | 'model' | 'provider' | 'history';
@@ -35,7 +35,7 @@ function cmdSuggestion(c: { name: string; description?: string }): SuggestionIte
 /** Build the suggestion set for the current input + cursor. All local/sync. */
 export function generateSuggestions(input: string, cursorOffset: number, ctx: TypeaheadContext): SuggestionItem[] {
   const v = String(input ?? '');
-  const commands = ctx.commands ?? ZORGE_COMMANDS;
+  const commands = ctx.commands ?? PANSHA_COMMANDS;
   const providers = ctx.providers ?? [];
 
   // 1. leading '/' → command or provider/model suggestions (CC direct descent)

@@ -86,7 +86,7 @@ describe('bashTimeoutForTier', () => {
     assert.equal(bashTimeoutForTier('standard'), 60_000);
     assert.equal(bashTimeoutForTier('high'), 120_000);
     assert.equal(bashTimeoutForTier('ex'), 120_000);
-    assert.equal(bashTimeoutForTier('zorge'), 120_000);
+    assert.equal(bashTimeoutForTier('pangu'), 120_000);
     assert.equal(bashTimeoutForTier(undefined), 120_000);
   });
 });
@@ -109,7 +109,7 @@ describe('isDangerousCommand', () => {
 
 describe('bash tool', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-bash-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-bash-'));
     fs.writeFileSync(path.join(root, 'f.txt'), 'fixture-content');
     ctx = { workspaceRoot: root, approvalMode: 'full' };
   });
@@ -127,10 +127,10 @@ describe('bash tool', () => {
 
   it('runs echo and reports exitCode 0', async () => {
     const bash = createBashTool({ timeoutMs: 15000 });
-    const r = await bash({ command: 'echo hello-zorge' }, ctx);
+    const r = await bash({ command: 'echo hello-pangu' }, ctx);
     assert.ok(r.ok, r.output);
     assert.equal(r.exitCode, 0);
-    assert.ok(r.output.includes('hello-zorge'));
+    assert.ok(r.output.includes('hello-pangu'));
     assert.ok(r.output.includes('EXIT_CODE:0'));
     assert.equal(r.meta?.danger, false);
   });
@@ -143,9 +143,9 @@ describe('bash tool', () => {
     assert.ok(r.output.includes('EXIT_CODE:3'));
   });
 
-  it('injects ZORGE_EXEC=1 into env', async () => {
+  it('injects PANSHA_EXEC=1 into env', async () => {
     const bash = createBashTool({ timeoutMs: 15000 });
-    const r = await bash({ command: 'node -e "console.log(process.env.ZORGE_EXEC)"' }, ctx);
+    const r = await bash({ command: 'node -e "console.log(process.env.PANSHA_EXEC)"' }, ctx);
     assert.ok(r.ok);
     assert.ok(r.output.includes('1'));
   });
@@ -201,17 +201,17 @@ describe('bash tool', () => {
 
 describe('engineAdapter bash integration (readonly day-one rule)', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-bash-ad-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-bash-ad-'));
   });
   afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
     setStdoutTty(undefined);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
   });
 
   it('readonly denies non-whitelisted command with guidance, never spawns', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig('high') });
     const out = await adapter.execute([
       { toolName: 'bash', params: [{ name: 'command', value: 'rm -rf everything' }], rawBlock: '' } as any,
@@ -222,7 +222,7 @@ describe('engineAdapter bash integration (readonly day-one rule)', () => {
 
   it('readonly allows whitelisted command to really run', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig('quick') });
     const out = await adapter.execute([
       { toolName: 'bash', params: [{ name: 'command', value: 'echo whitelist-ok' }], rawBlock: '' } as any,
@@ -234,7 +234,7 @@ describe('engineAdapter bash integration (readonly day-one rule)', () => {
 
   it('full mode runs non-whitelisted command (no approval layer yet)', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig('high'), approvalMode: 'full' });
     const out = await adapter.execute([
       { toolName: 'bash', params: [{ name: 'command', value: 'node -e "console.log(\'full-mode-ok\')"' }], rawBlock: '' } as any,

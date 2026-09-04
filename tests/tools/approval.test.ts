@@ -93,13 +93,13 @@ describe('classify', () => {
 
 describe('engineAdapter approval gate', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-appr-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-appr-'));
     fs.writeFileSync(path.join(root, 'rbw.txt'), 'original');
   });
   afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
     setStdoutTty(undefined);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
   });
 
   it('readonly: write denied without touching the bridge or the file', async () => {
@@ -171,7 +171,7 @@ describe('engineAdapter approval gate', () => {
     // Outer safety gate (non-TTY → mock) is covered by executor.test.ts.
     // Here: TTY=true so we reach the approval layer, but no bridge configured.
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({
       workspaceRoot: root,
       tierConfig: fakeTierConfig('high'),

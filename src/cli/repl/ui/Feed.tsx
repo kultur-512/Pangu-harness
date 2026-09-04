@@ -12,10 +12,10 @@ import { FeedItem as FeedItemComponent } from './FeedItem.js';
 const FEED_WINDOW = 80;
 
 export function Feed(props: { items: FeedItem[]; height?: number; transcript?: boolean }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Box, Text } = ink;
 
   const { items = [], transcript, height } = props;

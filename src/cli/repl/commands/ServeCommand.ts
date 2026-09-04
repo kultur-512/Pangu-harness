@@ -30,11 +30,11 @@ const command: Command = {
     }
 
     // S4: token may come from the flag, the env var, or be absent (localhost-only).
-    if (!serveToken && process.env.ZORGE_SERVE_TOKEN) {
-      serveToken = process.env.ZORGE_SERVE_TOKEN;
+    if (!serveToken && process.env.PANSHA_SERVE_TOKEN) {
+      serveToken = process.env.PANSHA_SERVE_TOKEN;
     }
 
-    ctx.renderer.info(`Starting Panshalach SSE agent server on http://${host}:${port} ...`);
+    ctx.renderer.info(`Starting Zhulong (烛龙) SSE agent server on http://${host}:${port} ...`);
     ctx.renderer.writeLine('Endpoints:');
     ctx.renderer.writeLine(`  POST /api/run   { task, tier?, workspace?, model?, simulate? } → SSE stream`);
     ctx.renderer.writeLine(`  GET  /health`);
@@ -42,7 +42,7 @@ const command: Command = {
     if (serveToken) {
       ctx.renderer.writeLine('鉴权: Bearer token 已启用（请求头 Authorization: Bearer <token>）');
     } else {
-      ctx.renderer.writeLine('鉴权: 未配置 token → 仅允许 localhost 来源（ZORGE_SERVE_TOKEN 或 --serve-token 开启）');
+      ctx.renderer.writeLine('鉴权: 未配置 token → 仅允许 localhost 来源（PANSHA_SERVE_TOKEN 或 --serve-token 开启）');
     }
     ctx.renderer.writeLine('');
     ctx.renderer.writeLine('Press Ctrl+C to stop the server.');

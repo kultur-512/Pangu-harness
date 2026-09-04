@@ -3,7 +3,7 @@
 // - the embedded SSE agent server (agentServer.ts forwards events over HTTP)
 // - the default interactive CLI (sseInteractive.ts consumes events in-process)
 //
-// Reuses the same ZorgeChaser + PromptBuilder path as the REPL.
+// Reuses the same PanshalachChaser + PromptBuilder path as the REPL.
 // This module is transport-agnostic and MUST stay console-silent.
 
 import { Session } from '../cli/repl/Session.js';
@@ -70,11 +70,11 @@ export async function runAgentTask(
 
   // P0-fix: layered provider resolution on the process-wide shared instance.
   // Explicit provider (caller) → shared provider → one hot-reload retry.
-  // Keeps /model hot state and .zorge.json discovery consistent with the REPL.
+  // Keeps /model hot state and .panshalach.json discovery consistent with the REPL.
   const { client } = await resolveSharedClient(session.model, ctx.provider);
 
-  const { ZorgeChaser } = await import('../ZorgeChaser.js');
-  const chaser = new ZorgeChaser(client, session.tier);
+  const { PanshalachChaser } = await import('../PanshalachChaser.js');
+  const chaser = new PanshalachChaser(client, session.tier);
 
   const tierConfig = TierRegistry.get(session.tier);
   const pb = new PromptBuilder(session, tierConfig);

@@ -15,7 +15,7 @@
 | 层 | 载体 | 时间尺度 | 已实现/规划 |
 |---|---|---|---|
 | L0 会话内实时 | 轨迹/验证信号/FailureMemory | 单任务内 | 已实现 |
-| L1 结构化记忆卡 | `.zorge-memory.json`（failure/success/preference） | 跨会话（天~月） | 已实现 |
+| L1 结构化记忆卡 | `.panshalach-memory.json`（failure/success/preference） | 跨会话（天~月） | 已实现 |
 | L2 压缩摘要 | `[COMPACT]` 合成轮（模型摘要 + 逐轮 brief） | 长会话 | 已实现 |
 | L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **规划(P3)** |
 | L4 任务状态 | TaskState（原始需求/决策/未决/进度） | 跨多轮任务 | 雏形(feature_list) → **规划(P3)** |
@@ -133,7 +133,7 @@ interface TaskState {
 - 现压缩=一次摘要+保 6 轮；滚动多级：长期粗粒度(每 ≥N 轮对早期再摘要) + 中期结构化(卡片/事件) + 近期逐字。压缩时保留"被移除轮"的成功信号补提卡已实现，可复用。
 
 ### 7.7 存储名/branding（P6）
-- `.zorge-memory.json` / `.zorge.json` / `~/.zorge` / `ZORGE_*` → Panshalach 名（迁移脚本 + 读旧写新 fallback）。
+- `.panshalach-memory.json` / `.panshalach.json` / `~/.panshalach` / `PANSHA_*` → Panshalach 名（迁移脚本 + 读旧写新 fallback）。
 
 ## 8. 与评估指标的映射
 

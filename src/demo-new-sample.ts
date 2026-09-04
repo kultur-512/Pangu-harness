@@ -1,5 +1,5 @@
 // demo-new-sample.ts
-// Historical demo for the GLM tool call parser (not the full Zorge agent).
+// Historical demo for the GLM tool call parser (not the full Panshalach agent).
 // Prefer CLI or tests for real usage.
 import { GlmToolCallParser } from './adapter/GlmToolCallParser.js';
 

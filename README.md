@@ -1,9 +1,13 @@
-# Panshalach
+# 烛龙（Zhulong）· 内部代号 Panshalach（盤沙拉克）
 
 基于 openPangu 的记忆增强长程上下文智能体——解决长交互/多轮任务/长文档/持续状态跟踪中的**中期遗忘**与**上下文断裂**。
 
 > 华为命题《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 场景主线：**软件工程长期维护**（跨多轮需求演进 / 跨文件关联 / 持续状态跟踪）
+
+**命名约定**（用户明确指示）
+- **外部产品名**（用户/市场看到）：**烛龙**（Zhulong）—— CLI 启动、欢迎语、模型身份串均使用此名
+- **内部项目代号**（代码/存储/包名）：**盤沙拉克** Panshalach —— package name、类名、存储目录、`.env` 前缀均使用此代号
 
 ## 长程上下文能力
 
@@ -19,12 +23,12 @@
 ```bash
 npm install          # devDependencies（tsx/typescript）
 npm run build        # → dist/
-npm install -g .     # 提供 panshalach bin（保留旧别名 zorge）
+npm install -g .     # 提供 panshalach bin（保留旧别名 pangu）
 ```
 
 ## 快速开始
 
-1. 配置 openPangu（本机/昇腾 OpenAI 兼容端点），编辑 `.zorge.json`：
+1. 配置 openPangu（本机/昇腾 OpenAI 兼容端点），编辑 `.panshalach.json`：
    ```json
    {
      "model": "openpangu:openPangu-7B",
@@ -39,7 +43,7 @@ npm install -g .     # 提供 panshalach bin（保留旧别名 zorge）
    }
    ```
 2. `panshalach` → `/model list` → `/model openpangu:openPangu-7B` → 输入任务
-3. 或一条命令：`ZORGE_MODEL="openpangu:openPangu-7B" panshalach run "你的任务"`
+3. 或一条命令：`PANSHA_MODEL="openpangu:openPangu-7B" panshalach run "你的任务"`
 
 ## 命令总表
 
@@ -63,6 +67,6 @@ npx tsc --noEmit    # 类型检查
 
 ## FAQ
 
-- **内部为什么还出现 zorge/.zorge**？历史兼容名。对外品牌为 Panshalach；`.zorge.json`/`.zorge-memory.json`/`~/.zorge`/`ZORGE_*`/`ZorgeChaser` 均为内部存储名，收敛计划见 [ROADMAP](docs/panshalach/ROADMAP.md) P6。
+- **内部为什么还出现 .panshalach/PANSHA_/PanshalachChaser**？内部工程代号（盘沙拉克 Panshalach）用于代码/包名/存储/env 前缀，与外部产品名"烛龙"分离；用户可见文案走"烛龙 Zhulong"。`.panshalach.json`/`.panshalach-memory.json`/`~/.panshalach/`/`PANSHA_*`/`PanshalachChaser` 均为内部存储/标识；`.panshalach.json.example` 是工程示例。命名收口与迁移见 [ROADMAP](docs/panshalach/ROADMAP.md) P6。
 - **零依赖？** 是。`dependencies: {}`，核心引擎零运行时依赖；UI 类（ink/chalk/ora/prompts）在 optionalDependencies，缺失自动降级。
 - **评测是真实模型吗？** 是。效果评估只用真实 openPangu 运行结果（本机/昇腾端点），不混合成数据，见 [EVALUATION.md](docs/panshalach/EVALUATION.md)。

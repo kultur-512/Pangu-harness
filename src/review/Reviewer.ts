@@ -132,7 +132,7 @@ export class Reviewer {
     }
 
     // 2) 探测 package.json 的 test 脚本（白名单测试）
-    // P2 完善：根据 Zorge 行为契约填充真实验证证据
+    // P2 完善：根据 Panshalach 行为契约填充真实验证证据
     const pkgPath = join(workspaceRoot, 'package.json');
     if (existsSync(pkgPath)) {
       try {
@@ -201,7 +201,7 @@ export class Reviewer {
 
     // 6) 建议档位（基于风险等级 + 文件复杂度）
     const fileCount = files.length;
-    if (report.riskLevel === 'high' || fileCount > 20) report.suggestedTier = 'zorge';
+    if (report.riskLevel === 'high' || fileCount > 20) report.suggestedTier = 'pangu';
     else if (report.riskLevel === 'medium' || fileCount > 10) report.suggestedTier = 'max';
     else if (fileCount > 3) report.suggestedTier = 'high';
     else report.suggestedTier = 'standard';

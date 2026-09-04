@@ -15,14 +15,14 @@ import { tmpdir } from 'node:os';
 const root = process.cwd();
 
 function makeWs() {
-  const dir = mkdtempSync(pathResolve(tmpdir(), 'zorge-p2d-'));
+  const dir = mkdtempSync(pathResolve(tmpdir(), 'pangu-p2d-'));
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 function cleanup(dir) { try { if (existsSync(dir)) rmSync(dir, { recursive: true, force: true }); } catch {} }
 
 function writeMemory(ws, cards) {
-  const fp = pathResolve(ws, '.zorge-memory.json');
+  const fp = pathResolve(ws, '.panshalach-memory.json');
   const file = { meta: { version: '1.0.0', lastUpdated: Date.now(), totalCards: cards.length }, cards };
   writeFileSync(fp, JSON.stringify(file, null, 2), 'utf-8');
 }

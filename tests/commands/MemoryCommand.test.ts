@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 function makeTempWorkspace(): string {
-  const dir = join(tmpdir(), 'zorge-memcmd-test-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  const dir = join(tmpdir(), 'pangu-memcmd-test-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -81,7 +81,7 @@ describe('P1-D MemoryCommand submode (v2)', () => {
     // Should not have entered submode loop
     const joined = outputs.join('');
     // Even with no cards, runMemoryCommand returns a message
-    assert.ok(!joined.includes('Panshalach Memory Manager'), 'should not print submode menu for direct args');
+    assert.ok(!joined.includes('烛龙（Zhulong）Memory Manager'), 'should not print submode menu for direct args');
     // It should have produced some output via renderer (the list result or empty message)
     assert.ok(outputs.length > 0 || res, 'should produce output or result');
   });
@@ -95,7 +95,7 @@ describe('P1-D MemoryCommand submode (v2)', () => {
     const joined = outputs.join('\n');
 
     // Menu header
-    assert.ok(joined.includes('Panshalach Memory Manager'), 'should show submode header');
+    assert.ok(joined.includes('烛龙（Zhulong）Memory Manager'), 'should show submode header');
     assert.ok(joined.includes('list / clear'), 'should show menu options');
 
     // After "list", runMemoryCommand should have been called (even if no cards)
@@ -116,7 +116,7 @@ describe('P1-D MemoryCommand submode (v2)', () => {
     assert.ok(joined.includes('退出 memory 子模式') || joined.includes('memory'), 'should acknowledge exit');
   });
 
-  it('old "zorge memory list" path still produces output (no crash)', async () => {
+  it('old "pangu memory list" path still produces output (no crash)', async () => {
     const { ctx } = createFakeContext(tmp, []);
     // Call with args like the old CLI path
     const result = await MemoryCommand.execute(ctx, ['list']);

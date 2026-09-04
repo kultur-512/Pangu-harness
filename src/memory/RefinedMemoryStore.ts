@@ -1,4 +1,4 @@
-// Zorge 提炼后持久化存储
+// Panshalach 提炼后持久化存储
 // 功能：提炼 / 加载 / 过滤 / 容量控制 / 衰减 / .gitignore 默认加入
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
@@ -174,7 +174,7 @@ export class RefinedMemoryStore {
   }
 
   /**
-   * 持久化：写入 .zorge-memory.json
+   * 持久化：写入 .panshalach-memory.json
    */
   save(cards: RefinedMemoryCard[]): { written: number; capped: number; path: string } {
     // 加载现有
@@ -306,7 +306,7 @@ export class RefinedMemoryStore {
         case 'high': return mc === 'failure' || mc === 'implementation' || mc === 'insight';
         case 'max':
         case 'ex':
-        case 'zorge':
+        case 'pangu':
           return true;
         default:
           return true;

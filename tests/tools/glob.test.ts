@@ -15,7 +15,7 @@ let ctx: ToolContext;
 
 describe('glob tool', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-glob-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-glob-'));
     fs.mkdirSync(path.join(root, 'src', 'deep'), { recursive: true });
     fs.mkdirSync(path.join(root, 'node_modules', 'pkg'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'x');

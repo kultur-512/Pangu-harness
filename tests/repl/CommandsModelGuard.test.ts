@@ -1,5 +1,5 @@
 // tests/repl/CommandsModelGuard.test.ts
-// P3: Guard tests ensuring Run/Simulate never pass null to ZorgeChaser
+// P3: Guard tests ensuring Run/Simulate never pass null to PanshalachChaser
 // When provider is missing or returns null -> friendly error, no crash
 
 import { describe, it, beforeEach } from 'node:test';
@@ -35,7 +35,7 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   } as any;
 }
 
-describe('P3 Run/Simulate guard (no null client to ZorgeChaser)', () => {
+describe('P3 Run/Simulate guard (no null client to PanshalachChaser)', () => {
   it('Run without provider returns friendly message and does not throw', async () => {
     const ctx = makeCtx();
     const res = await RunCommand.execute(ctx, ['do something']);

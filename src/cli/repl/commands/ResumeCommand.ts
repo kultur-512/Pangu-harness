@@ -1,7 +1,7 @@
 // src/cli/repl/commands/ResumeCommand.ts
 // P3-3.5: /resume — list recent rollouts (branches tagged [branch of <origin>]);
 // `/resume <id|N>` prints the switch hint (interactive switch happens by
-// exiting and running `zorge --resume <id>` — one process per session, CC-style).
+// exiting and running `pangu --resume <id>` — one process per session, CC-style).
 
 import type { Command, CommandContext, CommandResult } from '../types.js';
 
@@ -28,12 +28,12 @@ const command: Command = {
         `  ${i + 1}. ${r.id}${tag} · ${r.turnCount} 轮 · ${r.firstUserInput ?? ''}`
       );
     });
-    ctx.renderer.writeLine(ctx.renderer.color('切换方式：退出后运行 zorge --resume <id>（或 zorge --branch <name> 从当前 fork）', 'gray'));
+    ctx.renderer.writeLine(ctx.renderer.color('切换方式：退出后运行 pangu --resume <id>（或 pangu --branch <name> 从当前 fork）', 'gray'));
 
     if (pick) {
       const byNum = /^\d+$/.test(pick) ? list[parseInt(pick, 10) - 1] : list.find((x) => x.id.startsWith(pick));
       if (byNum) {
-        ctx.renderer.success(`切换目标已确认：退出后运行 zorge --resume ${byNum.id}`);
+        ctx.renderer.success(`切换目标已确认：退出后运行 pangu --resume ${byNum.id}`);
       } else {
         ctx.renderer.warn(`未找到匹配的会话: ${pick}`);
       }

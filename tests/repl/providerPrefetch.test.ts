@@ -1,6 +1,6 @@
 // tests/repl/providerPrefetch.test.ts
 // fix-rich-local-cmds ②: startup prefetch fills empty provider models arrays
-// in .zorge.json, preserving ALL other fields (apiKey/baseUrl/type), with a
+// in .panshalach.json, preserving ALL other fields (apiKey/baseUrl/type), with a
 // hard per-provider timeout and silent offline skip.
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -14,14 +14,14 @@ import { ProviderRegistry } from '../../src/model/ProviderRegistry.js';
 let ws: string;
 
 function writeConfig(cfg: any) {
-  fs.writeFileSync(path.join(ws, '.zorge.json'), JSON.stringify(cfg, null, 2), 'utf-8');
+  fs.writeFileSync(path.join(ws, '.panshalach.json'), JSON.stringify(cfg, null, 2), 'utf-8');
 }
 function readConfig(): any {
-  return JSON.parse(fs.readFileSync(path.join(ws, '.zorge.json'), 'utf-8'));
+  return JSON.parse(fs.readFileSync(path.join(ws, '.panshalach.json'), 'utf-8'));
 }
 
 describe('prefetchProviderModels (fix-rich-local-cmds ②)', () => {
-  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-prefetch-')); });
+  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-prefetch-')); });
   afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }); });
 
   it('fills empty models arrays and preserves apiKey/baseUrl/type', async () => {
@@ -61,7 +61,7 @@ describe('prefetchProviderModels (fix-rich-local-cmds ②)', () => {
   it('no-op when all providers already have models or config missing', async () => {
     writeConfig({ providers: { a6: { type: 'x', baseUrl: 'y', apiKey: 'k', models: ['m1'] } } });
     assert.equal(await prefetchProviderModels(ws), false);
-    fs.rmSync(path.join(ws, '.zorge.json'));
+    fs.rmSync(path.join(ws, '.panshalach.json'));
     assert.equal(await prefetchProviderModels(ws), false);
   });
 
@@ -133,10 +133,10 @@ describe('prefetchProviderModels (fix-rich-local-cmds ②)', () => {
       // the config from the stale snapshot).
       const runPromise = prefetchProviderModels(ws);
       await new Promise((r) => setTimeout(r, 20));
-      fs.rmSync(path.join(ws, '.zorge.json'));
+      fs.rmSync(path.join(ws, '.panshalach.json'));
       const changed = await runPromise;
       assert.equal(changed, false);
-      assert.equal(fs.existsSync(path.join(ws, '.zorge.json')), false, 'must not recreate the deleted file');
+      assert.equal(fs.existsSync(path.join(ws, '.panshalach.json')), false, 'must not recreate the deleted file');
     } finally {
       (globalThis as any).fetch = realFetch;
     }

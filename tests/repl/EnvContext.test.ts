@@ -52,7 +52,7 @@ describe('buildEnvDelta / renderEnvDelta (P1-T17)', () => {
 
 describe('describeEnvironment / renderEnvSummary (A-T12)', () => {
   let ws: string;
-  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-env-')); });
+  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-env-')); });
   afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }); });
 
   it('probes runtime, package manager, deps, verification, lockfiles', () => {

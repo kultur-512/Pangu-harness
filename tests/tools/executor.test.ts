@@ -41,7 +41,7 @@ function setStdoutTty(v: boolean | undefined): void {
 
 describe('executor', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-exec-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-exec-'));
     fs.writeFileSync(path.join(root, 'f.txt'), 'content');
     ctx = { workspaceRoot: root, approvalMode: 'readonly' };
   });
@@ -87,19 +87,19 @@ describe('executor', () => {
 
 describe('engineAdapter safety gate', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-adapter-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-adapter-'));
     fs.writeFileSync(path.join(root, 'secret.txt'), 'TOP-SECRET-CONTENT');
   });
   afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
     setStdoutTty(undefined);
-    delete process.env.ZORGE_SMOKE;
-    delete process.env.ZORGE_HEADLESS; // dogfood-① teardown
+    delete process.env.PANSHA_SMOKE;
+    delete process.env.PANSHA_HEADLESS; // dogfood-① teardown
   });
 
   it('non-TTY environment → mock string, real file never read', async () => {
     setStdoutTty(undefined); // pipe
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     assert.equal(isSmokeEnvironment(), true);
 
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
@@ -110,9 +110,9 @@ describe('engineAdapter safety gate', () => {
     assert.ok(!out.includes('TOP-SECRET-CONTENT'));
   });
 
-  it('ZORGE_SMOKE=1 forces mock even in TTY', async () => {
+  it('PANSHA_SMOKE=1 forces mock even in TTY', async () => {
     setStdoutTty(true);
-    process.env.ZORGE_SMOKE = '1';
+    process.env.PANSHA_SMOKE = '1';
     assert.equal(isSmokeEnvironment(), true);
 
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
@@ -124,7 +124,7 @@ describe('engineAdapter safety gate', () => {
 
   it('TTY + no SMOKE → real execution with READ_SUCCESS string', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     assert.equal(isSmokeEnvironment(), false);
 
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
@@ -135,10 +135,10 @@ describe('engineAdapter safety gate', () => {
     assert.ok(out.includes('TOP-SECRET-CONTENT'));
   });
 
-  it('ZORGE_HEADLESS=1 opts out of mock in non-TTY (real execution) (dogfood-①)', async () => {
+  it('PANSHA_HEADLESS=1 opts out of mock in non-TTY (real execution) (dogfood-①)', async () => {
     setStdoutTty(undefined); // pipe (non-TTY)
-    delete process.env.ZORGE_SMOKE;
-    process.env.ZORGE_HEADLESS = '1';
+    delete process.env.PANSHA_SMOKE;
+    process.env.PANSHA_HEADLESS = '1';
     assert.equal(isSmokeEnvironment(), false, 'HEADLESS must escape the isTTY gate');
 
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
@@ -149,23 +149,23 @@ describe('engineAdapter safety gate', () => {
     assert.ok(out.includes('TOP-SECRET-CONTENT'));
   });
 
-  it('ZORGE_SMOKE=1 still forces mock even with ZORGE_HEADLESS=1 (dogfood-①)', async () => {
-    process.env.ZORGE_HEADLESS = '1';
-    process.env.ZORGE_SMOKE = '1';
+  it('PANSHA_SMOKE=1 still forces mock even with PANSHA_HEADLESS=1 (dogfood-①)', async () => {
+    process.env.PANSHA_HEADLESS = '1';
+    process.env.PANSHA_SMOKE = '1';
     assert.equal(isSmokeEnvironment(), true, 'SMOKE must win over HEADLESS');
   });
 
   it('unset both + non-TTY → mock (default unchanged) (dogfood-①)', async () => {
-    delete process.env.ZORGE_HEADLESS;
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_HEADLESS;
+    delete process.env.PANSHA_SMOKE;
     setStdoutTty(undefined);
     assert.equal(isSmokeEnvironment(), true, 'default non-TTY must stay mock');
   });
 
   it('HEADLESS flag only escapes mock when explicitly set — TTY+SMOKE unset still real (dogfood-①)', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_HEADLESS;
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_HEADLESS;
+    delete process.env.PANSHA_SMOKE;
     assert.equal(isSmokeEnvironment(), false);
   });
 
@@ -181,7 +181,7 @@ describe('engineAdapter safety gate', () => {
 
   it('adapter records UNKNOWN_TOOL to failureMemory + adds intent guidance (fix-#9-②)', async () => {
     setStdoutTty(true); // real path (UNKNOWN_TOOL only reachable outside mock)
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const records: string[] = [];
     const mockFM = {
       record(cat: string, desc: string) { records.push(`${cat}:${desc}`); },
@@ -202,7 +202,7 @@ describe('engineAdapter safety gate', () => {
 
   it('3 consecutive UNKNOWN_TOOL → hard guidance to stop guessing (fix-#9-②)', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
     const mk = (name: string) => [{ toolName: name, params: [], rawBlock: '' } as any];
 
@@ -220,7 +220,7 @@ describe('engineAdapter safety gate', () => {
 
   it('formats unknown tool errors as TOOL_ERROR', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
     const out = await adapter.execute([
       { toolName: 'make_coffee', params: [], rawBlock: '' } as any,
@@ -231,7 +231,7 @@ describe('engineAdapter safety gate', () => {
 
   it('emits tools/pre-execute + tools/post-execute events (P1-T16)', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const events: any[] = [];
     const adapter = createEngineAdapter({
       workspaceRoot: root,
@@ -254,7 +254,7 @@ describe('engineAdapter safety gate', () => {
 
   it('T-27: MCP always-allow unlocks only that tool (full name), never bash', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     let approvals = 0;
     const adapter = createEngineAdapter({
       workspaceRoot: root,
@@ -274,7 +274,7 @@ describe('engineAdapter safety gate', () => {
 
   it('T-27: readonly mode still denies MCP tools (classify fallback preserved)', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({
       workspaceRoot: root,
       tierConfig: fakeTierConfig(),
@@ -286,12 +286,12 @@ describe('engineAdapter safety gate', () => {
   });
 
   // B1 (review defect): the six-tier contract must give write tools to
-  // high/max/ex/zorge — 'max' was missing (isStrongMode + all-write confirm).
-  it('registers write/edit tools for high/max/ex/zorge but NOT quick/standard (B1)', async () => {
+  // high/max/ex/pangu — 'max' was missing (isStrongMode + all-write confirm).
+  it('registers write/edit tools for high/max/ex/pangu but NOT quick/standard (B1)', async () => {
     setStdoutTty(true);
-    delete process.env.ZORGE_SMOKE;
+    delete process.env.PANSHA_SMOKE;
 
-    for (const tier of ['high', 'max', 'ex', 'zorge'] as const) {
+    for (const tier of ['high', 'max', 'ex', 'pangu'] as const) {
       const adapter = createEngineAdapter({
         workspaceRoot: root,
         tierConfig: { ...fakeTierConfig(), tier } as unknown as TierConfig,

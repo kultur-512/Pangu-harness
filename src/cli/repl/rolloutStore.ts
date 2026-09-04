@@ -1,7 +1,7 @@
 // src/cli/repl/rolloutStore.ts
 // M2.2: append-only session rollouts (crash-resilient resume).
 //
-// Layout: ~/.zorge/rollouts/<sessionId>.jsonl
+// Layout: ~/.panshalach/rollouts/<sessionId>.jsonl
 // Event kinds:
 //   { type: 'meta',    id, tier, workspace, model, approvalMode, allowlist }
 //   { type: 'turn',    turn: Turn }
@@ -23,7 +23,7 @@ export type RolloutEvent =
   | { type: 'rewind'; ts: number; target: string | number };
 
 function rolloutsDir(): string {
-  return path.join(os.homedir(), '.zorge', 'rollouts');
+  return path.join(os.homedir(), '.panshalach', 'rollouts');
 }
 
 function fileFor(sessionId: string): string {

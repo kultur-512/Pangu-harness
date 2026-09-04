@@ -15,7 +15,7 @@ let ctx: ToolContext;
 
 describe('readFile tool', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-read-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-read-'));
     const lines = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`);
     fs.writeFileSync(path.join(root, 'big.txt'), lines.join('\n'));
     fs.writeFileSync(path.join(root, 'small.txt'), 'alpha\nbeta\ngamma');

@@ -108,7 +108,7 @@ export function createBridge(
   };
 
   // M2.0: rich approval bridge — the engine awaits setConfirm(request);
-  // ZorgeApp's ConfirmBar calls resolveConfirm(decision) on y/n/a/Esc.
+  // PanshaApp's ConfirmBar calls resolveConfirm(decision) on y/n/a/Esc.
   const setConfirm = (request: ConfirmRequest): Promise<'y' | 'n' | 'a'> =>
     new Promise((resolve) => {
       currentConfirm = { request, resolve };
@@ -231,7 +231,7 @@ export function createBridge(
   };
 
   // fix-rich-local-cmds (②B): provider→model options are PURELY LOCAL — the
-  // startup prefetch (providerPrefetch) fills .zorge.json providers[].models,
+  // startup prefetch (providerPrefetch) fills .panshalach.json providers[].models,
   // so this reads only the local config (millisecond, no per-keypress network).
   const providerOptions = async (): Promise<{ providers: Array<{ name: string; models: string[] }> }> => {
     try {

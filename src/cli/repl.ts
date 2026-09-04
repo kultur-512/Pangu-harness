@@ -19,11 +19,11 @@ export interface StartReplOptions {
 }
 
 /**
- * fix-a6-routing: ZORGE_MODEL env seeds a session's model (headless one-shot
- * multi-provider, e.g. ZORGE_MODEL="a6:glm-5.3-flash"). Testable unit.
+ * fix-a6-routing: PANSHA_MODEL env seeds a session's model (headless one-shot
+ * multi-provider, e.g. PANSHA_MODEL="a6:glm-5.3-flash"). Testable unit.
  */
 export function applyEnvModel(session: Session): Session {
-  const envModel = process.env.ZORGE_MODEL;
+  const envModel = process.env.PANSHA_MODEL;
   if (envModel && typeof envModel === 'string' && envModel.trim()) {
     session.model = envModel.trim();
   }
@@ -37,7 +37,7 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
   try { setSharedModelProvider(provider as any); } catch {}
 
   // fix-rich-local-cmds (②A): background prefetch of provider model lists into
-  // .zorge.json (fire-and-forget; offline/slow endpoints skipped silently).
+  // .panshalach.json (fire-and-forget; offline/slow endpoints skipped silently).
   try {
     const { prefetchProviderModels } = await import('./repl/providerPrefetch.js');
     prefetchProviderModels(process.cwd()).catch(() => {});
@@ -79,7 +79,7 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
         (session as any).__resumed = { from: target.id, turns };
         r.info(`已恢复会话 ${target.id}（${turns} 轮上下文，模式 ${session.approvalMode}）`);
       } else {
-        r.warn(`未找到可恢复的会话（${opts.resume ?? 'last'}），已开新会话。可用: zorge --resume last`);
+        r.warn(`未找到可恢复的会话（${opts.resume ?? 'last'}），已开新会话。可用: pangu --resume last`);
       }
     } catch {
       // resume is best-effort

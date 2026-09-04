@@ -1,6 +1,6 @@
 // src/cli/repl/skillsLoader.ts
-// P5-5.1: skills directory convention — user-level ~/.zorge/skills/<name>/SKILL.md
-// plus project-level <workspace>/.zorge/skills/<name>/SKILL.md (project wins on
+// P5-5.1: skills directory convention — user-level ~/.panshalach/skills/<name>/SKILL.md
+// plus project-level <workspace>/.panshalach/skills/<name>/SKILL.md (project wins on
 // same-name collisions). Loaded once per task build and injected into the
 // prompt when the task matches a skill's triggers/description.
 //
@@ -99,9 +99,9 @@ function listSkillDirs(root: string): string[] {
  * Returns [] when no skills exist (never throws).
  */
 export function loadSkills(workspaceRoot: string): Skill[] {
-  // Test hook: ZORGE_SKILLS_USER overrides the user-level root (pure FS logic).
-  const userRoot = process.env.ZORGE_SKILLS_USER || path.join(os.homedir(), '.zorge', 'skills');
-  const projectRoot = path.join(workspaceRoot || '', '.zorge', 'skills');
+  // Test hook: PANSHA_SKILLS_USER overrides the user-level root (pure FS logic).
+  const userRoot = process.env.PANSHA_SKILLS_USER || path.join(os.homedir(), '.panshalach', 'skills');
+  const projectRoot = path.join(workspaceRoot || '', '.panshalach', 'skills');
 
   const byName = new Map<string, Skill>();
 

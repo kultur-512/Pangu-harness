@@ -10,7 +10,7 @@ const root = process.cwd();
 async function load() {
   const typesUrl = pathToFileURL(pathResolve(root, 'dist/cli/repl/types.js')).href;
   const provUrl = pathToFileURL(pathResolve(root, 'dist/cli/repl/ModelProvider.js')).href;
-  const chaserUrl = pathToFileURL(pathResolve(root, 'dist/ZorgeChaser.js')).href;
+  const chaserUrl = pathToFileURL(pathResolve(root, 'dist/PanshalachChaser.js')).href;
 
   const [typesMod, provMod, chaserMod] = await Promise.all([
     import(typesUrl),
@@ -21,12 +21,12 @@ async function load() {
   return {
     DefaultModelProvider: provMod.DefaultModelProvider || provMod.createDefaultModelProvider && (await import(provUrl)).createDefaultModelProvider,
     createDefaultModelProvider: provMod.createDefaultModelProvider,
-    ZorgeChaser: chaserMod.ZorgeChaser,
+    PanshalachChaser: chaserMod.PanshalachChaser,
   };
 }
 
 async function main() {
-  const { createDefaultModelProvider, ZorgeChaser } = await load();
+  const { createDefaultModelProvider, PanshalachChaser } = await load();
 
   // 1) Basic provider creation and default behavior (no fallback)
   const p1 = createDefaultModelProvider();
@@ -62,13 +62,13 @@ async function main() {
   const c4 = p4.createDefaultClient();
   if (!c4) { console.error('FAIL default fallback to fb'); process.exit(1); }
 
-  // 6) ZorgeChaser NO_MODEL_CLIENT defense
-  const bad = new ZorgeChaser(null, 'high');
+  // 6) PanshalachChaser NO_MODEL_CLIENT defense
+  const bad = new PanshalachChaser(null, 'high');
   const resBad = await bad.solveIssue('x', process.cwd(), { tier: 'high', yes: true });
   if (resBad.error !== 'NO_MODEL_CLIENT') { console.error('FAIL NO_MODEL_CLIENT not returned'); process.exit(1); }
   if (resBad.success !== false) { console.error('FAIL NO_MODEL_CLIENT success flag'); process.exit(1); }
 
-  // 7) ZorgeChaser with valid client works (mock)
+  // 7) PanshalachChaser with valid client works (mock)
   let completeCalls = 0;
   const goodClient = {
     async complete(prompt) {
@@ -77,7 +77,7 @@ async function main() {
       return 'OK ' + String(prompt).slice(0, 20);
     }
   };
-  const good = new ZorgeChaser(goodClient, 'high');
+  const good = new PanshalachChaser(goodClient, 'high');
   // We only care it does not throw on entry and returns a result object (may be partial due to missing tools etc.)
   const resGood = await good.solveIssue('dummy task', process.cwd(), { tier: 'high', yes: true, maxRollouts: 1, maxStepsPerRollout: 1 });
   if (resGood && typeof resGood === 'object' && 'score' in resGood) {
@@ -93,8 +93,8 @@ async function main() {
   console.error('  register + isAvailable + create: OK');
   console.error('  unknown -> null: OK');
   console.error('  createDefaultClient fallback chain: OK');
-  console.error('  ZorgeChaser NO_MODEL_CLIENT defense: OK');
-  console.error('  ZorgeChaser with client does not explode: OK');
+  console.error('  PanshalachChaser NO_MODEL_CLIENT defense: OK');
+  console.error('  PanshalachChaser with client does not explode: OK');
   console.error('P3 ModelProvider OK');
 }
 

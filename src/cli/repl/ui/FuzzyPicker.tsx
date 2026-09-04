@@ -1,6 +1,6 @@
 // src/cli/repl/ui/FuzzyPicker.tsx
 // Generic resident fuzzy picker — port of CC design-system/FuzzyPicker
-// architecture onto the `__ZORGE_INK__` runtime (same mechanism as InputBar:
+// architecture onto the `__PANSHA_INK__` runtime (same mechanism as InputBar:
 // no import transformation; React.createElement only).
 //
 // - title + SearchBox + list + Byline (↑/↓ navigate, Enter select, Tab action,
@@ -47,13 +47,13 @@ export function FuzzyPicker(props: {
   disableKeys?: boolean;
   queryText?: string;
 }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
     useState: (i: any) => [i, () => {}],
     useEffect: () => {},
     useMemo: (f: any) => f(),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Box, Text, useInput } = ink;
 
   const {

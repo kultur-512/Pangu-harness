@@ -15,10 +15,10 @@ export function ConfirmBar(props: {
   };
   onDecision: (decision: 'y' | 'n' | 'a') => void;
 }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Box, Text, useInput } = ink;
 
   const { request, onDecision } = props;

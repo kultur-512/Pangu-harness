@@ -73,7 +73,7 @@ describe('ZIS REPL E2E smoke', () => {
   });
 
   it('old CLI simulate path still works via runOneShot (compatibility)', async () => {
-    // This exercises the one-shot path that old "zorge simulate ..." would hit.
+    // This exercises the one-shot path that old "pangu simulate ..." would hit.
     const session = new Session({ tier: 'quick' });
     const repl = new Repl({ session });
 

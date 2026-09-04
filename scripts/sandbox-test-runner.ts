@@ -1,7 +1,7 @@
 // sandbox-test-runner.ts
-// Runs the Zorge (GLM-5.x Strong Engineering Agent) inside an isolated sandbox against a known-buggy project.
-// 使用�?tier 体系（默�?high�?
-import { ZorgeChaser } from '../src/ZorgeChaser.js';
+// Runs the Panshalach (GLM-5.x Strong Engineering Agent) inside an isolated sandbox against a known-buggy project.
+// 使用�?tier 体系（默�?high�?
+import { PanshalachChaser } from '../src/PanshalachChaser.js';
 import { ExtremeGlmToolCallAdapter } from '../src/adapter/ExtremeGlmToolCallAdapter.js';
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -9,9 +9,9 @@ import { join, resolve } from 'node:path';
 
 const SANDBOX = resolve('C:/Users/19395/ZCodeProject/.sandbox-test/buggy-calculator');
 
-console.log('=== Zorge �?Strong Engineering Agent �?Isolated Sandbox Test ===');
+console.log('=== Panshalach �?Strong Engineering Agent �?Isolated Sandbox Test ===');
 console.log(`Sandbox: ${SANDBOX}`);
-console.log('Tier    : high (默认高强度工程模�?');
+console.log('Tier    : high (默认高强度工程模�?');
 console.log('');
 
 // Real file system executor for the sandbox
@@ -85,11 +85,11 @@ function createSimulatedGlmClient() {
 
       // Step 1: Explore the project
       if (step === 1) {
-        return `<thinking>我需要先了解这个项目结构。看起来是一个计算器项目，有测试在报错�?/thinking>
+        return `<thinking>我需要先了解这个项目结构。看起来是一个计算器项目，有测试在报错�?/thinking>
 <plan>1. 读取 package.json 了解项目
 2. 读取 src/calculator.js 查看实现
 3. 读取测试文件
-4. 定位 add 函数�?bug 并修�?/plan>
+4. 定位 add 函数�?bug 并修�?/plan>
 <verify>运行 npm test 确认测试通过</verify>
 <>
   <Read>
@@ -100,9 +100,9 @@ function createSimulatedGlmClient() {
 
       // Step 2: Read the buggy source
       if (step === 2 || lower.includes('calculator')) {
-        return `<thinking>add 函数明显是错的：return a - b 应该�?a + b�?/thinking>
+        return `<thinking>add 函数明显是错的：return a - b 应该�?a + b�?/thinking>
 <plan>直接修复 add 函数</plan>
-<verify>修复后运行测�?/verify>
+<verify>修复后运行测�?/verify>
 <>
   <Read>
     <file_path>src/calculator.js</file_path>
@@ -112,8 +112,8 @@ function createSimulatedGlmClient() {
 
       // Step 3: Actually fix it
       if (step >= 3 && (lower.includes('bug') || lower.includes('fix') || lower.includes('add'))) {
-        return `<thinking>确认 bug：在 add 函数里用了减法�?/thinking>
-<plan>�?return a - b 改成 return a + b</plan>
+        return `<thinking>确认 bug：在 add 函数里用了减法�?/thinking>
+<plan>�?return a - b 改成 return a + b</plan>
 <verify>运行测试验证</verify>
 <>
   <Write>
@@ -131,7 +131,7 @@ export function multiply(a, b) {
       }
 
       // Final step: run tests
-      return `<thinking>代码已修改，现在验证�?/thinking>
+      return `<thinking>代码已修改，现在验证�?/thinking>
 <plan>执行测试</plan>
 <>
   <Bash>
@@ -146,13 +146,13 @@ async function main() {
   const executor = createSandboxExecutor();
   const modelClient = createSimulatedGlmClient();
 
-  const chaser = new ZorgeChaser(modelClient);
+  const chaser = new PanshalachChaser(modelClient);
 
   // Override the internal verification engine to use our real sandbox executor
   // (This is a bit hacky but works for this isolated test)
   (chaser as any).solveIssue = async function(issue: string, workspace: string, config: any) {
     // We manually run a simplified loop here for clearer sandbox demo
-    console.log('\n[AGENT] 开始在隔离沙箱中解�?issue...');
+    console.log('\n[AGENT] 开始在隔离沙箱中解�?issue...');
     console.log(`Issue: ${issue}\n`);
 
     const loop = new (await import('./src/loop/VerifyCritiqueLoop.js')).VerifyCritiqueLoop(
@@ -164,7 +164,7 @@ async function main() {
     const result = await loop.run(
       `你现在在隔离沙箱 ${workspace} 中工作。\n` +
       `Issue: ${issue}\n` +
-      `请使�?Read / Write / Bash 工具来探索和修复代码。`
+      `请使�?Read / Write / Bash 工具来探索和修复代码。`
     );
 
     // Run final verification

@@ -1,10 +1,10 @@
 // src/tools/bash.ts
 // M1-2.2: real command execution.
 // - spawn with shell:true, cwd=workspaceRoot, detached (for tree-kill)
-// - tier-driven timeout: quick=30s / standard=60s / high|ex|zorge=120s (cap 600000)
+// - tier-driven timeout: quick=30s / standard=60s / high|ex|pangu=120s (cap 600000)
 // - timeout kills the whole process tree (taskkill /T /F on Windows, -SIGKILL on POSIX)
 // - stdout+stderr merged, 20k internal cap
-// - env passthrough + ZORGE_EXEC=1
+// - env passthrough + PANSHA_EXEC=1
 // - DANGER MARKING ONLY (enforcement belongs to the approval layer, 2.4):
 //   rm -rf / del / format / reg add|delete / git push --force / mkfs / shutdown …
 
@@ -60,7 +60,7 @@ export function createBashTool(opts: BashToolOptions = {}): ToolImpl {
           // spawned by the shell) stop inheriting our stdout pipe → empty
           // captures. Windows tree-kill uses taskkill /T which doesn't need it.
           detached: process.platform !== 'win32',
-          env: { ...process.env, ZORGE_EXEC: '1' },
+          env: { ...process.env, PANSHA_EXEC: '1' },
           windowsHide: true,
         });
       } catch (e: any) {

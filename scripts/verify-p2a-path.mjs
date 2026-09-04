@@ -20,7 +20,7 @@ async function load() {
 }
 
 function makeWorkspace() {
-  const base = mkdtempSync(pathResolve(tmpdir(), 'zorge-p2a-'));
+  const base = mkdtempSync(pathResolve(tmpdir(), 'pangu-p2a-'));
   // create some structure
   mkdirSync(pathResolve(base, 'src'), { recursive: true });
   mkdirSync(pathResolve(base, 'docs'), { recursive: true });

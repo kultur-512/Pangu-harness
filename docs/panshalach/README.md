@@ -19,7 +19,7 @@
 
 ```
 src/
-  ZorgeChaser.ts            核心执行引擎（类名=内部兼容名，后续里程碑更名 Panshalach）
+  PanshalachChaser.ts            核心执行引擎（类名=内部兼容名，后续里程碑更名 Panshalach）
   loop/VerifyCritiqueLoop   验证/复盘循环（Read-Before-Write、Verify-Before-Claim 铁律）
   tools/*                   真实工具引擎：read_file/write_file/edit_file/bash/glob/grep + 四档审批
   memory/*                  记忆卡提炼/过滤/衰减/合并（持久化）
@@ -40,4 +40,4 @@ REFACTOR-ASSESSMENT.md      重构评估报告
 - **注入工程**：L0 硬约束(≤3) / L1 记忆卡(按档位 3/6/8/10) / 分档契约 / 注入去重 / token 预算 / 参照文件过滤。
 - **执行纪律**：读前必读、验证后声明、可回滚、审批分级——支撑长周期持续执行的可靠性。
 
-> 内部兼容名说明：`.zorge.json`、`.zorge-memory.json`、`~/.zorge/`、`ZORGE_*`、`ZorgeChaser` 均为内部存储/旧兼容名，不影响对外品牌 **Panshalach**；收敛计划见 [ROADMAP.md](ROADMAP.md)。
+> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*`、`PanshalachChaser` 均为内部存储/旧兼容名，不影响对外品牌 **Panshalach**；收敛计划见 [ROADMAP.md](ROADMAP.md)。

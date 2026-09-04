@@ -1,6 +1,6 @@
 // tests/repl/projectInstructions.test.ts
 // /init closed loop (learn P0-2): readProjectVerificationBlock must extract
-// the "## Verification commands" checklist from .zorge/AGENTS.md so the
+// the "## Verification commands" checklist from .panshalach/AGENTS.md so the
 // PromptBuilder can inject concrete verification commands.
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -13,7 +13,7 @@ import { readProjectVerificationBlock, agentsPath } from '../../src/cli/repl/pro
 let ws: string;
 
 describe('projectInstructions (P0-2 /init closed loop)', () => {
-  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-pi-')); });
+  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-pi-')); });
   afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }); });
 
   it('returns null when AGENTS.md is absent', () => {
@@ -43,7 +43,7 @@ describe('projectInstructions (P0-2 /init closed loop)', () => {
       '- 测试必须通过',
       '',
     ].join('\n');
-    fs.mkdirSync(path.join(ws, '.zorge'), { recursive: true });
+    fs.mkdirSync(path.join(ws, '.panshalach'), { recursive: true });
     fs.writeFileSync(agentsPath(ws), md, 'utf-8');
 
     const block = readProjectVerificationBlock(ws);
@@ -58,7 +58,7 @@ describe('projectInstructions (P0-2 /init closed loop)', () => {
   it('caps the block size', () => {
     const lines = ['## Verification commands', 'Run these:'];
     for (let i = 0; i < 200; i++) lines.push(`- [ ] \`command number ${i} with a fairly long body to exceed caps\` passes`);
-    fs.mkdirSync(path.join(ws, '.zorge'), { recursive: true });
+    fs.mkdirSync(path.join(ws, '.panshalach'), { recursive: true });
     fs.writeFileSync(agentsPath(ws), lines.join('\n'), 'utf-8');
 
     const block = readProjectVerificationBlock(ws)!;

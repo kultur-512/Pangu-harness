@@ -13,7 +13,7 @@ let root: string;
 
 describe('pathGuard', () => {
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-pg-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-pg-'));
     fs.writeFileSync(path.join(root, 'a.txt'), 'hello');
     fs.mkdirSync(path.join(root, 'sub'));
     fs.writeFileSync(path.join(root, 'sub', 'b.txt'), 'world');
@@ -50,7 +50,7 @@ describe('pathGuard', () => {
   });
 
   it('rejects absolute path outside workspace (tmpdir target)', () => {
-    const outside = path.join(os.tmpdir(), 'zorge-pg-outside.txt');
+    const outside = path.join(os.tmpdir(), 'pangu-pg-outside.txt');
     fs.writeFileSync(outside, 'x');
     try {
       const r = resolveUnderWorkspace(outside, root);
@@ -61,7 +61,7 @@ describe('pathGuard', () => {
   });
 
   it('rejects absolute path outside workspace', () => {
-    const outside = path.join(os.tmpdir(), 'zorge-pg-outside2.txt');
+    const outside = path.join(os.tmpdir(), 'pangu-pg-outside2.txt');
     fs.writeFileSync(outside, 'x');
     try {
       const r = resolveUnderWorkspace(outside, root);
@@ -78,7 +78,7 @@ describe('pathGuard', () => {
   });
 
   it('rejects symlink pointing outside workspace', (t) => {
-    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-pg-out-'));
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-pg-out-'));
     fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'secret');
     try {
       const link = path.join(root, 'evil-link');

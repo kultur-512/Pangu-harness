@@ -76,7 +76,7 @@ describe('PromptBuilder', () => {
 
 // ==================== P0-2: Tier Constraint tests (blueprint) ====================
 describe('P0-2 TierConstraintRegistry + PromptBuilder integration', () => {
-  const tiers: Tier[] = ['quick', 'standard', 'high', 'max', 'ex', 'zorge'];
+  const tiers: Tier[] = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
 
   it('every tier produces a <tier_constraint> block with correct tier attribute', async () => {
     for (const t of tiers) {
@@ -120,14 +120,14 @@ describe('P0-2 TierConstraintRegistry + PromptBuilder integration', () => {
     assert.ok(p1.includes('<tier_constraint tier="quick">'));
 
     // Switch tier on the same session
-    sess.updateTier('zorge');
+    sess.updateTier('pangu');
 
-    const cfgZorge = TierRegistry.get('zorge');
+    const cfgPanshalach = TierRegistry.get('pangu');
     // Re-create builder with new tierConfig to simulate real usage, or reuse (PromptBuilder reads session.tier live)
-    const pb2 = new PromptBuilder(sess, cfgZorge);
+    const pb2 = new PromptBuilder(sess, cfgPanshalach);
     let p2 = await pb2.buildForTask('task2');
 
-    assert.ok(p2.includes('<tier_constraint tier="zorge">'), 'after switch, zorge constraint must appear');
+    assert.ok(p2.includes('<tier_constraint tier="pangu">'), 'after switch, pangu constraint must appear');
     assert.ok(!p2.includes('<tier_constraint tier="quick">'), 'quick constraint must be gone after switch');
   });
 

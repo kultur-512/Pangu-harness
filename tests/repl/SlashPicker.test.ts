@@ -10,7 +10,7 @@ import {
   menuOpenFor,
   moveMenuIndex,
   menuRenderLines,
-  ZORGE_COMMANDS,
+  PANSHA_COMMANDS,
   MENU_CAP,
   argMenuFor,
   filterArgCandidates,
@@ -69,7 +69,7 @@ describe('computeMenuItems', () => {
   });
 
   it('aliases participate in prefix matching', () => {
-    const items = computeMenuItems('/quit', ZORGE_COMMANDS); // exit alias
+    const items = computeMenuItems('/quit', PANSHA_COMMANDS); // exit alias
     assert.ok(items.some((c) => c.name === '/exit'));
   });
 
@@ -170,7 +170,7 @@ describe('argMenuFor (feat-submenu)', () => {
   });
 
   it('tier candidates are the six tiers', () => {
-    const six = ['quick', 'standard', 'high', 'max', 'ex', 'zorge'];
+    const six = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
     assert.deepEqual(filterArgCandidates('', six), six);
     assert.deepEqual(filterArgCandidates('hi', six), ['high']);
   });

@@ -13,7 +13,7 @@ let ws: string;
 
 describe('fileHistory', () => {
   beforeEach(() => {
-    ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-fh-'));
+    ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-fh-'));
     fs.mkdirSync(path.join(ws, 'src'));
     fs.writeFileSync(path.join(ws, 'src', 'a.ts'), 'original\nline2\n');
   });

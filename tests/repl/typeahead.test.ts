@@ -12,7 +12,7 @@ import {
   acceptSuggestion,
   doubleEscState,
 } from '../../src/cli/repl/typeahead.js';
-import { ZORGE_COMMANDS } from '../../src/cli/repl/SlashPicker.js';
+import { PANSHA_COMMANDS } from '../../src/cli/repl/SlashPicker.js';
 
 const PROVIDERS = [
   { name: 'scnet', models: ['GLM-5.1', 'GLM-5.2', 'deepseek-v4'] },

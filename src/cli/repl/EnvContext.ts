@@ -137,6 +137,6 @@ export function renderEnvSelfDescription(desc: EnvSelfDescription): string {
 export function renderEnvSummary(desc: EnvSelfDescription, maxLines = 10): string {
   const full = renderEnvSelfDescription(desc).split('\n');
   const keep = full.slice(0, maxLines);
-  if (full.length > maxLines) keep.push('…（详见 .zorge/ENV.md）');
+  if (full.length > maxLines) keep.push('…（详见 .panshalach/ENV.md）');
   return keep.join('\n');
 }

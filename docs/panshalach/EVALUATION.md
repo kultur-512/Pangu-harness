@@ -53,7 +53,7 @@
 
 ## 3. 运行步骤（端点就绪后执行）
 
-1. 配置 openPangu（见 USER-GUIDE）：`.zorge.json` providers.openpangu（或新 `.panshalach.json`）+ `ZORGE_MODEL=openpangu:openPangu-7B`。
+1. 配置 openPangu（见 USER-GUIDE）：`.panshalach.json` providers.openpangu（或新 `.panshalach.json`）+ `PANSHA_MODEL=openpangu:openPangu-7B`。
 2. 准备评测任务集（脚本化跑）：每个任务按 A/B/C 各跑一次，关记忆 = 不开 memoryLoad 或注入空；全能力 = P2/P3 代码落地后。
 3. 汇总到下方表；截图/日志归档到 `docs/panshalach/evals/<date>/`。
 4. 运行者核对声明：未混合合成数据。

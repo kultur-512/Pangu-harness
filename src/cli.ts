@@ -33,7 +33,7 @@ for (let i = 0; i < rawArgs.length; i++) {
   }
   if (a === '--headless') {
     headlessFlag = true;
-    process.env.ZORGE_HEADLESS = '1';
+    process.env.PANSHA_HEADLESS = '1';
     continue;
   }
   if (a === '--resume' || a === '-r') {

@@ -33,7 +33,7 @@ export class DefaultModelProvider implements ModelProvider {
   /**
    * Adopt a freshly fetched remote model list for a provider (e.g. after /model list).
    * This makes the models immediately available for isModelAvailable / createClient in the current session
-   * without requiring a restart (the list is also persisted to .zorge.json by the caller).
+   * without requiring a restart (the list is also persisted to .panshalach.json by the caller).
    */
   adoptRemoteModels(providerName: string, models: string[], contexts?: Record<string, number>): void {
     if (!providerName || !Array.isArray(models)) return;
@@ -88,9 +88,9 @@ export class DefaultModelProvider implements ModelProvider {
     }
 
     try {
-      // Try to find the project root that actually contains .zorge.json.
+      // Try to find the project root that actually contains .panshalach.json.
       // This fixes the common case where the REPL session.workspace is the project,
-      // but process.cwd() at launch time was different (e.g. ran "zorge" from elsewhere).
+      // but process.cwd() at launch time was different (e.g. ran "pangu" from elsewhere).
       const rootsToTry = this._collectCandidateRoots();
 
       for (const root of rootsToTry) {
@@ -109,7 +109,7 @@ export class DefaultModelProvider implements ModelProvider {
           };
         }
 
-        // ULTRA ROBUST: if still no scnet key (e.g. BOM, parse oddity in this root's .zorge.json),
+        // ULTRA ROBUST: if still no scnet key (e.g. BOM, parse oddity in this root's .panshalach.json),
         // try to extract the key directly from the file bytes for this root.
         if (!providers.scnet || !providers.scnet.apiKey) {
           const extracted = this._extractScnetKeyFromFile(root);
@@ -155,12 +155,12 @@ export class DefaultModelProvider implements ModelProvider {
   }
 
   /**
-   * Ultra-robust extraction of scnet apiKey directly from .zorge.json bytes.
+   * Ultra-robust extraction of scnet apiKey directly from .panshalach.json bytes.
    * Survives BOM, parse errors, etc. Used as last-chance in getProviderRegistry.
    */
   private _extractScnetKeyFromFile(root: string): { apiKey: string; baseUrl?: string } | null {
     try {
-      const p = join(root, '.zorge.json');
+      const p = join(root, '.panshalach.json');
       if (!existsSync(p)) return null;
       let buf = readFileSync(p);
       if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
@@ -205,7 +205,7 @@ export class DefaultModelProvider implements ModelProvider {
     // 1. Current process cwd
     add(process.cwd());
 
-    // 2. Walk upward from cwd looking for .zorge.json (project root discovery)
+    // 2. Walk upward from cwd looking for .panshalach.json (project root discovery)
     // (B12: was require('path') — dead code under "type":"module"; use the
     //  ESM import instead so upward discovery actually works.)
     try {
@@ -241,8 +241,8 @@ export class DefaultModelProvider implements ModelProvider {
     let pr = this.getProviderRegistry();
     let hasScnet = !!(pr && pr.isProviderConfigured('scnet'));
 
-    // If we don't see scnet yet, try a one-time hot reload (user may have created .zorge.json
-    // or set SCNET_API_KEY after starting this Zorge process).
+    // If we don't see scnet yet, try a one-time hot reload (user may have created .panshalach.json
+    // or set SCNET_API_KEY after starting this Panshalach process).
     if (!hasScnet) {
       this.invalidateProviderCache();
       pr = this.getProviderRegistry();
@@ -281,7 +281,7 @@ export class DefaultModelProvider implements ModelProvider {
     if (lower === 'glm' || lower === 'glm5') {
       let pr = this.getProviderRegistry();
       if (!pr || !pr.isProviderConfigured('scnet')) {
-        // Hot-reload: user may have just created .zorge.json or set env var in this running process
+        // Hot-reload: user may have just created .panshalach.json or set env var in this running process
         this.invalidateProviderCache();
         pr = this.getProviderRegistry();
       }
@@ -414,7 +414,7 @@ export class DefaultModelProvider implements ModelProvider {
    * Get the context window length (in tokens) for a model name.
    * Priority:
    * 1. In-memory cache from a recent /model list (remoteContextsCache)
-   * 2. Persisted in .zorge.json providers.<prov>.modelContexts
+   * 2. Persisted in .panshalach.json providers.<prov>.modelContexts
    * 3. 256000 (256K) default
    *
    * GLM shorthand ("glm", "glm-5", etc.) is resolved to the effective concrete model first.
@@ -491,7 +491,7 @@ export class DefaultModelProvider implements ModelProvider {
 
   /**
    * Force re-evaluation of providers from disk + env on next access.
-   * Useful after the user creates .zorge.json or sets SCNET_API_KEY while REPL is running.
+   * Useful after the user creates .panshalach.json or sets SCNET_API_KEY while REPL is running.
    */
   invalidateProviderCache(): void {
     this._providerRegistry = null;
@@ -502,7 +502,7 @@ export class DefaultModelProvider implements ModelProvider {
   /**
    * Force a scnet configuration into this provider instance.
    * Used by /model commands to inject a config discovered from the actual session workspace
-   * when the provider was created before the .zorge.json existed.
+   * when the provider was created before the .panshalach.json existed.
    */
   forceScnetConfig(scnetCfg: any): void {
     if (!scnetCfg || !scnetCfg.apiKey) return;
@@ -568,7 +568,7 @@ export function createDefaultModelProvider(opts?: {
 // ==================== Shared singleton (P0-fix: provider 兜底必达) ====================
 // Problem this solves: runAgentTask() used to construct a FRESH provider per
 // call, losing the REPL's hot state (/model switches, adoptRemoteModels caches,
-// forceScnetConfig injections) and sometimes missing .zorge.json root discovery.
+// forceScnetConfig injections) and sometimes missing .panshalach.json root discovery.
 // A process-wide shared instance keeps every consumer on the same provider.
 
 let __sharedProvider: DefaultModelProvider | null = null;
@@ -598,7 +598,7 @@ export function setSharedModelProvider(p: DefaultModelProvider): void {
  * Resolve a usable ModelClient with layered fallback + one hot-reload retry:
  * 1. explicit client factory result (caller-provided provider)
  * 2. shared provider: createClient(model) → createDefaultClient()
- * 3. one invalidateProviderCache() + retry (picks up newly created .zorge.json / env keys)
+ * 3. one invalidateProviderCache() + retry (picks up newly created .panshalach.json / env keys)
  * Throws only when truly nothing is available (caller surfaces a clear error).
  */
 export async function resolveSharedClient(
@@ -634,6 +634,6 @@ export async function resolveSharedClient(
   if (c) return { client: c, provider: shared };
 
   throw new Error(
-    'No model client available. Configure .zorge.json providers (scnet/a6/...), or set ZORGE_MODEL=<provider:model>, or pass a ModelProvider.'
+    'No model client available. Configure .panshalach.json providers (scnet/a6/...), or set PANSHA_MODEL=<provider:model>, or pass a ModelProvider.'
   );
 }

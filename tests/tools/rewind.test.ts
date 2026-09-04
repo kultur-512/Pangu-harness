@@ -32,7 +32,7 @@ function writeThenCheckpoint(rel: string, content: string, ts: number): string {
 }
 
 describe('listByTurn', () => {
-  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-rw-')); });
+  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-rw-')); });
   afterEach(() => { clearHistoryForWorkspace(ws); fs.rmSync(ws, { recursive: true, force: true }); });
 
   it('assigns checkpoints to the owning turn window; pre-first-turn ones are 杂项', () => {
@@ -72,7 +72,7 @@ describe('listByTurn', () => {
 });
 
 describe('previewRewindToTurn / rewindToTurn', () => {
-  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-rw2-')); });
+  beforeEach(() => { ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-rw2-')); });
   afterEach(() => { clearHistoryForWorkspace(ws); fs.rmSync(ws, { recursive: true, force: true }); });
 
   it('preview is zero side effect; rewind restores last-pre-target state', () => {

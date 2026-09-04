@@ -1,9 +1,9 @@
-// Zorge 用户确认流程
+// Panshalach 用户确认流程
 // 当档位需要用户确认时（strong / power）执行此流程
 // 展示预估消耗、风险、记忆条数，并等待用户输入 yes
 
 import { TierConfig } from '../tiers/TierConfig.js';
-import { BudgetReport } from '../ZorgeChaser.js';
+import { BudgetReport } from '../PanshalachChaser.js';
 import { FailureMemory } from '../memory/FailureMemory.js';
 
 export interface ConfirmationInput {
@@ -38,7 +38,7 @@ export function renderConfirmationPanel(input: ConfirmationInput): string {
 
   lines.push('');
   lines.push('╔══════════════════════════════════════════════════════════════════╗');
-  lines.push(`║  ⚠️  Zorge 用户确认 (Tier: ${tierConfig.tier.toUpperCase()})                     ║`);
+  lines.push(`║  ⚠️  Panshalach 用户确认 (Tier: ${tierConfig.tier.toUpperCase()})                     ║`);
   lines.push('╚══════════════════════════════════════════════════════════════════╝');
   lines.push('');
   lines.push(`【档位】      ${tierConfig.tier}  (${tierConfig.typicalUseCase})`);

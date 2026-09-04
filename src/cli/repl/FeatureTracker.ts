@@ -27,7 +27,7 @@ export interface FeatureList {
 }
 
 export function featureListPath(workspace: string): string {
-  return path.join(workspace || process.cwd(), '.zorge', 'feature_list.json');
+  return path.join(workspace || process.cwd(), '.panshalach', 'feature_list.json');
 }
 
 /** Read the feature list; returns [] when missing/corrupt (never throws). */
@@ -41,7 +41,7 @@ export function loadFeatures(workspace: string): FeatureItem[] {
   }
 }
 
-/** Write the feature list (creates .zorge/). Returns true on success. */
+/** Write the feature list (creates .panshalach/). Returns true on success. */
 export function saveFeatures(workspace: string, items: FeatureItem[]): boolean {
   try {
     const dir = path.dirname(featureListPath(workspace));

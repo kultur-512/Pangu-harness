@@ -3,7 +3,7 @@
 // BEFORE mutation so /undo can restore it (Claude Code /rewind semantics,
 // workspace-scoped, bash side-effects excluded by design).
 //
-// Layout under ~/.zorge/file-history/:
+// Layout under ~/.panshalach/file-history/:
 //   index-<wsHash>.jsonl          → append-only checkpoint index
 //   files/<wsHash>/<id>__<base>   → backup content ("__ABSENT__" marker file
 //                                    records a create; undo deletes the file)
@@ -41,7 +41,7 @@ function wsHash(workspaceRoot: string): string {
 }
 
 function historyRoot(): string {
-  return path.join(os.homedir(), '.zorge', 'file-history');
+  return path.join(os.homedir(), '.panshalach', 'file-history');
 }
 
 function indexPath(workspaceRoot: string): string {

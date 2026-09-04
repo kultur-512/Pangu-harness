@@ -1,6 +1,6 @@
 // scripts/verify-scnet.mjs
 // Pure-Node verification for scnet (OpenAI-compatible) integration.
-// - Loads config from .zorge.json (project) or falls back to env vars
+// - Loads config from .panshalach.json (project) or falls back to env vars
 // - Calls listModels (or list with context)
 // - Performs one lightweight complete
 // - Prints results; exits non-zero on hard failure
@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from 'node:fs';
 const root = process.cwd();
 
 function loadProjectConfig() {
-  const projPath = pathResolve(root, '.zorge.json');
+  const projPath = pathResolve(root, '.panshalach.json');
   if (!existsSync(projPath)) return null;
   try {
     return JSON.parse(readFileSync(projPath, 'utf-8'));
@@ -42,7 +42,7 @@ async function main() {
 
   if (!apiKey) {
     console.error('No scnet apiKey found.');
-    console.error('Provide it via .zorge.json providers.scnet.apiKey or SCNET_API_KEY env.');
+    console.error('Provide it via .panshalach.json providers.scnet.apiKey or SCNET_API_KEY env.');
     process.exit(2);
   }
 

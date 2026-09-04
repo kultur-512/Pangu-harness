@@ -53,7 +53,7 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
 
   it('createClient(unknown name) returns null', () => {
     // M2.5: explicit empty providersConfig = authoritative & offline —
-    // the provider must NOT discover .zorge.json from the filesystem.
+    // the provider must NOT discover .panshalach.json from the filesystem.
     const p = createDefaultModelProvider({
       fallbackComplete: async () => 'x',
       providersConfig: { providers: {} },
@@ -205,42 +205,42 @@ describe('P3 ModelProvider (DefaultModelProvider)', () => {
   });
 });
 
-describe('ZORGE_MODEL env seed (fix-a6-routing)', () => {
-  it('applyEnvModel seeds session.model from ZORGE_MODEL', () => {
-    const prev = process.env.ZORGE_MODEL;
-    process.env.ZORGE_MODEL = 'a6:glm-5.3-flash';
+describe('PANSHA_MODEL env seed (fix-a6-routing)', () => {
+  it('applyEnvModel seeds session.model from PANSHA_MODEL', () => {
+    const prev = process.env.PANSHA_MODEL;
+    process.env.PANSHA_MODEL = 'a6:glm-5.3-flash';
     try {
       const s = applyEnvModel(new Session());
       assert.equal(s.model, 'a6:glm-5.3-flash');
     } finally {
-      if (prev === undefined) delete process.env.ZORGE_MODEL;
-      else process.env.ZORGE_MODEL = prev;
+      if (prev === undefined) delete process.env.PANSHA_MODEL;
+      else process.env.PANSHA_MODEL = prev;
     }
   });
 
   it('applyEnvModel leaves model untouched when env unset/blank', () => {
-    const prev = process.env.ZORGE_MODEL;
-    delete process.env.ZORGE_MODEL;
+    const prev = process.env.PANSHA_MODEL;
+    delete process.env.PANSHA_MODEL;
     try {
       const s = applyEnvModel(new Session());
       assert.equal(s.model, 'default');
     } finally {
-      if (prev !== undefined) process.env.ZORGE_MODEL = prev;
+      if (prev !== undefined) process.env.PANSHA_MODEL = prev;
     }
   });
 });
 
 // B12 (review defect): upward project-root discovery used `require('path')`
-// under "type":"module" — dead code swallowed by catch, so a .zorge.json in a
+// under "type":"module" — dead code swallowed by catch, so a .panshalach.json in a
 // PARENT directory of cwd was never found. Fixed to ESM dirname; this test
 // proves the upward walk actually reaches a parent config.
-describe('B12 upward .zorge.json discovery', () => {
-  it('finds a parent-directory .zorge.json from a deeper cwd', () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'zorge-b12-'));
+describe('B12 upward .panshalach.json discovery', () => {
+  it('finds a parent-directory .panshalach.json from a deeper cwd', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-b12-'));
     const parent = path.join(base, 'proj');
     const child = path.join(parent, 'src', 'deep');
     fs.mkdirSync(child, { recursive: true });
-    fs.writeFileSync(path.join(parent, '.zorge.json'), JSON.stringify({
+    fs.writeFileSync(path.join(parent, '.panshalach.json'), JSON.stringify({
       model: 'GLM-5.1',
       providers: {
         scnet: { type: 'openai-compatible', baseUrl: 'https://api.scnet.cn/api/llm/v1', apiKey: 'sk-b12-test-key-1234567890' },

@@ -6,7 +6,7 @@
 // - last turn's budgetReport (estimatedUsedTokens / usageRatio)
 // - live context estimate (compactService estimator)
 //
-// Prices come from .zorge.json `usagePrices` (OPTIONAL, append-only field —
+// Prices come from .panshalach.json `usagePrices` (OPTIONAL, append-only field —
 // apiKey is never read here). Without prices, cost is reported as 0 with a
 // "configure usagePrices" hint.
 
@@ -65,7 +65,7 @@ export function collectUsage(session: Session, prices?: UsagePrices): UsageRepor
   lines.push(
     priceConfigured
       ? `估算成本: ${currency} ${costUsd.toFixed(4)}（70/30 输入输出近似 × 配置单价）`
-      : `估算成本: 未配置（在 .zorge.json 追加 usagePrices: { inputPerMTokens, outputPerMTokens, currency } 后启用）`
+      : `估算成本: 未配置（在 .panshalach.json 追加 usagePrices: { inputPerMTokens, outputPerMTokens, currency } 后启用）`
   );
 
   return {

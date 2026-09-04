@@ -230,7 +230,7 @@ export class TestTimeOrchestrator {
         traj.benchmarkType = taskStyle;
         traj.taskStyle = taskStyle;
         // D-parallel (declared tweak): a caller-provided score is respected
-        // (ZorgeChaser computes a richer verification-aware score); the
+        // (PanshalachChaser computes a richer verification-aware score); the
         // orchestrator's TrajectoryScorer is the fallback when absent.
         if (traj.score === undefined || traj.score === null) {
           traj.score = TrajectoryScorer.score(traj);

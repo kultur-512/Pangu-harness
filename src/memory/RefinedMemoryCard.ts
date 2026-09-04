@@ -1,4 +1,4 @@
-// Zorge 失败记忆：提炼后持久化数据模型
+// Panshalach 失败记忆：提炼后持久化数据模型
 // 核心思路：原始完整轨迹仅存在当前会话内存，持久化的只保留"教训卡片"
 // 教训卡片结构轻量、可过滤、可衰减
 
@@ -90,9 +90,9 @@ export const MEMORY_LIMITS = {
   /** 文件大小软上限（字节） */
   MAX_FILE_SIZE_BYTES: 200 * 1024,
   /** 默认持久化文件名 */
-  DEFAULT_FILENAME: '.zorge-memory.json',
+  DEFAULT_FILENAME: '.panshalach-memory.json',
   /** 默认 .gitignore 追加行 */
-  GITIGNORE_LINE: '.zorge-memory.json',
+  GITIGNORE_LINE: '.panshalach-memory.json',
 };
 
 /**

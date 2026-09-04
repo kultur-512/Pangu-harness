@@ -7,7 +7,7 @@
 // one-line EXIT_CODE:0 enhancement).
 //
 // SAFETY GATE (first thing that runs, per M1 instruction):
-//   !process.stdout.isTTY || ZORGE_SMOKE=1  →  fixed mock string, zero spawns,
+//   !process.stdout.isTTY || PANSHA_SMOKE=1  →  fixed mock string, zero spawns,
 //   zero file writes. This is what keeps smoke tests and CI harmless.
 
 import type { ToolCall } from '../types/toolCall.js';
@@ -83,13 +83,13 @@ export interface EngineAdapter {
 export const SMOKE_MOCK_RESULT = 'VERIFICATION: ALL_TESTS_PASSED';
 
 export function isSmokeEnvironment(): boolean {
-  // Priority (dogfood-①): ZORGE_SMOKE=1 wins over everything (tests/CI keep
+  // Priority (dogfood-①): PANSHA_SMOKE=1 wins over everything (tests/CI keep
   // the power to force mock even if HEADLESS was mis-set in CI).
-  if (process.env.ZORGE_SMOKE === '1') return true;
-  // Explicit headless escape hatch: ZORGE_HEADLESS=1 or `zorge --headless`
+  if (process.env.PANSHA_SMOKE === '1') return true;
+  // Explicit headless escape hatch: PANSHA_HEADLESS=1 or `pangu --headless`
   // opts OUT of the mock gate — real execution in non-interactive/CI contexts.
   // Must always be set explicitly; never defaults on.
-  if (process.env.ZORGE_HEADLESS === '1') return false;
+  if (process.env.PANSHA_HEADLESS === '1') return false;
   // Default (unchanged): non-TTY → mock (safety red line).
   return !process.stdout.isTTY;
 }
@@ -119,7 +119,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   // M1-2.3: per-run RBW bookkeeping. readFiles records every successfully
   // read file (absolute, resolved) so write_file/edit_file can enforce
   // Read-Before-Write. The set lives for the lifetime of THIS adapter
-  // (created per rollout by ZorgeChaser — matching per-rollout semantics).
+  // (created per rollout by PanshalachChaser — matching per-rollout semantics).
   const readFiles = opts.readFiles ?? new Set<string>();
 
   const baseRead: ToolImpl = readFile;
@@ -132,12 +132,12 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   };
 
   // M1-2.3 tier toolsets: quick/standard NEVER get write tools (six-tier
-  // contract enforced at the execution layer). high/max/ex/zorge do.
+  // contract enforced at the execution layer). high/max/ex/pangu do.
   // (B1 fix: 'max' was missing — TierConfig marks max isStrongMode with
   // all-write confirmation, so it must carry write tools too.)
   const tier = String(opts.tierConfig.tier || '').toLowerCase();
   const writeTools: Record<string, ToolImpl> =
-    (tier === 'high' || tier === 'max' || tier === 'ex' || tier === 'zorge')
+    (tier === 'high' || tier === 'max' || tier === 'ex' || tier === 'pangu')
       ? {
           write_file: createWriteFileTool({ readFiles, failureMemory: opts.failureMemory }),
           edit_file: createEditFileTool({ readFiles, failureMemory: opts.failureMemory }),

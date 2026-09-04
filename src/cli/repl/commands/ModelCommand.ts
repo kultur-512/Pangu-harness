@@ -15,7 +15,7 @@ const command: Command = {
   async execute(ctx: CommandContext, args: string[]): Promise<CommandResult> {
     const provider: ModelProvider | undefined = ctx.provider || ctx.session.provider;
 
-    // Always attempt to pick up a freshly created .zorge.json or newly set env var
+    // Always attempt to pick up a freshly created .panshalach.json or newly set env var
     // as soon as the user touches /model at all. This is the most common "I just configured it" flow.
     try {
       const active = ctx.provider || ctx.session.provider;
@@ -44,12 +44,12 @@ const command: Command = {
 
       const ws = ctx.session.workspace || process.cwd();
 
-      // === Direct raw load of .zorge.json from the workspace (ignores any caching / BOM issues) ===
+      // === Direct raw load of .panshalach.json from the workspace (ignores any caching / BOM issues) ===
       // S1: diagnostics carry error TYPES only — never config content / key material / file snippets.
       let scnetCfg: any = null;
       let rawLoadDiag = '';
       try {
-        const projPath = join(ws, '.zorge.json');
+        const projPath = join(ws, '.panshalach.json');
         if (existsSync(projPath)) {
           let buf = readFileSync(projPath);
           // strip UTF-8 BOM bytes
@@ -81,7 +81,7 @@ const command: Command = {
             }
           }
         } else {
-          rawLoadDiag = 'raw file not found at ' + join(ws, '.zorge.json');
+          rawLoadDiag = 'raw file not found at ' + join(ws, '.panshalach.json');
         }
       } catch (e: any) {
         rawLoadDiag = 'raw read error: ' + (e?.message || e);
@@ -218,15 +218,15 @@ const command: Command = {
             }
             ctx.renderer.writeLine('');
             ctx.renderer.writeLine('推荐做法：');
-            ctx.renderer.writeLine('  1. 确认文件存在： ' + join(wsForCheck, '.zorge.json'));
-            ctx.renderer.writeLine('  2. 退出并重启 Zorge（新进程启动时会正确加载）：');
+            ctx.renderer.writeLine('  1. 确认文件存在： ' + join(wsForCheck, '.panshalach.json'));
+            ctx.renderer.writeLine('  2. 退出并重启 Panshalach（新进程启动时会正确加载）：');
             ctx.renderer.writeLine('       /exit');
             ctx.renderer.writeLine('       npm run build');
-            ctx.renderer.writeLine('       # 然后启动 zorge');
+            ctx.renderer.writeLine('       # 然后启动 pangu');
             ctx.renderer.writeLine('  3. 启动后直接： /model list   和   /model glm');
             ctx.renderer.writeLine('');
             ctx.renderer.writeLine('或者临时用环境变量快速验证：');
-            ctx.renderer.writeLine('       $env:SCNET_API_KEY="sk-tp-你的密钥"; zorge');
+            ctx.renderer.writeLine('       $env:SCNET_API_KEY="sk-tp-你的密钥"; pangu');
           } else {
             const lastErr = lastScnetListError;
             ctx.renderer.warn('未能从 "scnet" 拉取到模型列表（检测到密钥，但 /models 调用失败）。');
@@ -252,7 +252,7 @@ const command: Command = {
 
       // Persist + adopt
       try {
-        const projPath = join(ws, '.zorge.json');
+        const projPath = join(ws, '.panshalach.json');
         let proj: any = {};
         if (existsSync(projPath)) {
           try {
@@ -312,7 +312,7 @@ const command: Command = {
           ctx.renderer.writeLine('要使用 /model glm 直连 scnet 的 GLM 模型，请先配置密钥：');
           ctx.renderer.writeLine('');
           ctx.renderer.writeLine('方法一（推荐，立即生效，下次启动自动读取）：');
-          ctx.renderer.writeLine('  在当前目录创建 .zorge.json，内容例如：');
+          ctx.renderer.writeLine('  在当前目录创建 .panshalach.json，内容例如：');
           ctx.renderer.writeLine('  {');
           ctx.renderer.writeLine('    "providers": {');
           ctx.renderer.writeLine('      "scnet": {');
@@ -325,7 +325,7 @@ const command: Command = {
           ctx.renderer.writeLine('');
           ctx.renderer.writeLine('方法二（临时）：');
           ctx.renderer.writeLine('  $env:SCNET_API_KEY="sk-tp-你的密钥"');
-          ctx.renderer.writeLine('  然后重新启动 zorge');
+          ctx.renderer.writeLine('  然后重新启动 pangu');
           ctx.renderer.writeLine('');
           ctx.renderer.writeLine('配置好后直接输入 /model glm 即可（会自动热加载最新配置）。');
           return {};

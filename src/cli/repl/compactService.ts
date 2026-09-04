@@ -26,7 +26,7 @@ function resolveStrategyId(session: Session): string {
   if (cached) return cached;
   let id = 'default';
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(ws, '.zorge.json'), 'utf-8'));
+    const raw = JSON.parse(fs.readFileSync(path.join(ws, '.panshalach.json'), 'utf-8'));
     const s = raw?.compaction?.strategy;
     if (typeof s === 'string' && s) id = s;
   } catch {}

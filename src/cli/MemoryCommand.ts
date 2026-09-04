@@ -1,12 +1,12 @@
-// Zorge memory 子命令
+// Panshalach memory 子命令
 // 用法：
-//   zorge memory list
-//   zorge memory refine --trajectory <file>
-//   zorge memory clear [--category X]
-//   zorge memory export [file]
-//   zorge memory import <file>
-//   zorge memory remember [--pin] <内容>    (M1.2)
-//   zorge memory forget <id>                (M1.2)
+//   pangu memory list
+//   pangu memory refine --trajectory <file>
+//   pangu memory clear [--category X]
+//   pangu memory export [file]
+//   pangu memory import <file>
+//   pangu memory remember [--pin] <内容>    (M1.2)
+//   pangu memory forget <id>                (M1.2)
 
 import { RefinedMemoryStore } from '../memory/RefinedMemoryStore.js';
 import { writeFileSync, readFileSync } from 'fs';
@@ -106,7 +106,7 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
 
 function renderHelp(): string {
   return `
-Zorge memory 子命令:
+Panshalach memory 子命令:
 
   memory list [--kind failure|success|preference]  列出教训卡片（可按 kind 过滤）
   memory remember [--pin] <内容>                    记住用户偏好（--pin 冻结衰减）
@@ -115,7 +115,7 @@ Zorge memory 子命令:
   memory export [file]                             导出为 JSON（默认输出到 stdout）
   memory import <file> [--merge false]             从 JSON 导入（默认合并）
 
-存储位置: <workspace>/.zorge-memory.json
+存储位置: <workspace>/.panshalach-memory.json
 默认加入 .gitignore
 `.trim();
 }

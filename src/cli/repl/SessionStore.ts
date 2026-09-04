@@ -1,6 +1,6 @@
 // src/cli/repl/SessionStore.ts
 // Persistence for Session (blueprint v1.1)
-// Stores sessions under ~/.zorge/sessions/<id>.json
+// Stores sessions under ~/.panshalach/sessions/<id>.json
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import type { SessionFile, SessionSummary } from './types.js';
 import { Session } from './Session.js';
 
-const DEFAULT_DIR = join(homedir(), '.zorge', 'sessions');
+const DEFAULT_DIR = join(homedir(), '.panshalach', 'sessions');
 
 export class SessionStore {
   private dir: string;

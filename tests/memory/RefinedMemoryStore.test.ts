@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 function makeTempWorkspace(): string {
-  const dir = join(tmpdir(), 'zorge-mem-test-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  const dir = join(tmpdir(), 'pangu-mem-test-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -143,7 +143,7 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
     assert.ok(!loaded2.some(x => x.id === low.id), 'decayWeight=1 card at >2*HL must be filtered (<0.3)');
   });
 
-  it('old .zorge-memory.json without memoryCategory still loads (defaults to general)', () => {
+  it('old .panshalach-memory.json without memoryCategory still loads (defaults to general)', () => {
     // write a raw old-format file directly
     const oldFile = {
       meta: { version: '0.9', lastUpdated: Date.now(), totalCards: 1 },
@@ -164,7 +164,7 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
       ],
     };
 
-    const path = join(tmp, '.zorge-memory.json');
+    const path = join(tmp, '.panshalach-memory.json');
     writeFileSync(path, JSON.stringify(oldFile, null, 2), 'utf-8');
 
     // reload store

@@ -4,10 +4,10 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import type { ZorgeConfig, ProviderConfig } from './types.js';
+import type { PanshalachConfig, ProviderConfig } from './types.js';
 import type { Tier } from '../../tiers/TierConfig.js';
 
-const USER_CONFIG_DIR = join(homedir(), '.zorge');
+const USER_CONFIG_DIR = join(homedir(), '.panshalach');
 const USER_CONFIG_PATH = join(USER_CONFIG_DIR, 'config.json');
 
 /**
@@ -42,7 +42,7 @@ export function deepMerge<T>(base: T, override: T): T {
 }
 
 export class ConfigManager {
-  private config: ZorgeConfig = {};
+  private config: PanshalachConfig = {};
 
   constructor(private workspaceRoot: string = process.cwd()) {
     this.load();
@@ -51,8 +51,8 @@ export class ConfigManager {
   private load() {
     this.config = {};
 
-    // P2-C 加载顺序：项目级 .zorge.json → 用户级 ~/.zorge/config.json → CLI 参数（CLI 由调用方在 getAll 后叠加）
-    const projectPath = join(this.workspaceRoot, '.zorge.json');
+    // P2-C 加载顺序：项目级 .panshalach.json → 用户级 ~/.panshalach/config.json → CLI 参数（CLI 由调用方在 getAll 后叠加）
+    const projectPath = join(this.workspaceRoot, '.panshalach.json');
     this.mergeProjectConfig(projectPath);
 
     if (existsSync(USER_CONFIG_PATH)) {
@@ -84,11 +84,11 @@ export class ConfigManager {
     }
   }
 
-  get<K extends keyof ZorgeConfig>(key: K): ZorgeConfig[K] {
+  get<K extends keyof PanshalachConfig>(key: K): PanshalachConfig[K] {
     return this.config[key];
   }
 
-  set<K extends keyof ZorgeConfig>(key: K, value: ZorgeConfig[K]) {
+  set<K extends keyof PanshalachConfig>(key: K, value: PanshalachConfig[K]) {
     (this.config as any)[key] = value;
   }
 
@@ -100,7 +100,7 @@ export class ConfigManager {
     writeFileSync(USER_CONFIG_PATH, JSON.stringify(this.config, null, 2), 'utf-8');
   }
 
-  getAll(): ZorgeConfig {
+  getAll(): PanshalachConfig {
     return { ...this.config };
   }
 }

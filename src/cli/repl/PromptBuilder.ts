@@ -89,15 +89,15 @@ const TIER_CONSTRAINTS: Record<Tier, TierConstraint> = {
 </tier_constraint>`,
     text: '当前档位：ex（极端）。极难任务，所有写操作必须确认，多层验证。'
   },
-  zorge: {
-    tier: 'zorge',
-    xml: `<tier_constraint tier="zorge">
+  pangu: {
+    tier: 'pangu',
+    xml: `<tier_constraint tier="pangu">
   <mandatory_user_confirmation>all_operations_with_budget_ack</mandatory_user_confirmation>
   <forbid>any_unconfirmed_action, weak_verification, budget_overrun</forbid>
   <require>explicit_plan, exhaustive_verification, budget_acknowledgment</require>
   <execution_style>ultimate_rigor</execution_style>
 </tier_constraint>`,
-    text: '当前档位：zorge（终极长程记忆模式）。极致追求，所有操作必须确认并遵守预算。'
+    text: '当前档位：pangu（终极长程记忆模式）。极致追求，所有操作必须确认并遵守预算。'
   },
 };
 
@@ -115,7 +115,7 @@ export class TierConstraintRegistry {
 /**
  * P1.5a: Tier → thinking-depth directive ladder (CC-inspired).
  * quick/standard stay terse; high begins structured reasoning; max deepens it;
- * ex/zorge get the deepest "ultrathink" level.
+ * ex/pangu get the deepest "ultrathink" level.
  */
 export const TIER_THINKING_DIRECTIVE: Record<string, string> = {
   quick: '',
@@ -123,7 +123,7 @@ export const TIER_THINKING_DIRECTIVE: Record<string, string> = {
   high: 'think',
   max: 'think hard',
   ex: 'ultrathink',
-  zorge: 'ultrathink',
+  pangu: 'ultrathink',
 };
 
 export interface InjectionSummary {
@@ -201,7 +201,7 @@ export class PromptBuilder {
     const currentWsFiles = this.collectCurrentWorkspaceFiles(issue);
 
     // === System identity (always) ===
-    const systemLine = `你是 Panshalach，一个基于 openPangu 的记忆增强长程上下文智能体，面向软件工程长期维护场景。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
+    const systemLine = `你是烛龙（Zhulong），一个基于 openPangu 的记忆增强长程上下文智能体，面向软件工程长期维护场景（内部代号 Panshalach / 盘沙拉克）。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
     lines.push(systemLine);
 
     // === M2.1: L0 硬约束（≤3 条精选，非整段注入） ===
@@ -246,7 +246,7 @@ export class PromptBuilder {
       const { readProjectVerificationBlock } = await import('./projectInstructions.js');
       const block = readProjectVerificationBlock(this.session.workspace);
       if (block) {
-        this.tryInject('project-verification', ['\n【项目验证命令（来自 .zorge/AGENTS.md）】', block], lines);
+        this.tryInject('project-verification', ['\n【项目验证命令（来自 .panshalach/AGENTS.md）】', block], lines);
       }
     } catch {
       // project instructions are best-effort
@@ -351,7 +351,7 @@ export class PromptBuilder {
     }
 
     // === Anchors note — dedup ===
-    if (['high', 'max', 'ex', 'zorge'].includes(this.session.tier)) {
+    if (['high', 'max', 'ex', 'pangu'].includes(this.session.tier)) {
       this.tryInject('anchor-note', '\n（锚点将在探索阶段按档位自动选取关键文件与目录，用于上下文稳定）', lines);
     }
 
@@ -619,7 +619,7 @@ export class PromptBuilder {
    */
   buildSystemHeader(): string {
     return [
-      `你是 Panshalach，档位 ${this.session.tier}。`,
+      `你是烛龙（Zhulong），档位 ${this.session.tier}。`,
       this.buildTierContract()
     ].join('\n');
   }

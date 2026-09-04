@@ -1,7 +1,7 @@
 // scripts/test-repl-smoke.mjs
 // Smoke test for built ZIS REPL (blueprint v1.1)
 // Runs runOneShot(['help']) and checks it doesn't hard-crash on logic.
-// May get EPERM on ~/.zorge in sandboxed envs; we treat that as non-fatal if help output happened.
+// May get EPERM on ~/.panshalach in sandboxed envs; we treat that as non-fatal if help output happened.
 
 import { runOneShot } from '../dist/cli/repl.js';
 
@@ -20,7 +20,7 @@ async function main() {
     // If it's only a filesystem permission error on home dir persistence, tolerate it.
     const msg = e && e.message ? e.message : String(e);
     if (/EPERM|mkdir|permission/i.test(msg)) {
-      console.error('\n[smoke] Non-fatal FS error during oneShot (likely ~/.zorge sandbox):', msg);
+      console.error('\n[smoke] Non-fatal FS error during oneShot (likely ~/.panshalach sandbox):', msg);
     } else {
       console.error('\n[smoke] Unexpected error:', msg);
       process.exitCode = 1;

@@ -1,15 +1,15 @@
 # Panshalach 命题交付 ROADMAP
 
-> 现状：可见层已重命名 Panshalach、旧 Zorge 文档已物理清理、命题文档集已就位（见 docs/panshalach/）。下列为让"命题叙事成立"的后续里程碑，按依赖排序。
+> 现状：可见层已重命名 Panshalach、旧 Panshalach 文档已物理清理、命题文档集已就位（见 docs/panshalach/）。下列为让"命题叙事成立"的后续里程碑，按依赖排序。
 
 ## P0 ✅ 已完成（2026-09 本期）
 - [x] REFACTOR-ASSESSMENT.md 重构评估报告
-- [x] 物理删除 docs/ 全部 Zorge/GLM/30-rounds 旧文档与 docs/agents、.agents
+- [x] 物理删除 docs/ 全部 Panshalach/GLM/30-rounds 旧文档与 docs/agents、.agents
 - [x] docs/panshalach/ 命题文档集（README/ARCHITECTURE/MEMORY-DESIGN/EVALUATION/USER-GUIDE/ROADMAP）
 - [x] 可见层改名 Panshalach（package/bin、欢迎/身份串、server 文案、memory 标题、tier 描述、/init 文档指针）；62 组测试通过
 
 ## P1 — openPangu 泛化接入（代码）
-- [ ] `.zorge.json` example 加 openpangu provider（本机/昇腾 OpenAI 兼容端点）
+- [ ] `.panshalach.json` example 加 openpangu provider（本机/昇腾 OpenAI 兼容端点）
 - [ ] ModelProvider：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；bare-name 不再默认走 scnet；GLM shorthand 保留为可选别名
 - [ ] `ModelCommand /model list` 改为遍历全部 provider 拉模型（去 scnet 独占文案）
 - [ ] `openai-compatible.complete` 透传并返回 `message.tool_calls`（ModelClientOutput）；VerifyCritiqueLoop 已支持
@@ -38,8 +38,8 @@
 - [ ] 资源预算表（1B/7B 显存、int8、上下文窗口、token 成本核算）
 
 ## P6 — 内部存储名/品牌全量收敛
-- [ ] `.zorge.json`→`.panshalach.json`、`.zorge-memory.json`→`.panshalach-memory.json`、`~/.zorge/`→`~/.panshalach/`、`ZORGE_*`→`PANG_*`（一次性迁移脚本 + 读旧写新 fallback）
-- [ ] `ZorgeChaser.ts`→`Panshalach.ts`、bin/文案扫尾；`Glm53SweProChaser`/`zorge` bin 保留 deprecated alias
+- [ ] `.panshalach.json`→`.panshalach.json`、`.panshalach-memory.json`→`.panshalach-memory.json`、`~/.panshalach/`→`~/.panshalach/`、`PANSHA_*`→`PANG_*`（一次性迁移脚本 + 读旧写新 fallback）
+- [ ] `PanshalachChaser.ts`→`Panshalach.ts`、bin/文案扫尾；`Glm53SweProChaser`/`pangu` bin 保留 deprecated alias
 
 ## P7 — 真实 openPangu 评测 → EVALUATION.md 填数（命题提交物 2）
 - [ ] 评测任务集脚本化（T1 约束保持 / T2 跨文件关联 / T3 长文档跨章节 / T4 中断续接 / T5 压缩后保持）

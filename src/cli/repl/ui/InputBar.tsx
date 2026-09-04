@@ -8,7 +8,7 @@
 // - Ctrl+Z / Ctrl+Y undo/redo via debounce-merged input buffer
 // - P4-4.2: typing stays live during a run; Enter routes to queue/steer
 
-import { ZORGE_COMMANDS } from '../SlashPicker.js';
+import { PANSHA_COMMANDS } from '../SlashPicker.js';
 import type { ProviderOption, SlashCommand } from '../SlashPicker.js';
 import { generateSuggestions, ghostTextFor, getPreservedSelection, moveSelection, acceptSuggestion, doubleEscState } from '../typeahead.js';
 import { SuggestionBar } from './SuggestionBar.js';
@@ -27,18 +27,18 @@ export function InputBar(props: {
   /**
    * B5: single-owner Esc semantics. The InputBar owns Esc (close suggestions;
    * double-Esc within 300ms also clears the input + queue via this callback).
-   * ZorgeApp must NOT handle Esc anymore (it used to race this handler).
+   * PanshaApp must NOT handle Esc anymore (it used to race this handler).
    */
   onDoubleEsc?: () => void;
 }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
     useState: (i: any) => [i, () => {}],
     useEffect: () => {},
     useRef: () => ({ current: null }),
   };
 
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Box, Text, useInput } = ink;
 
   const { value, onChange, onSubmit, running, history = [], queueCount = 0, queueTasks = 0, queueSteers = 0, providerOptions, onDoubleEsc } = props;
@@ -50,7 +50,7 @@ export function InputBar(props: {
   const [buffer] = (R.useState ? R.useState(() => new InputBuffer(400)) : [new InputBuffer(400), () => {}]) as [InputBuffer, (b: InputBuffer) => void];
 
   // B5: double-Esc (300ms) timer — owned HERE (InputBar knows the suggestions
-  // state; ZorgeApp must not race it with a second Esc handler).
+  // state; PanshaApp must not race it with a second Esc handler).
   const lastEscRef = R.useRef ? R.useRef(0) : { current: 0 };
 
   // load providers once (local read after startup prefetch — milliseconds)
@@ -62,7 +62,7 @@ export function InputBar(props: {
   const v = value || '';
   const suggestions = suggestionsDismissed
     ? []
-    : generateSuggestions(v, v.length, { commands: ZORGE_COMMANDS, providers, history, files: [] });
+    : generateSuggestions(v, v.length, { commands: PANSHA_COMMANDS, providers, history, files: [] });
   const selectedIndex = getPreservedSelection(suggestions, selectedId);
   const selected = suggestions[selectedIndex] || null;
   const ghost = ghostTextFor(v, suggestions);
@@ -103,7 +103,7 @@ export function InputBar(props: {
 
     if (suggestions.length > 0) {
       // B5: plain Tab accepts the suggestion; shift+tab is NOT ours — it
-      // cycles the mode ring in ZorgeApp (was double-handled before).
+      // cycles the mode ring in PanshaApp (was double-handled before).
       if (key.tab && !key.shift) {
         if (selected) {
           const repl = acceptSuggestion(v, selected);

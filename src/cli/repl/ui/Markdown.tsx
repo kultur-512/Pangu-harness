@@ -10,10 +10,10 @@
 // For production-grade later, consider optional ink-markdown or similar.
 
 export function renderMarkdown(content: string): any[] {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Text } = ink;
 
   if (!content) return [];
@@ -103,10 +103,10 @@ export function renderMarkdown(content: string): any[] {
 }
 
 export function MarkdownBlock(props: { content: string }) {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Box } = ink;
 
   const nodes = renderMarkdown(props.content || '');
@@ -131,10 +131,10 @@ const BASH_KEYWORDS = new Set([
 ]);
 
 function highlightCodeLines(code: string, lang: string): any[] {
-  const R: any = (globalThis as any).__ZORGE_INK_REACT__ || {
+  const R: any = (globalThis as any).__PANSHA_INK_REACT__ || {
     createElement: (t: any, p?: any, ...c: any[]) => ({ type: t, props: p, children: c }),
   };
-  const ink: any = (globalThis as any).__ZORGE_INK__ || {};
+  const ink: any = (globalThis as any).__PANSHA_INK__ || {};
   const { Text } = ink;
 
   if (!Text) {
