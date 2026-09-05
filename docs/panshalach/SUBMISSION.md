@@ -22,7 +22,7 @@
 ## 2. 完整解决方案（大纲，展开见 ARCHITECTURE.md）
 
 - 架构分层：模型接入层（多 provider 配置驱动 + 双通道工具协议）→ 执行引擎（三路解析 + 真实工具 + 审批 + 验证信号）→
-  记忆层（AgentEvent → Assertion/TaskState → MemoryProjection）→ 上下文层（ContextCompiler + Snapshot）→ 交互层（CLI/REPL/SSE）。
+  记忆层（事件账本 → TaskState → 记忆卡投影）→ 上下文层（PromptBuilder 统一账本 + ContextSnapshot 注入审计）→ 交互层（CLI/REPL/SSE）。
 - 关键流程：任务落定 → 事件落盘 → 断言抽取（候选→已验证）→ 记忆卡提炼/合并 → 下次任务注入。
 - 多模型源：`.panshalach.json` providers + `PANSHA_<PROV>_*` env + `apiKeyCmd`（密钥不落盘）+
   `openpangu:openPangu-7B` 路由；原生 tool_calls 与文本协议双通道自适应。

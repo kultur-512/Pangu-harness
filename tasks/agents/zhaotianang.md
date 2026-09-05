@@ -10,8 +10,8 @@
 
 ## 工作内容（对齐 ROADMAP-NEXT §3 R 编号，2026-09-05 修订）
 
-- U1 `TaskState` CLI 落地（`/task status/risks/next/decide`，`src/cli/repl/commands/TaskCommand.ts`）。
-- U2-U3 评测基建前置（R6）：`scripts/eval/` 骨架 + results schema + T1-T5 fixture（**Assertion schema/MemoryProjection 按对抗评审裁决推迟**，契约留在 types.ts）。
+- U1 评测基建骨架先行（R6，无依赖）：`scripts/eval/` 目录 + run-eval/results schema 骨架 + T1-T5 fixture 占位。
+- U2-U3 `TaskState` CLI（`/task status/risks/next/decide`，`src/cli/repl/commands/TaskCommand.ts`）——依赖王佐 U1-U2 的 taskState.ts（可先按 types.ts 契约 + stub store 开工）；随后继续 R6 fixture 实体化。
 - U4 `compactService` 多级摘要 L1/L2（前置王浩宇 R3 Turn 结构化；generation/coveredTurnIds 沿用 v3 账本）。
 - U5-U6 R7 语义检索 C4（`src/memory/embed.ts` n-gram v0，只跑 7B × T2/T3，正负结果都进 EVALUATION.md）；R6 真实 openPangu 跑分。
 - U7 注入预算 + 资源消耗实测 + ARCHITECTURE.md §5 填表；U8 演示数据 + DEPLOY-CN.md + SUBMISSION.md 定稿。

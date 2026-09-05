@@ -82,3 +82,14 @@ last_updated: $(date +%H:%M)
 - 对齐 8 个文件：ARCHITECTURE（执行循环层图/信号源 A/资源表去 critique 与多 rollout）、MEMORY-DESIGN（L0 层与写入源表 FailureMemory 已摘除）、docs/panshalach/README（目录树删 context/*、loop 描述、单 rollout）、SUBMISSION（架构分层描述）、REFACTOR-ASSESSMENT（FailureMemory/RepoExplorer/ContextManager 行改已摘除归档）、WORK-PLAN（U2/U3 矩阵对齐 R 编号、主力行、U9/U5 测试数动态口径）、zhaotianang 卡（任务线改 R5/R6/R7/R8，标注 Assertion/MemoryProjection 推迟与 ContextSnapshot 已提前落地）、wanghaoyu 卡（U3 ContextCompiler 推迟转 R6）
 - 历史文档（logs/、handover 调查报告）按"只追加不改"原则保留原文
 - 门槛：tsc EXIT=0；cleanup PASS（纯文档）
+
+## 深夜批次 2（任务分发核对与修正）
+
+### 实际干了什么（事实）
+- 四张注册卡 × WORK-PLAN × ROADMAP-NEXT 交叉核对，发现并修正 9 处不一致：
+  zhaiyuanhao 卡（任务线过时/P1 项移入已完成/补迭代3 与 P6 裁决项）；wanghaoyu 卡（U2 五维评分标推迟/协调对象更新）；wangzuo 卡（schema 已落改查询层/EventExtractor 改显式写入点/注入槽位 KV-cache 口径/U6 去 Projection）；zhaotianang 卡（U1 CLI 依赖倒挂→R6 骨架先行，CLI 移 U2-U3）
+- WORK-PLAN：U1 王佐/赵天昂 cell、U2 王佐、U4 档位 A/B/C+C4、U6 行、U4 里程碑行、§2 事实源图与 bullets 全部对齐；修正 task_state.json 路径笔误
+- 门槛：tsc EXIT=0；npm test 全绿（524 pass + 1 skip）；cleanup PASS
+
+### 卡点 / 需要别人决定（接口争议）
+- 无。分发现在与 ROADMAP-NEXT §3 R1-R9 一一对应
