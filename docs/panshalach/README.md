@@ -20,12 +20,11 @@
 ```
 src/
   PanshalachChaser.ts            核心执行引擎（类名=内部兼容名，后续里程碑更名 Panshalach）
-  loop/VerifyCritiqueLoop   验证/复盘循环（Read-Before-Write、Verify-Before-Claim 铁律）
+  loop/VerifyCritiqueLoop   执行循环（三路解析、Read-Before-Write、Verify-Before-Claim 铁律）
   tools/*                   真实工具引擎：read_file/write_file/edit_file/bash/glob/grep + 四档审批
   memory/*                  记忆卡提炼/过滤/衰减/合并（持久化）
-  context/*                 仓库探索 + 锚点上下文
   cli/repl/*                交互式 REPL、会话资产(rollout jsonl/branch/compact)、提示组装
-  orchestration/*           rollout 并行编排与轨迹记录
+  orchestration/*           单 rollout 编排与轨迹记录
   server/*                  SSE 服务化（前端/远程演示）
 docs/panshalach/            命题交付文档（本目录）
 REFACTOR-ASSESSMENT.md      重构评估报告

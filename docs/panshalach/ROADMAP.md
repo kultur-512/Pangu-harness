@@ -27,25 +27,27 @@
 - [ ] `memory/events.ts` 语义事件流（decision/constraint/requirement/verified/failure/progress，append-only jsonl）；`/memory events`
 - [ ] `memory/taskState.ts` 任务状态机（原始需求锚/决策/未决/里程碑/已验证/风险），注入优先级高于普通卡
 - [ ] `memory/embed.ts` 字符 2-gram 词袋余弦 v0（零依赖）；L1 融合 semanticScore；接口可换国产向量库/openPangu embedding
-- [ ] 压缩滚动多级化（长期粗摘要 + 中期事件/卡 + 近期逐字）
+- [ ] 压缩滚动多级化（L1 中期结构化 envelope + L2 长期粗摘要；前置 Turn 结构化最小集，见 ROADMAP-NEXT R3/R8）
 - [ ] 验收：`/memory events` 可查；注入含事件/状态命中；单测覆盖
+- ⚠️ 本节细化为 ROADMAP-NEXT R4/R5（王佐/赵天昂），事件只允许显式写入点（禁止 NLP 抽取）
 
-## P4 — openPangu 小模型适配 + maintenance 场景 profile
-- [ ] `taskStyle=maintenance`（软件工程长期维护验证风格）
-- [ ] 小模型适配：结构化记忆外置优先、工具协议自适应、critique 初始频率下调
-- [ ] 验收：openPangu-7B 可跑通 maintenance 演示；1B 报告能力边界
+## P4 — openPangu 小模型适配（口径已收窄，2026-09-05）
+- [x] 工具协议自适应：三路解析恒开（#7，8998efe）；原生 tool_calls 为主路径
+- [x] 结构化记忆外置优先：锚点/风格头/FailureMemory 轨道已摘除，记忆注入是唯一上下文记忆面
+- [x] ~~critique 初始频率下调~~ → critique 机制整体摘除（#2）
+- [ ] 验收：openPangu-7B 跑通 maintenance 演示；1B 报告能力边界
 
 ## P5 — 国产软硬件亲和（资源/部署文档 + 演示）
-- [ ] 昇腾 310P/910 与 vLLM-ascend / MindIE 接入步骤；麒麟/其他国产 OS 运行验证
-- [ ] 资源预算表（1B/7B 显存、int8、上下文窗口、token 成本核算）
+- [ ] 昇腾 310P/910 与 vLLM-ascend / MindIE 接入步骤（DEPLOY-CN.md）；麒麟/其他国产 OS 运行验证
+- [ ] 资源预算表（1B/7B 显存、int8、上下文窗口、token 成本核算）→ ARCHITECTURE §5
 
-## P6 — 内部存储名/品牌全量收敛
-- [ ] `.panshalach.json`→`.panshalach.json`、`.panshalach-memory.json`→`.panshalach-memory.json`、`~/.panshalach/`→`~/.panshalach/`、`PANSHA_*`→`PANG_*`（一次性迁移脚本 + 读旧写新 fallback）
-- [ ] `PanshalachChaser.ts`→`Panshalach.ts`、bin/文案扫尾
+## P6 — 内部存储名/品牌全量收敛（⚠️ 目标待 Leader 裁决）
+- [ ] 迁移目标冲突：本条原定 `PANSHA_*`→`PANG_*`，但 0.6.0 已落地 `PANSHA_<PROV>_*` env 三件套（投资加深）——**收敛目标需重新裁决**，裁决前冻结
+- [ ] `PanshalachChaser.ts`→`Panshalach.ts`、bin/文案扫尾（低优先级）
 
 ## P7 — 真实 openPangu 评测 → EVALUATION.md 填数（命题提交物 2）
-- [ ] 评测任务集脚本化（T1 约束保持 / T2 跨文件关联 / T3 长文档跨章节 / T4 中断续接 / T5 压缩后保持）
-- [ ] A/B/C 三档真跑（无记忆 / 记忆卡 / 全能力=P2+P3 后），记录模型版本/端点/种子/成本
+- [ ] 评测基建（T1-T5 + run-eval/smoke-eval/fill-evaluation + A/B/C(+C4) 消融）→ **提前到 U4**，见 ROADMAP-NEXT R6
+- [ ] A 档窗口必须真溢出（收窄窗口或长轮填充）；A/B prompt-diff 展品；T1×7B×A/B/C 最小 9 runs
 - [ ] 结果回填 docs/panshalach/EVALUATION.md 各表 + 分析叙事；提交物 1/2 定稿
 
-> 依赖顺序：P1 → P2 → P3 → P4 → P5；P6 可与 P1 之后任意并行；P7 依赖 P2/P3（全能力档）。
+> 依赖顺序：P1（✅）→ P2 剩余 refine 闭环（R1 最紧要）→ P3（R4/R5）→ P5；P7（R6）基建 U4 就绪、U6 真跑。详细分工/验收见 ROADMAP-NEXT §3。

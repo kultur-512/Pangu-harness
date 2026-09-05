@@ -14,7 +14,7 @@
 
 | 层 | 载体 | 时间尺度 | 已实现/规划 |
 |---|---|---|---|
-| L0 会话内实时 | 轨迹/验证信号/FailureMemory | 单任务内 | 已实现 |
+| L0 会话内实时 | 轨迹/验证信号 | 单任务内 | 已实现（FailureMemory 轨道已摘除 2026-09-05） |
 | L1 结构化记忆卡 | `.panshalach-memory.json`（failure/success/preference） | 跨会话（天~月） | 已实现 |
 | L2 压缩摘要 | `[COMPACT]` 合成轮（模型摘要 + 逐轮 brief） | 长会话 | 已实现 |
 | L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **规划(P3)** |
@@ -62,7 +62,7 @@ interface TaskState {
 
 | 源 | 时机 | 产出 | 状态 |
 |---|---|---|---|
-| 循环实时信号 | 每步违规/失败 | FailureMemory（会话内） | 已实现 |
+| 循环实时信号 | 每步违规/失败 | ~~FailureMemory~~ 已摘除——收敛到回合提炼（信号源 B） | 已摘除（2026-09-05） |
 | **回合提炼** | 任务落定（拿到 bestTrajectory + 验证成败 + attemptCount + 反馈） | refine→卡→save | **规划(P2)**（当前无生产调用点，是最紧要缺口） |
 | 压缩补漏 | compact 移除轮次中验证成功（result.success） | success 卡（evidence=任务摘要，hash 去重） | 已实现 |
 | 用户 | /memory remember [--pin] / forget / import | preference/删除/批量 | 已实现 |

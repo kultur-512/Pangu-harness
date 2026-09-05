@@ -12,7 +12,7 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 ```
 
 **硬约束**：
-- **9/24 交付端到端 MVP**：CLI 接真 openPangu + AgentEvent 事实源 + TaskState 上下文管理 + MemoryProjection 经验复用 + eval runner + 项目书
+- **9/24 交付端到端 MVP**：CLI 接真 openPangu + 事件账本/TaskState/记忆闭环 + 评测证据链（A/B/C 消融）+ 项目书（口径见 ROADMAP-NEXT §3 R1-R9）
 - **9/24 项目书 ≤1000 字概述 + 完整解决方案 + 创新点 + 部署 + 评测 + 总结**（国创赛需求）
 - **kultur 在国创赛系统提报**（走国创赛后台，不在 git 流程里）
 - **4 主力每 2 天 = 一个独立可交付单位**（不能跨单位跨主力强依赖）
@@ -20,9 +20,9 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 
 **4 主力对应人**（按注册卡）：
 - 翟苑皓（zhaiyuanhao）— Leader / W1 / P0 重构 + P1 openPangu 接入
-- 王浩宇（wanghaoyu）— Doer / W2 / P0 markUsed 二态收尾（已落大半）+ ContextCompiler + P6 runner
+- 王浩宇（wanghaoyu）— Doer / W2 / R1 refine 闭环（最紧要）+ R2 markVerified 信号源 + R6 eval runner
 - 王佐（wangzuo）— Main-A / W3 / P0 AgentEvent + TaskState + 状态机
-- 赵天昂（zhaotianang）— Main-B / W4 / P0 ContextSnapshot + MemoryProjection 增强
+- 赵天昂（zhaotianang）— Main-B / W4 / R5 /task CLI + R6 评测 + R7/R8 检索与摘要
 
 ---
 
@@ -30,15 +30,15 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 
 | 单位 | 翟苑皓（Leader / P0 重构 + P1） | 王浩宇（Doer / W2 / P0 拆解 + P6 runner） | 王佐（Main-A / W3 / P0 事件+状态） | 赵天昂（Main-B / W4 / P0 投影+快照） |
 |---|---|---|---|---|
-| **U1 9/7-8** | 接口契约 v2（✅ types.ts/rolloutStore schema/tool_calls 透传已提前落地 2026-09-04，见 df7a119）；`memory/events.ts`、`memory/taskState.ts` 落地 | MemoryCard v2 字段按对抗评审裁决**不做**（伪 provenance），provenance 走 rollout `context` 事件（✅ 已落）；~~markUsed 拆三态~~ ✅ 二态已落（bf5f4a7） | `MemoryEventStore` 在现有 rolloutStore JSONL 之上扩展 schema（追加 `taskId / kind / refs`） | `TaskState` 持久化：`tasks/agents/<pinyin>/task_state.json`；`/task status/risk/decide` CLI |
-| **U2 9/9-10** | ✅ 透传已提前落地（df7a119）；转 U3 剩余项 | `MemoryProjection`：5 维评分**按对抗评审裁决推迟**（量纲不同构/utility 无信号源）；保留 `0.7w+0.3rel`；`markVerified` 信号源接线 | `EventExtractor`：trajectory → 增量 `AgentEvent`，保留原始轨迹不删除 | `Assertion` schema（scope/confidence/validFrom/validUntil/evidenceEventIds/provenance） |
-| **U3 9/11-12** | ModelProvider env 注入泛化（`PANSHA_<PROV>_*`）+ `getModelContextLength` 跨 provider | `ContextCompiler`：统一预算装箱，替代 `PromptBuilder` 拼接逻辑；`ContextSnapshot` 每次模型调用产出 | TaskState 注入 PromptBuilder L1：`[原始需求] → [记忆卡] → [事件摘要] → [当前任务]`；CLI `/task` 子命令 | `MemoryProjection` 加载：`RefinedMemoryStore.loadFiltered` 改读 Projection 卡片，保留兼容 API |
-| **U4 9/13-14** | 评审 W2/W3/W4 接口契约 v2；`npx tsc --noEmit` EXIT=0；分支对齐 stand-up | `scripts/eval/run-eval.mjs` 骨架：A/B/C/C1-C4 五档 + T1-T5 stub | `/task` CLI 集成 + `EventStore` 落盘验证 | `compactService` 三级摘要（以事件 + 状态为投影源，不再仅摘要原始轨迹） |
+| **U1 9/7-8** | 接口契约 v2（✅ types.ts/rolloutStore schema/tool_calls 透传已提前落地 2026-09-04，见 df7a119）；`memory/events.ts`、`memory/taskState.ts` 落地 | MemoryCard v2 字段按对抗评审裁决**不做**（伪 provenance），provenance 走 rollout `context` 事件（✅ 已落）；~~markUsed 拆三态~~ ✅ 二态已落（bf5f4a7） | `MemoryEventStore` 查询层（schema 已由 Leader 落 df7a119） | R6 评测基建骨架先行（无依赖）：`scripts/eval/` + results schema（`/task` CLI 移 U2-U3，依赖王佐 taskState.ts） |
+| **U2 9/9-10** | ✅ 透传已提前落地（df7a119）；转 U3 剩余项 | `MemoryProjection`：5 维评分**按对抗评审裁决推迟**（量纲不同构/utility 无信号源）；保留 `0.7w+0.3rel`；`markVerified` 信号源接线 | 事件显式写入点接线（任务落定/审批/验证/用户声明）——禁止 NLP 抽取 trajectory | 评测基建前置（R6）：`scripts/eval/` 骨架 + results schema（Assertion schema 按裁决推迟，契约已留 types.ts） |
+| **U3 9/11-12** | ✅ env 泛化/跨 provider 上下文已提前落地（df7a119）；转 R9 项目书 | ~~ContextCompiler 独立模块~~ **按裁决推迟**（PromptBuilder 保持拼接器 + 统一账本）；R6 eval runner 骨架 | TaskState 注入 PromptBuilder（槽位：env/feature 之后、recent-context 之前）；CLI `/task` 子命令 | ~~Projection 卡片~~ **按裁决推迟**；转 R6 任务集 T1-T5 fixture |
+| **U4 9/13-14** | 评审 W2/W3/W4 接口契约 v2；`npx tsc --noEmit` EXIT=0；分支对齐 stand-up | `scripts/eval/run-eval.mjs` 骨架：A/B/C + C4 消融 + T1-T5 stub | `/task` CLI 集成 + `EventStore` 落盘验证 | `compactService` 多级摘要 L1/L2（envelope；前置王浩宇 R3 Turn 结构化） |
 | **U5 9/15-16** | 远端 hook + CI gate 验证；本批 README/CHANGELOG 加 v0.6.0 入口；`docs/agent/` 骨架修订 | `smoke-eval.mjs` mock 模式跑通 | `tests/memory/EventStore.test.ts` + `tests/repl/TaskState.test.ts` 绿 | `tests/memory/Projection.test.ts` + `tests/repl/ContextSnapshot.test.ts` 绿 |
-| **U6 9/17-18** | 合并所有分支到 develop；架构文档 ARCHITECTURE.md 改成"AgentEvent 事实源 + TaskState 控制 + MemoryProjection 投影 + ContextCompiler 管理"五层图 | 真 openPangu 端点跑 A/B/C/C1-C4 出 `scripts/eval/results/<date>.json` | M3 集成：trajectory → AgentEvent → Projection 落盘 + TaskState 注入 | M4 集成：ContextCompiler + ContextSnapshot 落盘 |
+| **U6 9/17-18** | 合并所有分支到 develop；ARCHITECTURE.md 执行链路图终稿 | 真 openPangu 端点跑 A/B/C(+C4) 出 `scripts/eval/results/<date>.json` | 集成验证：事件流落盘 + TaskState 注入 + refine 闭环串联 | 集成：embed 缓存 + 多级摘要联动 + `memory search-semantic` |
 | **U7 9/19-20** | 端到端评审 + 修复 + 收口 | 5 任务族端到端验证（T1 约束 / T2 跨文件 / T3 长文档 / T4 resume / T5 compact） | 事件流图人工验收 + 任务状态演示 | 注入预算 + ContextSnapshot 资源消耗实测 + ARCHITECTURE.md §5 填表 |
 | **U8 9/21-22** | `docs/panshalach/SUBMISSION.md`（项目书 ≤1000 字概述 + 完整解决方案 + 创新点 + 部署 + 评测 + 总结）+ `EVALUATION.md` §4 填真实数据 + `DEPLOY-CN.md` 终版 | 评测 CSV + runner 报告 + 用例统计 | 事件/状态演示数据 + 截图 | 投影/快照演示数据 + 多级摘要资源数据 |
-| **U9 9/23-24** | kultur 在国创赛系统提报；终轮 test 全绿；`npx tsc --noEmit` EXIT=0；529+ 用例全绿；`verify-panshalach-cleanup.mjs` PASS；CHANGELOG 条目齐；项目复盘 | 529+ 用例全绿 + verify-panshalach-cleanup PASS + ARCHITECTURE.md 五层图完成 | 事件/状态测试全绿 + EVALUATION.md 完整 | 投影/快照测试全绿 + DEPLOY-CN.md 完整 + SUBMISSION.md 项目书完成 |
+| **U9 9/23-24** | kultur 在国创赛系统提报；终轮 test 全绿；`npx tsc --noEmit` EXIT=0；用例全绿（以 npm test 实际输出为准）；`verify-panshalach-cleanup.mjs` PASS；CHANGELOG 条目齐；项目复盘 | 用例全绿 + verify-panshalach-cleanup PASS + ARCHITECTURE.md 执行链路图完成 | 事件/状态测试全绿 + EVALUATION.md 完整 | 投影/快照测试全绿 + DEPLOY-CN.md 完整 + SUBMISSION.md 项目书完成 |
 
 ---
 
@@ -46,16 +46,16 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 
 | 日期 | 里程碑 | 4 主力共同交付 | 评审
 |---|---|---|---|
-| **U4 周日 9/14** | 接口契约 v2 PR 全合入 develop | `types.ts` / `openai-compatible.ts` / `MemoryCard` v2 / `MemoryEventStore` / `TaskState` / `Assertion` / `ContextSnapshot` / `ContextCompiler` 接口签名落定 | Leader 评审 + 互评 |
-| **U5 周二 9/16** | 当日日志 + handover 全绿 | 525+ 用例 + smoke-eval + verify-panshalach-cleanup 全 PASS | CI gate 自动 |
-| **U6 周四 9/18** | 真 openPangu 端点跑通 A/B/C/C1-C4 | results/&lt;date&gt;.json 落盘 | Leader 评审 |
+| **U4 周日 9/14** | 接口契约 v2 PR 全合入 develop | `types.ts` 契约（AgentEvent/TaskState 已落；Assertion 休眠保留）/ `openai-compatible.ts`（✅ 已落 df7a119）/ `MemoryEventStore` / `TaskState` / eval results schema 签名落定 | Leader 评审 + 互评 |
+| **U5 周二 9/16** | 当日日志 + handover 全绿 | npm test 全绿 + smoke-eval + verify-panshalach-cleanup 全 PASS | CI gate 自动 |
+| **U6 周四 9/18** | 真 openPangu 端点跑通 A/B/C(+C4) | results/&lt;date&gt;.json 落盘 | Leader 评审 |
 | **U7 周六 9/20** | 端到端评审收口 | 5 任务族 + 五件套全联通（事件/状态/投影/快照/编译器） | 全员 stand-up |
 | **U8 周一 9/22** | 项目书 + 三份交付物 | SUBMISSION.md ≤1000 字概述 + 完整方案 + ARCHITECTURE/EVALUATION/DEPLOY-CN | Leader 终审 |
 | **U9 周三 9/24** | **交付日** | kultur 在国创赛系统提报；develop 收口；项目复盘 | — |
 
 ---
 
-## 3. 五层事实源（叙述骨架）
+## 3. 事实源与记忆分层（叙述骨架，2026-09-05 对齐）
 
 > 与翟苑皓（Leader）审查报告一致：`RefinedMemoryCard` 从唯一事实源降级为派生 prompt 投影；事实分层如下。
 
@@ -63,31 +63,31 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 User / Tool / Verification / Trajectory
        │
        ▼
-append-only AgentEvent       ← 事实源（仅追加，可重放）
+rollout 事件账本（turn/approval/agent/compact/context） ← 事实源 ✅ 已落
        │
-   ┌───┴───┐
-   ▼       ▼
-Assertion  TaskState     ← 事实校验 + 当前控制面
+   ┌───┴──────────────┐
+   ▼                  ▼
+TaskState（R5 规划）   记忆卡投影 ✅
    │       │
    └───┬───┘
        ▼
-MemoryProjection          ← 经验复用层（RefinedMemoryCard 兼容 API）
+MemoryCard 投影           ← 经验复用层（RefinedMemoryCard 即投影；四类 Projection 推迟）
        │
        ▼
-ContextCompiler            ← 统一预算装箱
+PromptBuilder+账本        ← 预算装箱（ContextCompiler 独立模块推迟）
        │
        ▼
-ContextSnapshot           ← 每次模型调用的强制审计产物
+ContextSnapshot 事件      ← 按任务注入审计 ✅ 已落
        │
        ▼
 Model Run
 ```
 
 - **AgentEvent**：append-only，关联 sessionId + taskId，类型已定稿 `src/cli/repl/types.ts`（AgentEventKind）：`user_requirement / decision / constraint / requirement / verified / failure / progress / preference / memory_retrieved / memory_injected / memory_cited / memory_verified / context_compacted`
-- **Assertion**：scope/confidence/validFrom/validUntil/status/evidenceEventIds/provenance
-- **TaskState**：原始需求/决策/未决/里程碑/已验证/风险/next step
-- **MemoryProjection**：由 AgentEvent + Assertion 派生出的 prompt 卡片
-- **ContextSnapshot**：每次模型调用的输入审计（assetId / source / priority / tokenCount / validity / renderedPromptHash）
+- **Assertion**：scope/confidence/validFrom/validUntil/status/evidenceEventIds/provenance（契约休眠，运行时推迟 9/24 后）
+- **TaskState**：原始需求/决策/未决/里程碑/已验证/风险/next step（R5，王佐/赵天昂）
+- **MemoryCard 投影**：由任务落定 refine + compact 补漏派生的 prompt 卡片（四类 Projection/Assertion 运行时推迟，见 ROADMAP-NEXT §4）
+- **ContextSnapshot**：按任务落 rollout `context` 事件（✅ 已落：promptHash/injectedCardIds/token）
 
 ---
 

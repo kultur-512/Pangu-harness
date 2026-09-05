@@ -39,7 +39,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 │   语义检索[规划]: 字符n-gram v0 → 国产向量库/embedding 可插拔        │
 ├──────────────────────────────────────────────────────────────────┤
 │ 执行循环层 (VerifyCritiqueLoop · TestTimeOrchestrator)             │
-│   思维链阶梯 → 工具调用 → 验证信号(PASS/FAIL) → critique 复盘        │
+│   思维链阶梯 → 工具调用(三路解析) → 验证信号(PASS/FAIL)             │
 │   铁律: Read-Before-Write / Verify-Before-Claim / 可回滚           │
 │   单 rollout / budget 软限 / 每步轨迹采集                          │
 ├──────────────────────────────────────────────────────────────────┤
@@ -87,7 +87,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 容量：单类 ≤10、总 ≤200；默认落盘 `<workspace>/.panshalach-memory.json`（内部名，见 ROADMAP P6 迁移）。注入时经 8 槽投影缓存（任务内快照冻结、写入失效重建）。
 
 ### 2.2 记忆写入（提炼 → 保存）
-- **信号源 A（循环实时）**：VerifyCritiqueLoop 每步把 RBW/未验证/命令失败/状态不符/自动化未验证等信号喂给进程内 FailureMemory（会话内即时纠偏）。
+- ~~**信号源 A（循环实时）**：FailureMemory 会话内即时纠偏~~ → **已摘除**（#6，2026-09-05，archive/2026-09-05-removals/）。失败/成功信号唯一归口 = 信号源 B/C。
 - **信号源 B（回合闭环，规划落地 P2）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；一次通过且**验证通过（trajectory.success）**或正向反馈 → success 卡），`save()` 合并去重写盘。→ 修复"现在没有任何生产路径调用 refine 的缺口"。（score 已移除，2026-09-05）
 - **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中**验证成功（result.success）**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。（score 已移除，2026-09-05）
 - **用户显式（已实现）**：`/memory remember [--pin]` / forget / import / export / clear / merge。
@@ -160,7 +160,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 | Agent 进程 | 内存 < 200MB、零运行时依赖 | Node ≥18 + TypeScript 产物；`dependencies: {}` |
 | 上下文预算 | 默认 128K token 软窗(`PANSHA_CTX_WINDOW`) | compact 触发：ctxRatio≥0.85 且 >12 轮 |
 | 记忆文件 | 卡 ≤200、事件 jsonl 追加 | 单项目记忆体积 KB 级 |
-| 每任务 token | 由 tier（1–5 rollout × 10–40 步）与预算软限控制 | 预算触发 → 步数减半 + critique 降频 + 铁律降档 |
+| 每任务 token | 单 rollout × 步数（10–40 步/档）与预算软限控制（#1） | 预算触发 → 步数减半 + 铁律降档 |
 | 成本核算 | `/usage` 基于配置单价 | 可选 |
 
 真机运行的成本/token 实测表待 [EVALUATION.md](EVALUATION.md) 真实 openPangu 数据填充。
