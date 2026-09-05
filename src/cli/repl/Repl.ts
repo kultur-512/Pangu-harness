@@ -10,6 +10,7 @@ import { KeyHandler } from './KeyHandler.js';
 import { MultilineBuffer } from './MultilineBuffer.js';
 import { PromptBuilder } from './PromptBuilder.js';
 import { TierRegistry } from '../../tiers/TierConfig.js';
+import { classifyTaskIntent } from '../taskIntent.js';
 
 // Import all commands
 import HelpCommand from './commands/HelpCommand.js';
@@ -344,7 +345,10 @@ export class Repl {
 
     // Prepare richer prompt/context from REPL side (session history + tier rules + memory cards)
     const pb = this.getPromptBuilder();
-    let enriched = await pb.buildForTask(issue);
+    // 0.7.2 主线 1：意图分类前移——对【原始输入】分类（富化文本必含执行词，
+    // 在其上分类会使 chat/search 恒不可达）。gate 语义由 classifyTaskIntent 内部保持。
+    const intent = classifyTaskIntent(issue);
+    let enriched = await pb.buildForTask(issue, intent);
 
     // Inject context length hint so the model is aware of its own window (G2)
     if (contextLen > 0) {
@@ -413,6 +417,7 @@ export class Repl {
       yes: true,
       dryRun: simulate,
       memoryPreInjected: true,
+      intent, // 0.7.2：入口前移的意图显式传入
       onStep: (event: any) => {
         if (this.taskAborted) {
           return;

@@ -13,6 +13,7 @@ import { resolveSharedClient } from '../cli/repl/ModelProvider.js';
 import { appendContextSnapshot, appendAgentEvent } from '../cli/repl/rolloutStore.js';
 import { createHash } from 'node:crypto';
 import type { ModelProvider } from '../cli/repl/types.js';
+import { classifyTaskIntent } from '../cli/taskIntent.js';
 
 export interface RunRequest {
   task: string;
@@ -81,13 +82,21 @@ export async function runAgentTask(
 
   const tierConfig = TierRegistry.get(session.tier);
   const pb = new PromptBuilder(session, tierConfig);
-  const enriched = await pb.buildForTask(req.task);
+  // 0.7.2 主线 1：意图分类前移——对【原始输入】分类，而不是等 chaser 在富化文本上
+  // 兜底分类（富化文本必含 bash 等执行词 → chat/search 恒不可达的死代码）。
+  // PANSHA_INTENT_GATE=0 语义保持：gate 关闭时 classifyTaskIntent 恒返回 'execution'，
+  // 与 0.7 旧行为完全一致（逃生门不需要入口特判）。
+  const intent = classifyTaskIntent(req.task);
+  const enriched = await pb.buildForTask(req.task, intent);
 
   // 接口契约 v3：逐任务 ContextSnapshot + memory_injected 事件（注入审计账本）。
   // 评测由此回答"模型当时到底看见了什么"；lastBuildMeta 在此消费（不改变 buildForTask 的 string 返回契约）。
+  // 供 finalizeTaskMemory（0.7.2 主线 2）消费的注入卡账本。
+  let injectedCardIds: string[] = [];
   try {
     const meta = pb.lastBuildMeta;
     const injected = meta?.injectedCardIds ?? [];
+    injectedCardIds = injected;
     appendContextSnapshot(session.id, {
       model: session.model,
       memoryCardCount: meta?.memoryCardCount ?? 0,
@@ -126,6 +135,8 @@ export async function runAgentTask(
       yes: true,
       dryRun: !!req.simulate,
       memoryPreInjected: true,
+      // 0.7.2：入口前移的意图显式传入（chaser 不再对富化文本兜底分类）
+      intent,
       // 审批透传
       approvalMode: ctx.approvalMode ?? 'readonly',
       sessionAllowlist: ctx.sessionAllowlist,
@@ -146,6 +157,15 @@ export async function runAgentTask(
 
     success = !!result.success;
 
+    // 0.7.2 主线 2：记忆落定（单一落定点）——仅 completed（真实验证通过）触发
+    // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不
+    // 影响任务成功返回（本模块 console-silent，错误以事件透出）。
+    try {
+      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent);
+    } catch (memErr: any) {
+      ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
+    }
+
     ctx.onEvent({ type: 'result', success, stopReason: result.bestTrajectory?.stopReason, budgetReport: result.budgetReport });
 
     return {
@@ -162,4 +182,94 @@ export async function runAgentTask(
       durationMs: Date.now() - start,
     };
   }
+}
+
+// ==================== 0.7.2 主线 2：记忆落定（R1/R2 最小闭环） ====================
+
+/**
+ * 任务边界记忆落定（单一落定点，0.7.2 重写——原 finalizeTaskMemory 在未合入分支上
+ * 且语义依赖已删除的判官）：
+ * - R1：仅 stopReason==='completed'（真实验证通过）→ RefinedMemoryStore.refine
+ *   （单 rollout，attemptCount=1）→ save() 持久化。answered（纯问答）不产卡。
+ * - R2：lastBuildMeta.injectedCardIds 与本次轨迹写入文件集有交集的卡 →
+ *   markVerified 刷新 lastUsedAt/count（接口契约 v3 二态之二：机器判定的真实使用）。
+ * - 轻量事件 memory.finalized { cards, verified }（消费方：SSE/rich 前端，未知
+ *   事件类型走 pushFeed 兜底，安全）。
+ * 调用方已 try/catch 包裹：任何异常不影响任务成功返回。
+ */
+async function finalizeTaskMemory(
+  session: Session,
+  result: { bestTrajectory?: any },
+  injectedCardIds: string[],
+  onEvent: (event: any) => void
+): Promise<void> {
+  const traj = result?.bestTrajectory;
+  if (!traj || traj.stopReason !== 'completed' || !session.workspace) return;
+
+  const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
+  const store = new RefinedMemoryStore(session.workspace);
+
+  // R1：completed = 真实验证通过 → 提炼 success 卡并持久化（触发红线：写盘
+  // 成功 ≠ 任务成功——此处任务已真实验证通过，方向安全）。
+  const cards = store.refine({
+    trajectory: traj,
+    taskStyle: traj.taskStyle ?? 'all',
+    applicableTiers: [session.tier],
+    attemptCount: 1,
+  });
+  if (cards.length > 0) store.save(cards);
+
+  // R2：注入卡 ∩ 本次写入文件集 → markVerified（衰减语义中唯一的保鲜通道）。
+  const written = new Set(extractWrittenFilePaths(traj).map(normalizeRelPath));
+  const verifiedIds = (written.size === 0 || injectedCardIds.length === 0)
+    ? []
+    : store.load().cards
+        .filter((c) => injectedCardIds.includes(c.id))
+        .filter((c) => (((c as any).referencedFiles ?? []) as string[])
+          .some((r) => written.has(normalizeRelPath(r))))
+        .map((c) => c.id);
+  if (verifiedIds.length > 0) store.markVerified(verifiedIds);
+
+  onEvent({ type: 'memory.finalized', cards: cards.length, verified: verifiedIds.length });
+}
+
+/**
+ * 从轨迹 steps[].action 提取 write/edit 类工具的目标文件路径。
+ * action 实际是 ToolCall[]（{ toolName, params: [{name,value}] }，见
+ * src/types/toolCall.ts + PanshalachChaser 的 traj.steps 映射）；兼容旧
+ * {name/tool, args/parameters} 形状与 bash 重定向，保证交集判定不因形状漏文件。
+ */
+function extractWrittenFilePaths(traj: any): string[] {
+  const out = new Set<string>();
+  for (const step of traj?.steps ?? []) {
+    const actions: any[] = Array.isArray(step?.action) ? step.action : (step?.action ? [step.action] : []);
+    for (const act of actions) {
+      if (!act) continue;
+      const name = String(act.toolName ?? act.name ?? act.tool ?? act.type ?? '').toLowerCase();
+      let args: any = act.args ?? act.parameters;
+      if (!args && Array.isArray(act.params)) {
+        args = Object.fromEntries(
+          act.params.filter((p: any) => p && p.name).map((p: any) => [p.name, p.value])
+        );
+      }
+      args = args ?? {};
+      if (name.includes('write') || name.includes('edit') || name.includes('multiedit')) {
+        const fp = args.file_path ?? args.path ?? args.filePath ?? args.target_file ?? args.target ?? args.file;
+        if (typeof fp === 'string' && fp) out.add(fp);
+      }
+      // bash 重定向（> / >>）也算写入
+      if (name.includes('bash') || name.includes('command') || name === 'run') {
+        const cmd = String(args.command ?? args.cmd ?? '');
+        const re = /(?:^|[\s;&|(){}])[^>]*>>?\s*["']?([^"'\s>;|]+)["']?/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(cmd)) !== null) if (m[1]) out.add(m[1]);
+      }
+    }
+  }
+  return Array.from(out);
+}
+
+/** 与 RefinedMemoryStore.normPath 同款归一（\→/、去 ./ 前缀、小写），保证交集可比。 */
+function normalizeRelPath(p: string): string {
+  return String(p ?? '').replace(/\\/g, '/').replace(/^\.\/+/, '').toLowerCase();
 }

@@ -3,6 +3,7 @@ import type { Command, CommandContext, CommandResult, ModelProvider } from '../t
 import { PromptBuilder } from '../PromptBuilder.js';
 import { TierRegistry } from '../../../tiers/TierConfig.js';
 import { expandAtPaths } from '../types.js';
+import { classifyTaskIntent } from '../../taskIntent.js';
 
 const command: Command = {
   name: 'run',
@@ -42,7 +43,9 @@ const command: Command = {
     // Build rich prompt (tier contract + memory cards + recent context)
     const tierConfig = TierRegistry.get(ctx.session.tier);
     const pb = new PromptBuilder(ctx.session, tierConfig);
-    const enriched = await pb.buildForTask(finalTask);
+    // 0.7.2 主线 1：意图分类前移——对原始任务文本分类后再富化（chat 不灌工程块）
+    const intent = classifyTaskIntent(finalTask);
+    const enriched = await pb.buildForTask(finalTask, intent);
 
     ctx.renderer.info(`开始执行: ${finalTask}`);
     if (ctx.session.turns.length > 0) {
@@ -70,6 +73,7 @@ const command: Command = {
         tier: ctx.session.tier as any,
         yes: true,
         memoryPreInjected: true,
+        intent, // 0.7.2：入口前移的意图显式传入
         onStep: (event: any) => {
           if (event.type === 'step') {
             ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
