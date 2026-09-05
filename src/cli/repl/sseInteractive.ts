@@ -14,13 +14,190 @@
 
 import readline from 'readline';
 import { createOutputRenderer } from './OutputRenderer.js';
-import { createCliApprovalBridge } from '../../tools/approval.js';
+import { createCliApprovalBridge, isApprovalActive, cancelActiveApproval, setApprovalActivityListener } from '../../tools/approval.js';
 import { Session } from './Session.js';
 import * as rollout from './rolloutStore.js';
 import { InputQueue, classifyRunningInput, formatSteerInjection } from './InputQueue.js';
 import { ModeRing } from './ModeRing.js';
 import { AgentTree } from './AgentTree.js';
+import { stringWidth } from './stringWidth.js';
 import type { ModelProvider } from './types.js';
+
+// ---- P1（批次 A）：line 模式渲染纯助手（模块级，便于测试） ----
+const ANSI_DIM = '\x1b[2m';
+const ANSI_BOLD = '\x1b[1m';
+const ANSI_RED = '\x1b[31m';
+const ANSI_ITALIC = '\x1b[3m';
+const ANSI_RESET = '\x1b[0m';
+
+/** 终端宽度（列）。非 TTY / 测试环境默认 80。 */
+function termWidth(): number {
+  return (process.stdout as any).columns || 80;
+}
+
+/** 按显示宽度截断（CJK=2 列），截断处补 …（省略号计入预算，总宽不超 maxWidth）。 */
+export function truncateByWidth(text: string, maxWidth: number): string {
+  const s = String(text ?? '');
+  if (maxWidth <= 0) return '';
+  if (stringWidth(s) <= maxWidth) return s;
+  const budget = Math.max(0, maxWidth - 1); // 为省略号预留 1 列
+  let w = 0;
+  let out = '';
+  for (const ch of s) {
+    const cw = stringWidth(ch);
+    if (w + cw > budget) break;
+    out += ch;
+    w += cw;
+  }
+  return out + '…';
+}
+
+/** 按显示宽度贪心折行（verbose thinking 全文模式用）。 */
+export function wrapByWidth(text: string, maxWidth: number): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let curW = 0;
+  for (const ch of String(text ?? '')) {
+    const cw = Math.max(1, stringWidth(ch));
+    if (curW + cw > maxWidth && cur.length > 0) {
+      out.push(cur);
+      cur = '';
+      curW = 0;
+    }
+    cur += ch;
+    curW += cw;
+  }
+  if (cur.length > 0) out.push(cur);
+  return out.length > 0 ? out : [''];
+}
+
+/** 耗时格式化：<1s → Nms，否则 X.Ys。 */
+export function fmtMs(ms?: number): string {
+  const n = Math.max(0, Math.round(Number(ms) || 0));
+  return n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`;
+}
+
+/** 首个非空行（按显示宽度截断）。 */
+function firstLine(text: string, max: number): string {
+  for (const l of String(text ?? '').split('\n')) {
+    const t = l.trim();
+    if (t) return truncateByWidth(t, max);
+  }
+  return '';
+}
+
+/** 工具参数摘要（P1-2 头行）：bash→command 截 160；文件类→path；grep/glob→pattern；其余取前两个键值。 */
+export function summarizeToolParams(tool: string, params: any): string {
+  const p = (params && typeof params === 'object') ? params : {};
+  const flat = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const t = String(tool || '').trim().toLowerCase();
+  if (t === 'bash') return truncateByWidth(flat(p.command ?? p.cmd ?? ''), 160);
+  if (t === 'write_file' || t === 'edit_file' || t === 'read_file') {
+    const fp = flat(p.file_path ?? p.path ?? '');
+    if (t === 'write_file') {
+      const content = String(p.content ?? '');
+      return content ? `${fp}（${content.split('\n').length} 行）` : fp;
+    }
+    return fp;
+  }
+  if (t === 'grep' || t === 'glob') return flat(p.pattern ?? p.query ?? '');
+  const keys = Object.keys(p).slice(0, 2);
+  if (keys.length === 0) return '';
+  return keys.map((k) => `${k}=${truncateByWidth(flat(p[k]), 60)}`).join(' ');
+}
+
+/** pre→post 间隔超 3s 时 gerund 行的进行时动词（P1-2 可选项）。 */
+function doingVerb(tool: string): string {
+  const t = String(tool || '').trim().toLowerCase();
+  if (t === 'write_file') return 'Writing';
+  if (t === 'edit_file') return 'Editing';
+  if (t === 'read_file') return 'Reading';
+  if (t === 'bash') return 'Running';
+  return 'Executing';
+}
+
+const TOOL_ERROR_GLOSS: Record<string, string> = {
+  DENIED_BY_USER: '用户拒绝',
+  DENIED_READONLY: '只读模式拒绝',
+  PLAN_MODE: '计划模式禁止执行',
+  PATH_ESCAPED: '路径越界',
+  TIMEOUT: '超时',
+  RBW_VIOLATION: '未读先写',
+  UNKNOWN_TOOL: '未知工具',
+  INVALID_PARAMS: '参数无效',
+  INVALID_REGEX: '正则无效',
+  BINARY_FILE: '二进制文件',
+  FILE_TOO_LARGE: '文件过大',
+  IO: 'IO 错误',
+  OUTPUT_TRUNCATED: '输出截断',
+  ABORTED: '已中止',
+};
+
+/**
+ * P1-2 结果行（CC 式动词句：动词+加粗数字+单位+dim 后缀）。
+ * data 来自 tools/post-execute 事件（tool/ok/durationMs/error/outputPreview/lines/diff），
+ * preParams 为该工具 tools/pre-execute 记住的参数。
+ */
+export function toolResultLine(data: any, preParams: any): string {
+  const b = (s: string | number) => `${ANSI_BOLD}${s}\x1b[22m`;
+  const dim = (s: string | number) => `${ANSI_DIM}${s}\x1b[22m`;
+  const tool = String(data?.tool || '');
+  const ms = fmtMs(data?.durationMs);
+  const params = (preParams && typeof preParams === 'object') ? preParams : {};
+  const p = (k: string) => String(params?.[k] ?? '');
+  const path = p('file_path') || p('path') || p('file') || '';
+  const out = String(data?.outputPreview || '');
+
+  if (!data?.ok) {
+    const errRaw = String(data?.error || '');
+    const human = TOOL_ERROR_GLOSS[errRaw] || errRaw || '执行失败';
+    const reason = firstLine(out, 120);
+    return `${ANSI_RED}✗ ${human}${reason ? ' · ' + reason : ''}${ANSI_RESET} ${dim('· ' + ms)}`;
+  }
+
+  const lines = Number(data?.lines) || 0;
+  if (tool === 'write_file') {
+    const n = lines || (p('content') ? p('content').split('\n').length : 0);
+    return `Wrote ${b(n)} lines to ${path || '(未知路径)'} ${dim('· ' + ms)}`;
+  }
+  if (tool === 'read_file') {
+    if (lines > 0) return `Read ${b(lines)} lines ${dim('· ' + ms)}`;
+    return `Read ${path || '(未知路径)'} ${dim('· ' + ms)}`;
+  }
+  if (tool === 'edit_file') {
+    const diff = Array.isArray(data?.diff) ? data.diff : null;
+    if (diff && diff.length > 0) {
+      let added = 0;
+      let removed = 0;
+      for (const h of diff) {
+        const n = String(h?.text ?? '').split('\n').filter((l: string) => l.length > 0).length || 1;
+        if (h?.type === 'add') added += n;
+        else if (h?.type === 'del') removed += n;
+      }
+      return `Added ${b(added)}, removed ${b(removed)} ${dim('· ' + ms)}`;
+    }
+    return `Edited ${path || '(未知路径)'} ${dim('· ' + ms)}`;
+  }
+  // bash / grep / glob / mcp_* / 其它
+  if ((tool === 'grep' || tool === 'glob') && out) {
+    const found = out.split('\n').filter((l) => l.trim()).length;
+    return `Found ${b(found)} ${dim('· ' + ms)}`;
+  }
+  const first = firstLine(out, 120);
+  if (first) return `${first} ${dim('· ' + ms)}`;
+  if (tool === 'bash') return `Ran ${dim('· ' + ms)}`;
+  return `Done ${dim('· ' + ms)}`;
+}
+
+/** P1-3 「下一步」按 stopReason 分支。 */
+export function nextStepHint(stopReason?: string): string {
+  const sr = String(stopReason || '');
+  if (sr === 'completed') return '继续下一个任务 · /memory 查看沉淀';
+  if (sr === 'answered') return '继续追问或下达新任务';
+  if (sr === 'aborted') return '已中断 · 现场已保留 · 重新描述任务可继续';
+  if (sr === 'max-steps') return '步数达上限 · 可拆小任务重试';
+  return '模型未完成验证 · 可补充要求重试 · /undo 回退变更';
+}
 
 export interface SseInteractiveOptions {
   provider?: ModelProvider;
@@ -31,7 +208,65 @@ export interface SseInteractiveOptions {
 }
 
 export async function startSseInteractive(opts: SseInteractiveOptions = {}): Promise<void> {
-  const renderer = createOutputRenderer();
+  // ---- P0/P1（批次 A）：line 模式输出纪律 + 流式状态 ----
+  // inlineLine：当前"活行"的占用者（gerund 标签 / thinking 单行滚动）。
+  // 任何正式输出前必须先 \r\x1b[K 清行（P0-2 gerund 污染修复的单一纪律点）。
+  const lineUi: {
+    inlineLine: null | 'gerund' | 'thinking';
+    messageStreaming: boolean;
+    streamedAnswerChars: number;
+    verbose: boolean;
+    thinkingStart: number;
+    thinkingBuf: string;
+    thinkingPrinted: boolean;
+    taskStartedAt: number;
+    taskEndedAt: number;
+    ghostIgnored: boolean;
+    stepCount: number;
+    lastSigintAt: number;
+    idleCtrlCAt: number;
+    toolStack: Array<{ tool: string; params: Record<string, string> }>;
+    pendingTool: { tool: string; summary: string; doing: string; at: number } | null;
+  } = {
+    inlineLine: null,
+    messageStreaming: false,
+    streamedAnswerChars: 0,
+    verbose: process.env.PANSHA_VERBOSE === '1',
+    thinkingStart: 0,
+    thinkingBuf: '',
+    thinkingPrinted: false,
+    taskStartedAt: 0,
+    taskEndedAt: 0,
+    ghostIgnored: false,
+    stepCount: 0,
+    lastSigintAt: 0,
+    idleCtrlCAt: 0,
+    toolStack: [],
+    pendingTool: null,
+  };
+
+  function clearInlineLine() {
+    if (lineUi.inlineLine) {
+      try { process.stdout.write('\r\x1b[K'); } catch {}
+      lineUi.inlineLine = null;
+    }
+  }
+
+  // P0-2：renderer 包装器 — 所有正式输出（writeLine/success/warn/…）前先清活行。
+  // gerund/thinking 的原地重绘不经过这里（直接 stdout + 记 inlineLine），
+  // 因此清行纪律只有这一个入口。
+  const rawRenderer = createOutputRenderer();
+  const CLEAR_ON_WRITE = new Set(['writeLine', 'write', 'stream', 'success', 'warn', 'error', 'info', 'table', 'codeBlock']);
+  const renderer = new Proxy(rawRenderer, {
+    get(target: any, prop: string | symbol) {
+      const v = Reflect.get(target, prop, target);
+      if (typeof v !== 'function') return v;
+      if (CLEAR_ON_WRITE.has(String(prop))) {
+        return (...args: any[]) => { clearInlineLine(); return v.apply(target, args); };
+      }
+      return v.bind(target);
+    },
+  }) as ReturnType<typeof createOutputRenderer>;
 
   // Check basic TTY capability. If not TTY, fall back to classic immediately.
   const isInteractiveTty =
@@ -347,6 +582,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
 
+      if (cmd === '/verbose') {
+        // P1-1.4: thinking 展示开关（内存标志；PANSHA_VERBOSE=1 初始为开）
+        lineUi.verbose = !lineUi.verbose;
+        emit(`思考显示: ${lineUi.verbose ? '全文多行（verbose）' : '单行滚动（默认）'}`, 'info');
+        return;
+      }
+
       if (cmd === '/undo') {
         const { undoLatest } = await import('../../tools/fileHistory.js');
         const r = undoLatest(session.workspace || process.cwd(), arg || undefined);
@@ -430,7 +672,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       // handled here; a slash-prefixed line is NEVER submitted to the engine
       // as a coding task (iron rule).
       if (cmd === '/help') {
-        emit('命令: /help /status /clear /tier /model /edit /undo /approvals /usage /compact /rewind /agents /mode /resume | 斜杠命令均本地执行，不进引擎', 'info');
+        emit('命令: /help /status /clear /tier /model /edit /undo /approvals /usage /compact /verbose /rewind /agents /mode /resume | 斜杠命令均本地执行，不进引擎', 'info');
         return;
       }
       if (cmd === '/clear') {
@@ -602,6 +844,18 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     const abortPromise = new Promise<never>((_, reject) => { abortReject = reject; });
 
     const startedAt = Date.now();
+    // P0/P1（批次 A）：任务边界重置 line 模式流式/卡片状态
+    lineUi.taskStartedAt = startedAt;
+    lineUi.taskEndedAt = 0;
+    lineUi.ghostIgnored = false;
+    lineUi.stepCount = 0;
+    lineUi.streamedAnswerChars = 0;
+    lineUi.thinkingStart = 0;
+    lineUi.thinkingBuf = '';
+    lineUi.thinkingPrinted = false;
+    lineUi.messageStreaming = false;
+    lineUi.toolStack = [];
+    lineUi.pendingTool = null;
     // P4-4.9: gerund interval handle (declared here so the finally can clear it)
     let gerundTimer: NodeJS.Timeout | null = null;
     // P5-5.3: new task boundary — settle previous rollouts, start a fresh clock
@@ -621,18 +875,35 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             (bridgeRef.current.setConfirm(req) as Promise<'y' | 'n' | 'a'>)
         : createCliApprovalBridge();
 
-      // Line mode: pause the main prompt so the approval question owns stdin.
-      if (!useRich && lineRl) { try { lineRl.pause(); } catch {} }
+      // P0-3.1：主 readline 不再全程 pause（那样会让任务运行中的 Ctrl+C
+      // 无人接、输入缓冲成幽灵 ^C）。stdin 所有权只在审批 question 挂起时
+      // 经 setApprovalActivityListener（line 段注册）临时交接。
 
       // P4-4.9: gerund running label — line-mode inline updates every 4s.
       // Timer unref'd (M2.0 discipline: non-deadline timers must not hold the
       // process) and always cleared in the finally below.
+      // P0-2：重绘统一走本函数（清活行 → 原地写 → 记 inlineLine）。
+      // P0-3.1：审批挂起时暂停；P1-1.2：正文流式期间暂停。
       if (!useRich) {
         try {
           const { nextGerund, formatRunningLabel } = await import('./GerundSpinner.js');
           const gStart = startedAt;
           const paint = () => {
-            try { process.stdout.write('\r' + formatRunningLabel(Date.now() - gStart, nextGerund()) + '   '); } catch {}
+            // 评审 P2：thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
+            if (isApprovalActive() || lineUi.messageStreaming || lineUi.inlineLine === 'thinking') return;
+            try {
+              clearInlineLine();
+              let label: string;
+              const pt = lineUi.pendingTool;
+              if (pt && Date.now() - pt.at > 3000) {
+                // P1-2（可选）：pre 后 3s 未 post → 进行时工具标签
+                label = `${pt.doing} ${pt.summary}… ⏱ ${Math.floor((Date.now() - gStart) / 1000)}s`;
+              } else {
+                label = formatRunningLabel(Date.now() - gStart, nextGerund());
+              }
+              process.stdout.write('\r' + label + '   ');
+              lineUi.inlineLine = 'gerund';
+            } catch {}
           };
           paint();
           gerundTimer = setInterval(paint, 4000);
@@ -722,8 +993,11 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         const droppedSteers = queue.consumeSteers();
         updateQueueCount();
         const tail = droppedSteers.length > 0 ? `（${droppedSteers.length} 条未注入插话已丢弃；排队任务保留）` : '';
-        if (!useRich) renderer.warn('任务已被中断' + tail);
-        else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: '任务已被中断' + tail, level: 'warn' });
+        // P0-1.3 + P1-3：中断提示合并为一条（SIGINT 处理器不再另发"已请求中断"），
+        // 并带上 aborted 场景的「下一步」建议。
+        const abortMsg = `⏹ 任务已被中断 · 现场已保留 · 重新描述任务可继续${tail}`;
+        if (!useRich) { renderer.writeLine(renderer.color(abortMsg, 'yellow')); recordOutput(abortMsg); }
+        else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: abortMsg, level: 'warn' });
       } else {
         // persist the completed turn into the session + rollout jsonl
         // P5-5.3: this task's rollouts are done
@@ -752,13 +1026,20 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         try { session.addTurn(turn); } catch {}
         try { rollout.appendTurn(session.id, turn as any); } catch {}
         // 0.7：answered 时把模型正文呈现给用户（/edit 可取回）
+        // P1-1.3：正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
+        // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。
         if (stopReason === 'answered' && r) {
           const traj = (r as any).bestTrajectory;
           const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
-          if (answerText) {
-            const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
-            if (!useRich) renderer.writeLine(renderer.color(preview, 'white'));
-            else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'markdown', content: answerText });
+          if (answerText && useRich && typeof bridge.pushFeed === 'function') {
+            bridge.pushFeed({ type: 'markdown', content: answerText });
+          } else if (answerText && !useRich && lineUi.streamedAnswerChars < String(answerText).length) {
+            // 评审 P2：流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
+            const rest = String(answerText).slice(lineUi.streamedAnswerChars);
+            if (rest) {
+              renderer.writeLine(renderer.color(rest, 'white'));
+              recordOutput(rest);
+            }
           }
         }
         recordOutput(summary);
@@ -770,8 +1051,17 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     } finally {
       currentAbort = null;
       void startedAt;
-      if (gerundTimer) { try { clearInterval(gerundTimer); } catch {} try { process.stdout.write('\r' + ' '.repeat(80) + '\r'); } catch {} }
+      if (gerundTimer) { try { clearInterval(gerundTimer); } catch {} }
       gerundTimer = null;
+      // P0-2/P1-1：清活行（gerund/thinking 残留）；正文流式收尾换行
+      clearInlineLine();
+      if (lineUi.messageStreaming) { try { process.stdout.write('\n'); } catch {} }
+      lineUi.messageStreaming = false;
+      lineUi.pendingTool = null;
+      lineUi.toolStack = [];
+      // P0-1.2：幽灵 ^C 窗口 — 任务刚结束的 1.5s 内缓冲的 Ctrl+C 只忽略一次
+      lineUi.taskEndedAt = Date.now();
+      lineUi.ghostIgnored = false;
       if (useRich && typeof bridge.setRunning === 'function') {
         try { bridge.setRunning(false); } catch {}
       } else {
@@ -909,14 +1199,101 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   }
 
   // Line-mode renderer for SSE events (used when rich UI is not active).
-  function renderSseEvent(event: string, data: any, r: ReturnType<typeof createOutputRenderer>) {
-    // v2 streaming deltas are display-only for the rich UI; the line
-    // terminal keeps its clean step-granular output and ignores them.
-    if (event === 'thinking.start' || event === 'message.start' ||
-        event === 'thinking.delta' || event === 'message.delta') {
-      return;
+  // P1-1（批次 A）：line 模式接住 version 2 流式增量 —
+  //   thinking.delta → 默认单行滚动（dim 斜体 ∴ + 最新行截断），verbose 开启时全文多行；
+  //   message.delta  → 正文逐 delta 直接写 stdout（无前缀），回合结束补换行。
+  function endThinkingBlock(r: ReturnType<typeof createOutputRenderer>) {
+    const started = lineUi.thinkingStart > 0;
+    if (lineUi.verbose) {
+      if (lineUi.thinkingBuf) {
+        const carry = lineUi.thinkingBuf;
+        lineUi.thinkingBuf = '';
+        printVerboseThinkingLine(carry, r);
+      }
+    } else if (started) {
+      clearInlineLine();
+      const secs = Math.max(1, Math.round((Date.now() - lineUi.thinkingStart) / 1000));
+      try { r.writeLine(r.color(`∴ 已思考 ${secs}s`, 'gray')); } catch {}
     }
+    lineUi.thinkingStart = 0;
+    lineUi.thinkingBuf = '';
+    lineUi.thinkingPrinted = false;
+  }
+
+  function printVerboseThinkingLine(line: string, r: ReturnType<typeof createOutputRenderer>) {
+    void r;
+    const text = String(line ?? '').replace(/\t/g, '  ');
+    if (!text.trim()) return;
+    clearInlineLine(); // gerund 标签可能还占着当前行（P0-2 纪律）
+    const w = Math.max(20, termWidth() - 4);
+    for (const chunk of wrapByWidth(text, w)) {
+      try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}  ${chunk}${ANSI_RESET}\n`); } catch {}
+      lineUi.thinkingPrinted = true;
+    }
+  }
+
+  function endMessageStream() {
+    if (lineUi.messageStreaming) {
+      lineUi.messageStreaming = false;
+      try { process.stdout.write('\n'); } catch {}
+    }
+  }
+
+  function renderSseEvent(event: string, data: any, r: ReturnType<typeof createOutputRenderer>) {
     switch (event) {
+      case 'thinking.start':
+        // P1-1.1：新思考段 — 记起点（首个 thinking.delta 也兜底记）；
+        // 上一段若还有正文流式未收尾，先补换行
+        endMessageStream();
+        lineUi.thinkingStart = Date.now();
+        lineUi.thinkingBuf = '';
+        lineUi.thinkingPrinted = false;
+        return;
+      case 'thinking.delta': {
+        // P1-1.1：接住思考增量（旧 line 模式直接忽略）
+        const text = String(data.text || '');
+        if (!text) return;
+        if (!lineUi.thinkingStart) lineUi.thinkingStart = Date.now();
+        if (lineUi.verbose) {
+          // P1-1.4：全文多行 — 按完整行宽度折行 + 2 空格缩进（增量按行 flush）
+          lineUi.thinkingBuf += text;
+          let nl: number;
+          while ((nl = lineUi.thinkingBuf.indexOf('\n')) !== -1) {
+            const ready = lineUi.thinkingBuf.slice(0, nl);
+            lineUi.thinkingBuf = lineUi.thinkingBuf.slice(nl + 1);
+            printVerboseThinkingLine(ready, r);
+          }
+          return;
+        }
+        // 默认：单行滚动 — 取最新一行，dim 斜体 ∴ 前缀，截到终端宽度-4
+        lineUi.thinkingBuf += text;
+        const parts = lineUi.thinkingBuf.split('\n');
+        let last = '';
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i].trim()) { last = parts[i]; break; }
+        }
+        if (!last) return;
+        clearInlineLine();
+        const shown = truncateByWidth(last.replace(/\t/g, '  '), Math.max(10, termWidth() - 4));
+        try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}∴ ${shown}${ANSI_RESET}`); } catch {}
+        lineUi.inlineLine = 'thinking';
+        return;
+      }
+      case 'message.start':
+        // thinking 结束（P1-1.1：收到 message.start → 折叠为灰字统计）
+        endThinkingBlock(r);
+        return;
+      case 'message.delta': {
+        // P1-1.2：正文流式 — 逐 delta 直接写 stdout（正文本体，无前缀）；
+        // gerund 重绘在 messageStreaming 期间暂停（paint 回调里检查）。
+        const text = String(data.text || '');
+        if (!text) return;
+        clearInlineLine();
+        try { process.stdout.write(text); } catch {}
+        lineUi.messageStreaming = true;
+        lineUi.streamedAnswerChars += text.length;
+        return;
+      }
       case 'start':
         r.writeLine(r.color(`开始执行: ${data.task || ''}`, 'cyan'));
         break;
@@ -924,13 +1301,42 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         r.writeLine(r.color(`── ${data.phase || data} ──`, 'gray'));
         break;
       case 'step': {
+        // 流式段收尾：thinking 折叠为统计行、正文流补换行
+        endThinkingBlock(r);
+        endMessageStream();
+        const n = Number(data.stepNumber);
+        if (Number.isFinite(n) && n > 0) lineUi.stepCount = n; // P1-3 步数（Chaser 末尾 lastStep = 总步数）
         const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
         r.writeLine(r.color(msg, 'white'));
-        if (Array.isArray(data.toolCalls) && data.toolCalls.length) {
-          for (const tc of data.toolCalls) {
-            r.writeLine(r.color(`  ↳ 工具: ${tc.name || tc.tool || 'tool'} ${tc.path || tc.target || ''}`, 'magenta'));
+        // P1-2.3：旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；
+        // step 只剩 thinking 汇总；verificationResult 维持现有渲染（无单独渲染）。
+        break;
+      }
+      case 'tools/pre-execute': {
+        // P1-2.1：工具实时卡片头行 `▸ <工具名青色> <参数摘要>`
+        endMessageStream(); // 模型正文若刚流式完，先补换行再出卡片
+        const tool = String(data.tool || 'tool');
+        const params = (data.params && typeof data.params === 'object') ? data.params : {};
+        const summary = summarizeToolParams(tool, params);
+        lineUi.toolStack.push({ tool, params });
+        lineUi.pendingTool = { tool, summary, doing: doingVerb(tool), at: Date.now() };
+        clearInlineLine();
+        r.writeLine(`${ANSI_DIM}▸${ANSI_RESET} ${r.color(tool, 'cyan')} ${r.color(summary, 'gray')}`);
+        break;
+      }
+      case 'tools/post-execute': {
+        // P1-2.2：结果行 `  ⎿ <动词句>`（从最近工具栈取回 pre 参数）
+        let preParams: any = null;
+        for (let i = lineUi.toolStack.length - 1; i >= 0; i--) {
+          if (lineUi.toolStack[i].tool === String(data.tool || '')) {
+            preParams = lineUi.toolStack.splice(i, 1)[0].params;
+            break;
           }
         }
+        if (preParams === null && lineUi.toolStack.length > 0) preParams = lineUi.toolStack.pop()!.params;
+        lineUi.pendingTool = null;
+        clearInlineLine();
+        r.writeLine('  ⎿ ' + toolResultLine(data, preParams));
         break;
       }
       case 'critique':
@@ -973,19 +1379,30 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       case 'result':
         {
-          // 0.7 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
-          const sr = data.stopReason;
-          const msg = sr === 'answered' ? '已回复' : sr === 'aborted' ? '已中断'
-            : data.success ? '完成（已通过验证）' : '任务未通过验证';
-          r.success(msg);
-          recordOutput(msg);
-          if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
-            const p = Math.floor((data.budgetReport.usageRatio || 0) * 100);
-            const c = p > 80 ? 'red' : p > 50 ? 'yellow' : 'green';
-            const bmsg = `[最终预算 ${p}%]`;
-            r.writeLine(r.color(bmsg, c));
-            recordOutput(bmsg);
-          }
+          // P1-1：流式段收尾
+          endThinkingBlock(r);
+          endMessageStream();
+          // P1-3：结束总结块 — `✓ 已通过验证 · N 步 · Xs · ~Yk tokens · 预算 Z%`
+          // + 第二行灰字「下一步」按 stopReason 分支。[最终预算] 并入总结行。
+          const sr = String(data.stopReason || '');
+          const elapsedMs = lineUi.taskStartedAt ? Date.now() - lineUi.taskStartedAt : 0;
+          const stateText = sr === 'completed' ? '✓ 已通过验证'
+            : sr === 'answered' ? '✓ 已回复'
+            : sr === 'aborted' ? '↩ 已中断'
+            : data.success === true ? '✓ 已通过验证' : '✗ 未通过验证';
+          const parts: string[] = [stateText];
+          if (lineUi.stepCount > 0) parts.push(`${lineUi.stepCount} 步`);
+          if (elapsedMs > 0) parts.push(fmtMs(elapsedMs));
+          const tokens = Number(data?.budgetReport?.estimatedUsedTokens) || 0;
+          if (tokens > 0) parts.push(`~${(tokens / 1000).toFixed(1)}k tokens`);
+          const ratio = Number(data?.budgetReport?.usageRatio);
+          if (Number.isFinite(ratio) && ratio > 0) parts.push(`预算 ${Math.round(ratio * 100)}%`);
+          const lineColor = sr === 'aborted' ? 'yellow'
+            : (sr === 'completed' || sr === 'answered' || data.success === true) ? 'green' : 'red';
+          const summaryLine = parts.join(' · ');
+          r.writeLine(r.color(summaryLine, lineColor));
+          r.writeLine(r.color(`  下一步: ${nextStepHint(sr)}`, 'gray'));
+          recordOutput(summaryLine);
         }
         break;
       case 'done':
@@ -1069,7 +1486,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   renderer.clearScreen();
   renderer.writeLine(renderer.color('烛龙（Zhulong）', 'bold'));
   renderer.writeLine(renderer.color('流式终端（进程内事件直连）。输入任务后实时输出思考、工具调用与验证过程。', 'gray'));
-  renderer.writeLine(renderer.color('命令: /help /exit /status /tier /clear /edit /undo /approvals   |  Ctrl+C 中断\n', 'gray'));
+  renderer.writeLine(renderer.color('命令: /help /exit /status /tier /clear /edit /undo /approvals /verbose   |  Ctrl+C 执行中=中断 · 空闲连按两次=退出\n', 'gray'));
   if (resumedInfo) {
     renderer.info(`已恢复会话 ${resumedInfo.from}（${resumedInfo.turns} 轮上下文，模式 ${session.approvalMode}）——/status 查看，/undo 撤销最近写盘`);
   }
@@ -1100,19 +1517,55 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     process.exit(0);
   });
 
-  // Handle Ctrl+C for running tasks
-  rl.on('SIGINT', () => {
+  // P0-3.1：审批 question 挂起/结束时交接 stdin（暂停/恢复主 readline）。
+  // 审批桥（approval.ts）经模块级钩子通知这里；gerund 的暂停在 paint 回调里
+  // 直接检查 isApprovalActive()。
+  try {
+    setApprovalActivityListener((active) => {
+      if (!lineRl) return;
+      try { if (active) lineRl.pause(); else lineRl.resume(); } catch {}
+    });
+  } catch {}
+
+  // P0-1：Ctrl+C 全链路 — 统一入口（readline raw 模式的 \x03 走 rl 'SIGINT'；
+  // cooked 模式 / POSIX 信号 / Windows console ctrl 走 process 'SIGINT' 兜底）。
+  // 同一次按键两个入口都触发时用 100ms 去重。
+  function handleSigint() {
+    const now = Date.now();
+    if (now - lineUi.lastSigintAt < 100) return;
+    lineUi.lastSigintAt = now;
+    // 1) 审批挂起 → 立即拒绝该次审批（P0-1.4 / P0-3.2）
+    if (isApprovalActive()) {
+      cancelActiveApproval('sigint');
+      return;
+    }
+    // 2) 任务运行中 → 中断（P0-1.1；提示合并：只由 aborted 分支出一条消息）
     if (currentAbort) {
-      currentAbort.abort();
-      renderer.warn('已请求中断当前任务...');
-      currentAbort = null;
-      setPrompt();
-      rl.prompt();
-    } else {
-      renderer.writeLine('\n退出。');
+      try { currentAbort.abort(); } catch {}
+      return;
+    }
+    // 3) 幽灵 ^C：任务刚结束 1.5s 内的缓冲按键只忽略一次，随后放行到二次确认（P0-1.2）
+    if (lineUi.taskEndedAt && now - lineUi.taskEndedAt < 1500) {
+      if (!lineUi.ghostIgnored) {
+        lineUi.ghostIgnored = true;
+        renderer.writeLine(renderer.color('（任务刚结束，忽略退出）', 'gray'));
+        return;
+      }
+      // 窗口内第二次按：已提示过一次，落到二次确认分支
+    }
+    // 4) 空闲 → 二次确认模式（P0-1.1）：2s 内再按才退出
+    if (lineUi.idleCtrlCAt && now - lineUi.idleCtrlCAt < 2000) {
+      renderer.writeLine('\n再见。');
       process.exit(0);
     }
-  });
+    lineUi.idleCtrlCAt = now;
+    renderer.writeLine(renderer.color('再按一次 Ctrl+C 退出 · Ctrl+C 正在执行时 = 中断任务', 'gray'));
+    const t = setTimeout(() => { lineUi.idleCtrlCAt = 0; }, 2000);
+    (t as any).unref?.();
+  }
+
+  rl.on('SIGINT', () => handleSigint());
+  process.on('SIGINT', () => handleSigint());
 
   // Simple command handling (local for now, can be proxied later)
   async function handleLocalCommand(line: string): Promise<boolean> {
@@ -1189,9 +1642,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   rl.prompt();
 
   rl.on('line', async (line) => {
+    // 评审 Bug#2（P1）：审批挂起期间主 readline 虽被暂停仍会消费同一 stdin——
+    // 用户答 'y'/'n'/指导语会同时触发这里的 'line'。直接丢弃，防幽灵任务排队。
+    if (isApprovalActive()) return;
     const trimmed = line.trim();
     if (!trimmed) {
-      rl.prompt();
+      // P0-1：任务运行中（readline 已恢复消费输入）不打印提示符，避免污染流式输出
+      if (!isRunning()) rl.prompt();
       return;
     }
 
@@ -1199,7 +1656,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     // while a task is running, submissions are queued/steered instead.
     if (isRunning()) {
       await handleUserLine(trimmed, undefined);
-      rl.prompt();
+      // 任务结束时 finally 会统一恢复提示符
       return;
     }
 

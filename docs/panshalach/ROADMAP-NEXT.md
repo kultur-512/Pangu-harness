@@ -2,7 +2,7 @@
 
 > 内部代号 盤沙拉克 Panshalach（包名/类名/存储/env）/ 外部产品 烛龙 Zhulong（CLI/欢迎/身份串/对外文档）。
 > 命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》。场景：软件工程长期维护。
-> 当前版本 **v0.6.3**：打分体系与性能叙事装置已全部摘除（archive/2026-09-05-*），成败唯一由验证信号判定。
+> 当前版本 **v0.7.0**：打分体系与性能叙事装置已全部摘除（archive/2026-09-05-*）；外置判官与 TestTimeOrchestrator 已摘除（单层终止 + 单次 loop.run），成败唯一由验证信号判定。
 > 交付时间盒：`WORK-PLAN-2DAY-UNITS.md`（U1-U9，9/24 交付）。技术审查基线：`docs/agent/handover/feature-zhaiyuanhao-long-context-memory-review.md`。
 
 ## 0. 当前执行管线（已定型）
@@ -55,7 +55,7 @@
 
 | ID | 交付 | Owner | 验收 | 时间 |
 |---|---|---|---|---|
-| **R0 双层终止 + 三先决** | ~~终止语义双层化（end_turn 自然停 + 判官有界续跑）~~ **0.7 修订**：判官已摘除（弱模型伪工具调用下续跑×3 不收敛，实测 905s），收缩为**单层终止**（end_turn 自然停 + maxSteps/连错上限）；TurnStopReason 契约（completed/answered/max-steps/consecutive-failures/aborted/no-verification）；count 翻倍修复 + withRetry/空批保护 + streamChat 透传 | Leader | 测试：Termination/taskIntent/retry/count 回归全绿（✅ 0.6.4 落地、0.7 重构） | U1-U2（✅） |
+| **R0 双层终止 + 三先决** | ~~终止语义双层化（end_turn 自然停 + 判官有界续跑）~~ **0.7 修订**：判官已摘除（弱模型伪工具调用下续跑×3 不收敛，实测 905s），收缩为**单层终止**（end_turn 自然停 + maxSteps/连错上限）；TurnStopReason 契约（completed/answered/max-steps/consecutive-failures/aborted/no-verification）；count 翻倍修复 + withRetry/空批保护 + streamChat 透传 | Leader | 测试：Termination/taskIntent/retry/count 回归全绿（✅ 0.6.4 落地、0.7 重构）；**判官 + TestTimeOrchestrator 摘除（0.7.0 已落，archive/2026-09-05-removals/，回合上界=单次 maxSteps）** | U1-U2（✅） |
 | **R1 回合写闭环**（**最紧要**） | 任务落定统一 hook：`refine({trajectory, taskStyle, attemptCount, userFeedback})` → `save()` → `invalidateProjection()`；接 `Repl.executeTask`/`runAgentTask`/`sseInteractive` 三入口；正向 = 正向反馈 OR `trajectory.success` | 王浩宇 | 连续 3 个同风格任务后 `/memory list` 自动出现教训/成功卡（无需 /remember） | U1-U2 |
 | **R2 markVerified 信号源** | 任务落定取"本任务工具写入/验证过的文件集 ∩ 卡.referencedFiles"→ `markVerified(cardIds)`；`runAgentTask` 已持 lastBuildMeta.injectedCardIds | 王浩宇 | 卡被真实复用后 lastUsedAt/count 刷新（单测） | U2 |
 | **R3 Turn 结构化最小集** | `Turn.result` 增 `goal/changedFiles/verifyCmd`（summary 保留兼容）——多级摘要 envelope 的前置 | 王浩宇 | 落盘字段存在 + 旧格式兼容读 | U2 |
@@ -85,11 +85,15 @@
 |---|---|---|
 | `MAX_FILE_SIZE_BYTES`(200KiB) 声明但从未执行 | `RefinedMemoryCard.ts:91` | 遗留表：`save()` 补执行或删常量 |
 | Reviewer 把"探测到测试脚本"写成 `passed:true`（4 处，未执行） | `Reviewer.ts:122-170` | 遗留表：语义改 `detected`，执行后才 `executed-pass`（/review 命令） |
-| `AbortSignal` 只在 onStep 转发前检查，未传入 `solveIssue`（请求取消≠底层停止） | `runAgentTask.ts:135` | **并入王浩宇 R1 批次**（小改动） |
+| ~~`AbortSignal` 只在 onStep 转发前检查，未传入 `solveIssue`（请求取消≠底层停止）~~ | `runAgentTask.ts:135` | ✅ **0.7.0 销项**：AbortSignal 贯穿 solveIssue→loop→modelClient→engineAdapter/executor（FIX-0.7-TERMINATION §6）；残余边界见下两行 |
 | compact 先改内存后写 marker，marker 写失败产生双源分歧 | `compactService.ts` 落定顺序 | 遗留表：marker 先落盘成功再切内存 |
 | `FeatureTracker.markFeatureDone` 不检查 save 返回值（写失败仍显示成功） | `FeatureTracker.ts:88` | 遗留表 |
 | glob `walkFiles` 跟随目录符号链接可逃逸 pathGuard（只查基准目录） | `glob.ts:30-52` | 遗留表：受信工作区假设声明或补目录项 realpath |
 | rollout `appendEvent` 吞异常，"零事件"无法区分"没注入/写失败" | `rolloutStore.ts:59-66` | 遗留表：`auditStatus` 字段 9/24 后 |
+| **0.7 引入**：fetch 发出后 abort 只中断读取/连接，网关侧生成可能仍在后台算完（无 stream 关闭语义时） | `openai-compatible.ts` | 0.7 已知边界（如实声明，CHANGELOG 0.7.0 Risks）；0.7.1 评估网关侧取消语义 |
+| **0.7 引入**：bash 子进程仅 executor 层 abort（返回 `✗ aborted`），子进程本身可能仍在后台跑 | `bash.ts` | 遗留表：0.7.1 abort 监听 + tree-kill 联动（backlog C7/C8） |
+| **0.7 引入**：`PromptBuilder.buildForTask` 未按 intent 分支注入（chat/search 指令暂在 chaser 内组装，四入口 prompt 组装未统一收敛） | `PromptBuilder.ts` | 遗留表（backlog F7）；与 R1"单一 finalizeTask 服务"同一纪律 |
+| **0.7 待实测**：1B 模型端到端手测未做（`1` / `你好，回答我你是谁` / 运行中 Ctrl+C / `hello.txt` 四路径） | REPL | 待实测（负责人：翟苑皓 F6，需真实端点） |
 | 未采纳（记录在案）：事件 hash-chain、持久化幂等键、auditStatus 完整机制、SummaryNode 全量血缘、`compaction.mode` 四段开关 | — | 9/24 后按需立项 |
 
 ## 4. 已裁决不做 / 推迟（恢复指针）
@@ -99,12 +103,13 @@
 | 过程纪律打分器 + score 字段 | 摘除（成败唯一由验证信号） | `archive/2026-09-05-scoring/` + git 09125b4 |
 | critique 自我批判 | 摘除（打分激励消失后只剩 token 成本） | `archive/2026-09-05-removals/` |
 | 仓库扫描/锚点注入、静态分析预跑、风格头、FailureMemory 轨道、多 rollout 并行 | 摘除 | 同上 |
+| **外置验证判官（continuationJudge）+ TestTimeOrchestrator（多 rollout early-stop 预算裁剪）** | 摘除（**0.7.0**——判官为唯一外层续跑源，弱模型伪工具调用下续跑×3 不收敛实测 905s；orchestrator 在恒单 rollout 后 count/sort/预算裁剪全为死路径；回合上界压回单次 maxSteps） | `archive/2026-09-05-removals/` + git 106dae6 |
 | markCited（模型引用检测） | 推迟：[M1] 通道已就位，7B 引用实验 9/24 后 | 归档 README |
 | Assertion 抽取器 / 冲突检测 / 四类 MemoryProjection / ContextCompiler 独立模块 / token 估算器跨文件统一 | 推迟 9/24 后（契约保留在 types.ts） | 审查报告 §6 |
 | MemoryCard provenance/sourceEventIds/evidence/status 字段 | **不做**（悬空伪 provenance；provenance 由 context 事件承担） | 审查报告 A 表 |
 | rewind 事件 replay 消费、双 synthetic 幂等、listBranches O(N²) | 已知遗留，随评测工程处理 | 方案文件终稿章节 |
 | P6 存储名迁移目标（PANSHA_*→PANG_*） | **待 Leader 裁决**：与已落地 PANSHA_<PROV>_* 命名方向冲突 | ROADMAP.md:43 |
-| ~~AbortSignal 透传~~ | ✅ 已随 R0 落地（runAgentTask 信号传递在 R1 批次收尾） | ROADMAP-NEXT §3.2 |
+| ~~AbortSignal 透传~~ | ✅ 0.7.0 AbortSignal 贯穿已落地（runAgentTask→solveIssue→loop→modelClient→executor，不再"UI 返回但底层照跑"） | ROADMAP-NEXT §3.2 |
 | ~~count 翻倍~~ / ~~无重试+空批 undefined~~ / ~~生产恒非流式~~ | ✅ 已随 R0 落地（0.6.4） | §3.1 合同 |
 | 方案书草案其余缺陷（文件大小约束/Reviewer 证据语义/marker 顺序/FeatureTracker 返回值/glob 符号链接/auditStatus） | 遗留 | ROADMAP-NEXT §3.2 |
 

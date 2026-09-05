@@ -49,10 +49,11 @@ export async function runAgentTask(
     provider?: ModelProvider;
     onEvent: (event: any) => void;
     signal?: AbortSignal;
-    // 审批透传（rich ConfirmBar / line readline / headless）
+    // 审批透传（rich ConfirmBar / line readline / headless）。
+    // 返回放宽为 string：line 桥可返回 `n:<指导语>`（P0-3.4）。
     approvalMode?: 'readonly' | 'default' | 'full';
     sessionAllowlist?: Set<string>;
-    approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<'y' | 'n' | 'a'>;
+    approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
     approvalTimeoutMs?: number;
     planMode?: boolean;
     mcpTools?: any[];

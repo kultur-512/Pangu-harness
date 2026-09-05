@@ -38,10 +38,15 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 │   任务状态跟踪(feature_list → 任务状态机[规划])                     │
 │   语义检索[规划]: 字符n-gram v0 → 国产向量库/embedding 可插拔        │
 ├──────────────────────────────────────────────────────────────────┤
-│ 执行循环层 (VerifyCritiqueLoop · TestTimeOrchestrator)             │
+│ 执行循环层 (taskIntent → solveIssue → VerifyCritiqueLoop)          │
+│   意图分类(0.7)：chat 单次直答 / search 只读≤3步 / task 全循环      │
+│   单次 loop.run——判官/TestTimeOrchestrator 已摘除(0.7.0 归档)       │
 │   思维链阶梯 → 工具调用(三路解析) → 验证信号(PASS/FAIL)             │
 │   铁律: Read-Before-Write / Verify-Before-Claim / 可回滚           │
-│   单 rollout / budget 软限 / 每步轨迹采集                          │
+│   回合三态: completed(真实验证PASS) / answered(end_turn有正文)      │
+│     / no-verification(空白空转)；另有 max-steps/连错上限/aborted    │
+│   AbortSignal 贯穿: solveIssue→loop→complete→fetch/executor        │
+│   budget 软限(token 按模型调用真实累计) / 每步轨迹采集              │
 ├──────────────────────────────────────────────────────────────────┤
 │ 工具引擎层                                                        │
 │   read_file glob grep bash write_file edit_file diff             │
@@ -62,7 +67,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 **各层职责一句话**
 - 模型接入层：把"用什么模型、走什么格式"与上层解耦 → **openPangu 可替换，无需动记忆/循环**。
 - 工具引擎层：真实执行 + 审批 + 护栏 = agent 的"手"，也决定哪些信号能被记录为可验证事实。
-- 执行循环层：agent 的"脑 + 自我复盘"，每步产出轨迹/验证信号（长程记忆的素材）。
+- 执行循环层：agent 的"脑 + 自我复盘"，每步产出轨迹/验证信号（长程记忆的素材）。0.7.0 起单层终止（判官/TestTimeOrchestrator 摘除）：单次 loop.run + 回合三态（completed/answered/no-verification），AbortSignal 可贯穿中止。
 - 记忆增强层：agent 的"长期记忆"——把跨会话经验、压缩摘要、事件、状态外置到 prompt 预算里，不依赖模型窗口记忆。
 - 提示工程层：记忆注入的"闸门"——按档位与预算决定每轮把多少记忆呈现给模型。
 
@@ -117,23 +122,37 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ```
 用户输入 / 任务队列
   │
+  ▼ 意图分类（src/cli/taskIntent.ts · 0.7；PANSHA_INTENT_GATE=0 逃生门）
+    chat（问候/纯问答）→ 单次 complete 直接回答：不进循环、不灌格式教学
+        与工具 schema → stopReason='answered'，正文呈现给用户
+    search（文件宾语无动词）→ 受限只读循环：≤3 步、强制 readonly、禁写
+        禁 bash；搜到报告位置与概要，搜不到询问用户具体用意
+    task/execution → 完整验证循环（↓ 主路径）
+    meta（/命令、r/s 前缀）→ 不进 agent
+  │（task/execution 主路径）
   ▼ PromptBuilder.buildForTask
   身份(openPangu 记忆增强) · L0 · tier约束 · 铁律/负向清单 · 项目验证块
   L1 记忆卡注入(参照文件/关键词/tier 过滤 + 预算) · skills · 当前特性
   最近上下文(3轮) · 当前任务 → 一条"带记忆"的初始 prompt
   │
-  ▼ PanshalachChaser.solveIssue（单 rollout + 预算；#1 2026-09-05）
-    （Phase 探索/锚点注入已摘除——记忆注入承担"仓库我知道什么"）
-    Phase rollout：VerifyCritiqueLoop 迭代
+  ▼ PanshalachChaser.solveIssue（0.7：单次 loop.run——判官与
+    TestTimeOrchestrator 已摘除 archive/2026-09-05-removals/，
+    空批保护并入 chaser；Phase 探索/锚点注入已摘除——记忆注入承担
+    "仓库我知道什么"）
+    VerifyCritiqueLoop 迭代：
         思维链(think/plan/verify) → 工具调用(三路自适应解析)
-        → 真实执行+审批 → 验证信号(PASS/FAIL/…)
-        （critique/FailureMemory 轨道已摘除 archive/2026-09-05-removals/）
-        直到 PASS/真实验证 / 失败上限 / 步数预算
-    budget 软限降级 / early-stop（过程纪律打分器已归档
-    archive/2026-09-05-scoring/；score 已整体移除——成败由验证信号（trajectory.success）判定）
+        → 真实执行+审批 → 验证信号(PASS/FAIL)
+        （critique/FailureMemory 轨道已摘除 archive/2026-09-05-removals/；
+        多 rollout / early-stop 预算裁剪随 TestTimeOrchestrator 退场；
+        score 已整体移除——成败由验证信号判定）
+        终止（单层，无判官续跑）：PASS+end_turn → completed /
+        end_turn 有正文 → answered / 空白空转 → no-verification /
+        max-steps / 连错上限 / signal abort
+    budget 软限：estimatedUsedTokens 按每次模型调用累加（0.7 修复恒 0）
   │
   ▼ 任务落定（回合写闭环 · P2 规划）
-    refine(trajectory+attemptCount+反馈) → save → invalidateProjection
+    refine(信号=stopReason==='completed' + attemptCount + 反馈) → save → invalidateProjection
+    （0.7 记忆信号收紧：纯问答/闲聊 answered 不产生 success 卡）
     会话 addTurn + rollout append + (需要时)后台预压缩
     → 下一回合 L1 注入能读到"上一轮沉淀"
 ```
@@ -154,16 +173,17 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ## 5. 资源消耗
 
-| 项 | 量级 | 说明 |
+| 项 | 数值 | 说明 |
 |---|---|---|
-| 推理底座 | openPangu-7B 约 7–16GB（int8/昇腾）· 1B < 4GB | 端点外置，Agent 侧无模型驻留 |
-| Agent 进程 | 内存 < 200MB、零运行时依赖 | Node ≥18 + TypeScript 产物；`dependencies: {}` |
-| 上下文预算 | 默认 128K token 软窗(`PANSHA_CTX_WINDOW`) | compact 触发：ctxRatio≥0.85 且 >12 轮 |
-| 记忆文件 | 卡 ≤200、事件 jsonl 追加 | 单项目记忆体积 KB 级 |
-| 每任务 token | 单 rollout × 步数（10–40 步/档）与预算软限控制（#1） | 预算触发 → 步数减半 + 铁律降档 |
-| 成本核算 | `/usage` 基于配置单价 | 可选 |
+| 推理底座显存 | **待赵天昂 U7 实测**（1B / 7B int8 分列） | 端点外置（昇腾 MindIE / vLLM-ascend / 本机 OpenAI 兼容），Agent 侧无模型驻留；经验参考 7B int8 约 7–16GB、1B < 4GB（非实测） |
+| Agent 进程内存 | **待赵天昂 U7 实测** | Node ≥18 + TypeScript 产物；`dependencies: {}` 零运行时依赖 |
+| 上下文预算 | **待赵天昂 U7 实测**（软窗默认 128K，`PANSHA_CTX_WINDOW`） | compact 触发：ctxRatio≥0.85 且 >12 轮 |
+| 记忆/事件文件体积 | **待赵天昂 U7 实测** | 卡 ≤200（单类 ≤10）、rollout jsonl 追加；设计容量 KB 级 |
+| 每任务 token | **待赵天昂 U7 实测** | 0.7.0 起回合上界 = 单次 maxSteps（10–40 步/档，判官摘除）；search 意图 ≤3 步；预算软限按模型调用累计 |
+| `/usage` 预算读数 | **待赵天昂 U7 实测** | 0.7.0 起 `estimatedUsedTokens` 按每次模型调用真实累加（修复恒 0） |
+| 成本核算 | **待赵天昂 U7 实测** | `/usage` 基于配置单价，可选 |
 
-真机运行的成本/token 实测表待 [EVALUATION.md](EVALUATION.md) 真实 openPangu 数据填充。
+> **回填纪律**：数值列不预填——统一由**赵天昂 U7**（真机 openPangu 实测）回填，结果先入 [EVALUATION.md](EVALUATION.md) §4 再同步本表；"说明"列中的容量上限/软窗阈值为设计契约，不是实测值。
 
 ---
 

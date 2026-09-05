@@ -32,8 +32,8 @@
 **文档/测试**
 - 新增 `docs/panshalach/FIX-0.7-TERMINATION.md`（方案）；`tests/loop/Termination.test.ts`（6 例：answered/no-verification/completed/max-steps/consecutive-failures/aborted）、`tests/cli/taskIntent.test.ts`（7 例）、`tests/tools/withWriteLock.test.ts`（写互斥从 orchestrator 测试迁出保留）
 - 删除 `ContinuationJudge.test.ts`/`TwoLayerTermination.test.ts`/orchestration 两测试；记忆测试正向卡用例随信号源更新（`stopReason='completed'`）
-- 验证（2026-09-05，Windows/Node 22）：`npx tsc --noEmit` 干净（EXIT=0）；`node --test --import tsx --test-concurrency=4`（显式 glob 全目录）**545 例：544 pass + 1 skip + 0 fail**
-- 待实测（用户侧）：REPL 输入 `1`/`你好` → 单次出正文；Ctrl+C → 网关停 POST；`hello.txt` → 先搜索搜不到询问
+- 验证（2026-09-05，Windows/Node 22）：`npx tsc --noEmit` 干净（EXIT=0）；`node --test --import tsx --test-concurrency=4`（显式 glob 全目录）**545 例：544 pass + 1 skip + 0 fail**；`node verify-panshalach-cleanup.mjs` **OVERALL CLEANUP STATUS (static checks): PASS**（收尾复验 2026-09-05：三项命令原样重跑，结果与上述一致）
+- 待实测（用户侧，需真实端点；负责人：翟苑皓 F6）：REPL 输入 `1`/`你好，回答我你是谁` → 单次出正文；运行中 Ctrl+C → 任务真停、网关停 POST；`hello.txt` → 先只读搜索、搜不到询问具体用意
 
 ## 0.6.5 (部署落地：全局唤起 + 原生 function calling 请求侧 + 写工具全档位 + CC 风格提示词)
 

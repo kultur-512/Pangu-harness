@@ -59,8 +59,9 @@ export interface ChaserConfig {
   approvalMode?: 'readonly' | 'default' | 'full';
   /** Session-scoped allow-always list ('a' decisions). */
   sessionAllowlist?: Set<string>;
-  /** Interactive approval bridge (rich ConfirmBar / readline / headless). */
-  approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<'y' | 'n' | 'a'>;
+  /** Interactive approval bridge (rich ConfirmBar / readline / headless).
+   *  返回放宽为 string：line 桥可返回 `n:<指导语>`（P0-3.4）；'y'/'a' 语义不变。 */
+  approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
   /** Approval confirm timeout (default 60s → treated as 'n'). */
   approvalTimeoutMs?: number;
   /** plan mode（禁止写入/bash，仅输出计划）。 */

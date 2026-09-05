@@ -18,7 +18,7 @@ import { isReadonlyAllowed, READONLY_DENY_MESSAGE } from './readonlyAllowlist.js
 import { readFile } from './readFile.js';
 import { createWriteFileTool } from './writeFile.js';
 import { createEditFileTool } from './editFile.js';
-import { classify, describeRequest, WRITE_TOOLS, type ApprovalDecision } from './approval.js';
+import { classify, describeRequest, WRITE_TOOLS, cancelActiveApproval, type ApprovalDecision } from './approval.js';
 import { checkpointBeforeMutation } from './fileHistory.js';
 import path from 'path';
 import type { ToolContext, ToolImpl, ToolResult, DiffHunk } from './types.js';
@@ -42,13 +42,14 @@ export interface EngineAdapterOptions {
   tierConfig: TierConfig;
   /** 2.4 injects the session's approval mode here (default: readonly). */
   approvalMode?: 'readonly' | 'default' | 'full';
-  /** 2.4 injects an approval bridge (rich ConfirmBar / readline / headless). */
+  /** 2.4 injects an approval bridge (rich ConfirmBar / readline / headless).
+   *  返回放宽为 string：line 桥可返回 `n:<指导语>`（P0-3.4，拼进拒绝反馈）。 */
   approvalBridge?: (req: {
     tool: string;
     description: string;
     danger: boolean;
     diff?: unknown[];
-  }) => Promise<'y' | 'n' | 'a'>;
+  }) => Promise<string>;
   /** Session-scoped allowlist for 'a' (allow-always) decisions. */
   sessionAllowlist?: Set<string>;
   /** plan mode — 写入与 bash 直接拒绝（读取放行）。 */
@@ -176,6 +177,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   // MCP 工具 — 命名空间 mcp_<server>_<tool>，按 bash 同等门禁。
   // readonly → denied; default → confirm (via the same bridge); full → pass;
   // plan mode → denied. Danger heuristic: write-ish tool names flagged.
+  let decisionTimerLocal: NodeJS.Timeout | undefined;
   const mcpTools = (opts.mcpTools ?? []).map((mt) => ({
     ...mt,
     call: async (args: Record<string, unknown>) => {
@@ -204,25 +206,30 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         }
         const description = `MCP 工具 ${mt.name}（${mt.description || ''}）`;
         emitEvent?.({ version: 2, type: 'approval.request', requestId: `mcp_${Date.now()}_${++approvalSeq}`, tool: mt.name, description, danger });
-        let decision: ApprovalDecision = 'n';
+        let decision = 'n';
         try {
+          // 评审 P2：timer 改 race 局部（adapter 级共享变量会被并发 MCP 审批互相覆盖/漏清）
           decision = await Promise.race([
             approvalBridge({ tool: mt.name, description, danger }),
-            new Promise<ApprovalDecision>((resolve) => {
+            new Promise<string>((resolve) => {
               const t = setTimeout(() => resolve('n'), approvalTimeoutMs);
               t.unref();
-              decisionTimer = t;
+              decisionTimerLocal = t;
             }),
           ]);
-          if (decisionTimer) { clearTimeout(decisionTimer); decisionTimer = undefined; }
+          if (decisionTimerLocal) { clearTimeout(decisionTimerLocal); decisionTimerLocal = undefined; }
         } catch {
           decision = 'n';
         }
         // T-27（高危）: 'a'（always allow）按 MCP 工具全名放行（mcp_<server>_<tool>），
         // 绝不 add('bash')——否则放行一个 MCP 工具即解锁全部 bash 免审。
-        if (decision === 'a') sessionAllowlist.add(mt.name);
-        if (decision !== 'y' && decision !== 'a') {
-          return { ok: false, output: `✗ DENIED (user) · ${mt.name}`, error: 'DENIED_BY_USER' };
+        // P0-3.4: `n:<指导语>` 同样拼进 MCP 拒绝反馈。
+        const mRaw = String(decision || 'n');
+        const mGuidance = mRaw.startsWith('n:') ? mRaw.slice(2).trim() : '';
+        const mEff: ApprovalDecision = mRaw === 'a' ? 'a' : mRaw === 'y' ? 'y' : 'n';
+        if (mEff === 'a') sessionAllowlist.add(mt.name);
+        if (mEff !== 'y' && mEff !== 'a') {
+          return { ok: false, output: `✗ DENIED (user) · ${mt.name}${mGuidance ? `\n│ 用户指导: ${mGuidance}` : ''}`, error: 'DENIED_BY_USER' };
         }
       }
       return mt.call(args);
@@ -372,7 +379,6 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   const emitEvent = opts.emitEvent;
 
   let approvalSeq = 0;
-  let decisionTimer: NodeJS.Timeout | undefined;
   // 连续未知工具漂移计数器（adapter 生命周期 = 单次
   // task run; resets only when a KNOWN tool is called).
   let unknownToolStreak = 0;
@@ -439,7 +445,8 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
       };
     }
 
-    let decision: ApprovalDecision = 'n';
+    let decision: string = 'n';
+    let timedOut = false;
     try {
       // 桥接胜出时清除超时（防挂起）：
       // race — a stray 60s timer otherwise keeps `node --test` alive.
@@ -448,23 +455,36 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
       let timer: NodeJS.Timeout | undefined;
       decision = await Promise.race([
         approvalBridge({ tool, description, danger: verdict.danger }),
-        new Promise<ApprovalDecision>((resolve) => {
-          timer = setTimeout(() => resolve('n'), approvalTimeoutMs);
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => { timedOut = true; resolve('n'); }, approvalTimeoutMs);
         }),
       ]);
       if (timer) clearTimeout(timer);
     } catch {
       decision = 'n';
     }
-
-    if (decision === 'a') {
-      sessionAllowlist.add(tool);
-      decision = 'y';
+    // 评审 Bug#3：引擎侧 60s race 超时放行时，桥接侧 finish 未跑会残留
+    // activeApprovalCancel → isApprovalActive() 恒真（gerund 永久暂停 +
+    // 后续 Ctrl+C 被死审批劫持）。超时路径显式清钩子。
+    if (timedOut) {
+      try { cancelActiveApproval('timeout'); } catch {}
     }
-    if (decision !== 'y') {
+
+    // P0-3.4: `n:<指导语>` — 拒绝的同时携带用户给模型的一句指导。
+    const dRaw = String(decision || 'n');
+    const guidance = dRaw.startsWith('n:') ? dRaw.slice(2).trim() : '';
+    let eff: ApprovalDecision = dRaw === 'a' ? 'a' : dRaw === 'y' ? 'y' : 'n';
+    if (eff === 'a') {
+      sessionAllowlist.add(tool);
+      // 评审 Bug#1：'a' = 加入会话 allowlist 且**本次放行**（与 MCP gate
+      // 语义一致）。旧实现 `decision='a'; decision='y'` 的等价语义在改造
+      // 中丢失，导致首次选"总是允许"反而被拒。
+      eff = 'y';
+    }
+    if (eff !== 'y') {
       return {
         ok: false,
-        output: `✗ DENIED (user) · ${tool}: ${description}`,
+        output: `✗ DENIED (user) · ${tool}: ${description}${guidance ? `\n│ 用户指导: ${guidance}` : ''}`,
         durationMs: 0,
         error: 'DENIED_BY_USER',
         meta: { danger: verdict.danger },
@@ -486,6 +506,28 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         const params = paramsOf(call);
         const deniedRes = await gate(String(call.toolName || ''), params);
         if (deniedRes) {
+          // 评审核销缺口：gate 拒绝的调用也要发 post-execute（ok:false），
+          // 否则 line 模式拒绝零卡片反馈（pre 行已由调用方在 execute 前无
+          // 从发出——这里连 pre 一起补齐）。
+          const deniedTool = String(call.toolName || '').trim().toLowerCase();
+          try {
+            emitEvent?.({
+              type: 'tools/pre-execute',
+              tool: deniedTool,
+              params,
+              approval: 'denied',
+              danger: !!deniedRes.meta?.danger,
+            });
+            emitEvent?.({
+              type: 'tools/post-execute',
+              tool: deniedTool,
+              ok: false,
+              exitCode: null,
+              durationMs: 0,
+              error: deniedRes.error,
+              outputPreview: typeof deniedRes.output === 'string' ? deniedRes.output.slice(0, 500) : '',
+            });
+          } catch {}
           parts.push(describeResult(call, params, deniedRes));
           continue;
         }
@@ -511,7 +553,9 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         const res = toolNorm === 'write_file' || toolNorm === 'edit_file'
           ? await withWriteLock(() => executor.execute(String(call.toolName || ''), params))
           : await executor.execute(String(call.toolName || ''), params);
-        // tools/post-execute event (result + duration) for observability
+        // tools/post-execute event (result + duration) for observability.
+        // P1-2: 附带轻量结果载荷（截断 output / 行数 / diff 摘要），line 模式
+        // 工具实时卡片的结果行由此渲染（Wrote N lines / Read N lines / Added-removed）。
         try {
           emitEvent?.({
             type: 'tools/post-execute',
@@ -520,6 +564,9 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
             exitCode: res.meta?.exitCode ?? null,
             durationMs: Date.now() - toolStart,
             error: res.error,
+            outputPreview: typeof res.output === 'string' ? res.output.slice(0, 1500) : '',
+            lines: Number(res.meta?.lines) || undefined,
+            diff: Array.isArray(res.meta?.diff) ? (res.meta?.diff as DiffHunk[]).slice(0, 40) : undefined,
           });
         } catch {}
         // 未知工具漂移运行时护栏 — 记录 + 引导 +
