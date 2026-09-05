@@ -58,85 +58,6 @@ export class TrajectoryRecorder {
   }
 }
 
-export class TrajectoryScorer {
-  /**
-   * 长程记忆增强打分
-   * 核心指标：
-   * - 真实验证次数（最高权重）
-   * - 严格 <> 格式纯度
-   * - 早验证 + 深度批评
-   * - 严重惩罚无验证就宣称成功的行为
-   */
-  static score(trajectory: Trajectory): number {
-    let score = 0;
-    // isStrongTarget: 高纪律模式下的验证密度奖励
-    const isStrongTarget = !!trajectory.isStrongTarget;
-    const taskStyle = (trajectory.taskStyle ?? trajectory.benchmarkType) as BenchmarkType | undefined;
-    const profile = BenchmarkProfiles.get(taskStyle);
-
-    const v = profile.scoringHints.verificationWeight;
-    const early = profile.scoringHints.earlyVerifyBonus;
-
-    // 1. 真实验证次数（核心指标）
-    const verifiedSteps = trajectory.steps.filter(s =>
-      s.result.includes('ALL_TESTS_PASSED') ||
-      s.result.includes('VERIFICATION: PASS') ||
-      s.result.toLowerCase().includes('all tests passed') ||
-      s.result.toLowerCase().includes('verification: pass')
-    ).length;
-
-    score += verifiedSteps * (isStrongTarget ? 24 * v : 18 * v);
-
-    if (trajectory.steps.length > 0) {
-      const density = verifiedSteps / trajectory.steps.length;
-      score += Math.round(density * 15 * (isStrongTarget ? v : 0.8));
-    }
-
-    // 2. 早验证奖励（轻量）
-    const firstVerificationStep = trajectory.steps.findIndex(s =>
-      s.result.includes('ALL_TESTS_PASSED') ||
-      s.result.includes('VERIFICATION: PASS') ||
-      s.didRealVerification === true
-    );
-    if (firstVerificationStep >= 0) {
-      const earlyBonus = isStrongTarget
-        ? Math.max(0, 12 - firstVerificationStep * 2) * early
-        : Math.max(0, 8 - firstVerificationStep * 1.5) * early;
-      score += earlyBonus;
-    }
-
-    // 3. RBW 违规惩罚（通用安全，保留）
-    let rbwViolations = 0;
-    for (const step of trajectory.steps) {
-      if (step.readBeforeWriteViolation) rbwViolations++;
-    }
-    score -= rbwViolations * 12;
-
-    // 4. 深度批评奖励（轻量）
-    const deepCritiques = trajectory.steps.filter(s =>
-      s.critique && s.critique.length > 160
-    ).length;
-    score += deepCritiques * (isStrongTarget ? 10 : 8);
-
-    // 5. 严重惩罚：大量步骤几乎无验证
-    const totalSteps = trajectory.steps.length;
-    if (verifiedSteps === 0 && totalSteps >= 4) {
-      score -= isStrongTarget ? 25 : 15;
-    }
-    if (verifiedSteps <= 1 && totalSteps >= 8) {
-      score -= isStrongTarget ? 15 : 8;
-    }
-
-    // 6. 长度惩罚（轻量）
-    score -= Math.max(0, totalSteps - 9) * (isStrongTarget ? 4 : 3);
-
-    // 7. 思考深度奖励（轻量）
-    const deepThoughts = trajectory.steps.filter(s => s.thought && s.thought.length > 320).length;
-    score += deepThoughts * 4;
-
-    return Math.max(0, Math.min(100, Math.round(score)));
-  }
-}
 
 export class TestTimeOrchestrator {
   private recorder = new TrajectoryRecorder();
@@ -160,11 +81,10 @@ export class TestTimeOrchestrator {
         traj.isStrongTarget = isStrongTarget;
         traj.benchmarkType = taskStyle;
         traj.taskStyle = taskStyle;
-        // 调用方提供的分数优先
-        // (PanshalachChaser computes a richer verification-aware score); the
-        // orchestrator's TrajectoryScorer is the fallback when absent.
+        // 打分器已归档（archive/2026-09-05-scoring/）：调用方（Chaser）必须给出
+        // 验证锚定的 score（成功=100/未成功=0）；缺分兜底为 0（不猜）。
         if (traj.score === undefined || traj.score === null) {
-          traj.score = TrajectoryScorer.score(traj);
+          traj.score = 0;
         }
         return traj;
       } catch {

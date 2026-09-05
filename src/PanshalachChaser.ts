@@ -502,14 +502,11 @@ export class PanshalachChaser {
           taskStyle,
         };
 
-        let score = result.success ? 88 : Math.max(30, 35 + result.steps.length * 2);
-        if (tierConfig.isStrongMode) {
-          const perfectFormats = result.steps.filter(s => !s.detectedFormat || String(s.detectedFormat).includes('strict')).length;
-          score += perfectFormats * 3;
-          const firstPass = result.steps.findIndex(s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED'));
-          if (firstPass >= 0) score += Math.max(0, 12 - firstPass * 2);
-        }
-        traj.score = Math.min(100, Math.max(0, score));
+        // 打分器已归档（archive/2026-09-05-scoring/）：不再做过程纪律评分
+        // （88/35+2N/格式加分/早过加分）。score 收敛为验证锚定两值：
+        // 成功=100 / 未成功=0。下游不变式：success 闸门（>=80）与记忆
+        // success 卡阈值（>=85）行为与旧 88 分制完全一致（100>=85、0<85）。
+        traj.score = result.success ? 100 : 0;
         return traj;
       },
       maxRollouts,

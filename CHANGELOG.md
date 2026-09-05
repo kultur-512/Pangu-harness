@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 (打分器摘除归档：记忆主线去性能叙事残留)
+
+- **归档** `TrajectoryScorer` 七因子过程纪律打分器 + Chaser 内联启发式评分（88/35+2N/格式/早过加分）→ `archive/2026-09-05-scoring/`（含恢复说明）
+- `score` 语义收敛为验证锚定两值：成功=100 / 未成功=0；下游不变式全部保持：success 闸门（≥80）、记忆 success 卡阈值（≥85）、compact 补漏（正则 score 抽取）行为不变
+- 顺带修复：旧failure 分 `max(30, 35+步数×2)` 使 ≥23 步失败轨迹也能过 80 闸门的潜在 bug
+- orchestrator 早停（≥92）现于首个成功 rollout 即停（token 节省）；缺分兜底 0（不猜）
+- 文档：ARCHITECTURE 执行链路描述、REFACTOR-ASSESSMENT §4 禁区注记同步
+
 ## 0.6.0 (全面改名：烛龙 Zhulong / 盤沙拉克 Panshalach)
 
 ### 模型接入：tool_calls 透传 + 多模型源（2026-09-04 df7a119）

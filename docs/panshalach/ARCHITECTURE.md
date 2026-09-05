@@ -129,7 +129,8 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
         → 真实执行+审批 → 验证信号(PASS/FAIL/…)
         → critique 复盘（每步信号喂 FailureMemory）
         直到 PASS/真实验证 / 失败上限 / 步数预算
-    打分 / best-of-N / budget 软限降级 / early-stop
+    best-of-N / budget 软限降级 / early-stop（过程纪律打分器已归档
+    archive/2026-09-05-scoring/；score=验证锚定两值 成功100/未成功0）
   │
   ▼ 任务落定（回合写闭环 · P2 规划）
     refine(trajectory+attemptCount+反馈) → save → invalidateProjection

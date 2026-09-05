@@ -103,6 +103,8 @@
 
 ## 4. 贴合盘古的改造路径（分阶段里程碑）
 
+> **2026-09-05 注记（AGENT-CONTRIBUTION §3.1 禁区申报）**：`PanshalachChaser.solveIssue` 返回**形状**未变，但 `score` 语义经产品主批准收敛为验证锚定两值（成功=100/未成功=0），过程纪律打分器（TrajectoryScorer + 内联启发式）归档至 `archive/2026-09-05-scoring/`。success 闸门（≥80）与记忆 success 卡阈值（≥85）行为不变。
+
 > 本期已执行 A/B/C/D（见 REFACTOR 计划）；下述 P1–P6 为后续里程碑。
 
 ### P1 — openPangu 泛化接入（代码，边界清晰）
