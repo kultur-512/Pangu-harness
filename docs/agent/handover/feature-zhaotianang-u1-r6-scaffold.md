@@ -182,8 +182,10 @@ U3 王佐负责把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 之
 ## 11. 我的下一步
 
 - [x] 9/5 周六：v0.6.4 推送后落地 R6 骨架（commit e362de4 + 53c1d02）
-- [ ] 9/6 周日：写当日工作日志（`docs/agent/logs/zhaotianang/zhaotianang-2026-09-05.md`）
-- [ ] 9/6~7 周末/周一：push + 提 PR（描述引本文件）
+- [x] 9/5 周六：handover 落库（commit 688f8ae）
+- [x] 9/5 周六：push + 提 PR（已合并入 PR #1，因 Gitee 单一源→目标限制）
+  - **PR #1** https://gitee.com:Kultur/pangu-harness/pulls/1 升级为 `feat(memory+eval): W4 Main-B 提前工作 — P4 EmbeddingProvider v0 + R6 评测基建骨架`
+- [ ] 9/6 周日：等 Leader 评审 PR #1；按意见调整
 - [ ] 9/7 周一 U1 D1：等 Leader 评审 + 王浩宇 R6 runner 启动协调
 - [ ] 9/8 周二 U1 D2：跟进 PR 评论 + handover 收口
 - [ ] 9/9-10 U2：`/task` CLI 启动（依赖王佐 U1-U2 taskState.ts）

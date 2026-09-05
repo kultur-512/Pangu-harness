@@ -114,9 +114,14 @@ last_updated: 21:00 (R6 骨架 + handover 落 commit 后追加)
 - 待王佐 U3 启动前对齐：TaskState 注入后 `injectedCardIds` 反映方式。
 
 ### TODO（明天 / 下一轮）
-- [ ] 9/6 周日：push 3 commit + 提 PR（描述引 handover §1 + §3 + §4）
+- [ ] 9/6 周日：等 Leader 评审 PR #1（已升级合并两批工作）；可能要求改命名/补 doc/调整签名
 - [ ] 9/7 周一 U1 D1 上午：`git fetch origin develop` + 看 PR 评论 + 看 leader 9/6 周日是否还有推送
 - [ ] 9/7 周一 D1 下午：王浩宇 R1/R2 启动协调（refine 接线 + markVerified 信号源）
 - [ ] 9/7 周一 D1 晚：`npx tsc --noEmit` + `npm test` + `verify-panshalach-cleanup.mjs`（PR 合并后必跑）
 - [ ] 9/8 周二 U1 D2：跟 PR 评论 + handover §4 收口 + 给王浩宇做 review 反向响应
 - [ ] 9/9-10 U2：等王佐 taskState.ts 落地后启动 `/task` CLI
+
+### PR 提交结果（晚间）
+- push 后 Gitee 提示"已存在相同源分支、目标分支的 Pull Request !1"——因 PR #1 早 13:30 已用同源→目标提交
+- 选择**升级 PR #1**（不拆不 force-push），标题改为 `feat(memory+eval): W4 Main-B 提前工作 — P4 EmbeddingProvider v0 + R6 评测基建骨架`，描述保留 PR #1 原 P4 内容追加 R6 部分
+- 后续若有更多 P4/R6 相关工作可继续追加到 PR #1
