@@ -8,6 +8,7 @@
 import { Repl } from './Repl.js';
 import { getSharedModelProvider } from './ModelProvider.js';
 import { Session } from './Session.js';
+import { applyConfigModel } from './modelSeed.js';
 
 export interface ClassicReplOptions {
   /** B8: carry a restored session (e.g. --resume) into the classic fallback. */
@@ -18,13 +19,18 @@ export async function startClassicRepl(opts: ClassicReplOptions = {}): Promise<v
   // 共享 provider 单例（懒创建）保持热配置状态
   // consistent with the interactive runner and /serve.
   const provider = getSharedModelProvider();
-  const repl = new Repl({ provider, ...(opts.session ? { session: opts.session } : {}) });
+  const repl = new Repl({
+    provider,
+    ...(opts.session
+      ? { session: applyConfigModel(opts.session, opts.session.workspace) as Session }
+      : { session: applyConfigModel(new Session()) as Session }),
+  });
   await repl.start();
 }
 
 export async function runClassicOneShot(args: string[]): Promise<void> {
   const provider = getSharedModelProvider();
-  const session = new Session();
+  const session = applyConfigModel(new Session()) as Session;
   const repl = new Repl({ session, provider });
   await repl.runOneShot(args);
 }

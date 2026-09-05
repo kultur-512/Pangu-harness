@@ -171,6 +171,16 @@ export class VerifyCritiqueLoop {
   private terminalNoCheckViolations = 0;   // Terminal 风格：关键命令后未检查
   private automationStepsWithoutEffectCheck = 0;
 
+  /** 当前引擎实际可用的工具名（格式教学示例必须与之匹配，防 UNKNOWN_TOOL 空转）。 */
+  private availableToolNames(): string[] | undefined {
+    try {
+      const names = this.verificationEngine?.executor?.availableTools?.();
+      return Array.isArray(names) && names.length > 0 ? names.map(String) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason }> {
     let stepNum = 0;
     let done = false;
@@ -224,7 +234,7 @@ export class VerifyCritiqueLoop {
         if ((injectionLevel === 'minimal' || injectionLevel === 'low') && !hasFormatIssue) {
           // 跳过格式提示
         } else if (stepNum <= formatEarlyBound || hasFormatIssue) {
-          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
+          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames())}`;
         }
 
         // 验证提醒更实用
@@ -244,6 +254,10 @@ export class VerifyCritiqueLoop {
         }
       } else {
         // === 实用 / 日常模式：轻量纪律提示（避免无谓消耗）===
+        // 首轮格式教学：任何档位第一步都必须知道调用格式（小模型无示例不产出调用）。
+        if (stepNum <= 1) {
+          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames())}`;
+        }
         if (this.readBeforeWriteViolations > 0) {
           prompt += `\n\n【小提醒】最近有在未读取文件的情况下直接修改文件的倾向，建议先读取再修改。`;
         }
@@ -252,7 +266,12 @@ export class VerifyCritiqueLoop {
         }
       }
 
-      const rawOrObj = await this.modelClient.complete(prompt);
+      // P1.1 请求侧：真实引擎带 toolSchemas() 时走原生 function calling；
+      // mock/旧引擎没有该方法 → 不带 tools，维持文本协议路径（测试兼容）。
+      const toolSchemas = typeof this.verificationEngine?.toolSchemas === 'function'
+        ? this.verificationEngine.toolSchemas()
+        : undefined;
+      const rawOrObj = await this.modelClient.complete(prompt, (Array.isArray(toolSchemas) && toolSchemas.length > 0) ? { tools: toolSchemas } : {});
 
       // Normalize
       let rawContent: string;

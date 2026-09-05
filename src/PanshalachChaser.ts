@@ -174,7 +174,11 @@ export class PanshalachChaser {
     );
 
     if (tierConfig.ironLawInjectionLevel !== 'none') {
-      basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
+      // 写工具已全档位注册（2026-09-05 裁决），教学名单固定为全集，
+      // 与格式教学示例严格一致，防 UNKNOWN_TOOL 空转。
+      basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(
+        ['bash', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']
+      )}`;
     }
 
     // Phase 2: Test-Time Compute
@@ -220,12 +224,12 @@ export class PanshalachChaser {
         // stream, re-emit throttled thinking.delta / message.delta events via
         // onStep, and return the accumulated raw text so VerifyCritiqueLoop's
         // parsing path is untouched. Falls back to plain complete() otherwise.
-        const makeStreamingComplete = (): ((prompt: string) => Promise<string | ModelClientOutput>) => {
+        const makeStreamingComplete = (): ((prompt: string, opts?: any) => Promise<string | ModelClientOutput>) => {
           const streamable = originalClient as any;
           if (typeof streamable?.streamChat !== 'function') {
             // Preserve original semantics: complete() may return a string OR an
             // object ({content, toolCalls...}) — VerifyCritiqueLoop handles both.
-            return (prompt: string) => originalClient.complete(prompt);
+            return (prompt: string, opts?: any) => originalClient.complete(prompt, opts);
           }
 
           const emitDelta = (type: 'thinking' | 'message', text: string, first: boolean) => {
@@ -243,13 +247,13 @@ export class PanshalachChaser {
           // micro-batching here (typically 10-100 chunks per reply).
           // P1.1: type:'toolCalls' chunk（原生 function calling）聚合后以结构化
           // 对象返回，VerifyCritiqueLoop.preParsedToolCalls 通道直接消费。
-          return async (prompt: string): Promise<string | ModelClientOutput> => {
+          return async (prompt: string, opts?: any): Promise<string | ModelClientOutput> => {
             let text = '';
             let startedThinking = false;
             let startedMessage = false;
             let streamToolCalls: unknown[] | null = null;
 
-            for await (const chunk of streamable.streamChat(prompt)) {
+            for await (const chunk of streamable.streamChat(prompt, opts)) {
               if (chunk && (chunk as any).type === 'toolCalls' && Array.isArray((chunk as any).toolCalls)) {
                 streamToolCalls = ((chunk as any).toolCalls as unknown[]).slice();
                 continue;

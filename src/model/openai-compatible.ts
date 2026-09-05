@@ -96,6 +96,8 @@ export interface CompleteOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /** 原生 function calling（P1.1 请求侧）：OpenAI function schema 列表。 */
+  tools?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
   [key: string]: unknown;
 }
 
@@ -223,6 +225,19 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     };
     if (max_tokens !== undefined) {
       body.max_tokens = max_tokens;
+    }
+    // P1.1 请求侧：tools 非空时透传 OpenAI function calling schema，
+    // 网关/模型据此在响应里返回结构化 tool_calls（响应侧转换已就绪）。
+    if (Array.isArray(opts.tools) && opts.tools.length > 0) {
+      body.tools = opts.tools.map((t) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description ?? '',
+          parameters: t.parameters ?? { type: 'object', properties: {} },
+        },
+      }));
+      body.tool_choice = 'auto';
     }
 
     const url = joinUrl(baseUrl, '/chat/completions');
@@ -387,6 +402,18 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       };
       if (max_tokens !== undefined) {
         body.max_tokens = max_tokens;
+      }
+      // P1.1 请求侧：stream 路径同样透传 tools（delta.tool_calls 拼装已就绪）。
+      if (Array.isArray(opts.tools) && opts.tools.length > 0) {
+        body.tools = opts.tools.map((t) => ({
+          type: 'function',
+          function: {
+            name: t.name,
+            description: t.description ?? '',
+            parameters: t.parameters ?? { type: 'object', properties: {} },
+          },
+        }));
+        body.tool_choice = 'auto';
       }
 
       const url = joinUrl(baseUrl, '/chat/completions');

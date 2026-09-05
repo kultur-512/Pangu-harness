@@ -308,8 +308,18 @@ export interface ModelClient {
 export interface CompleteOptions {
   maxTokens?: number;
   temperature?: number;
-  // 未来可按需扩展（stream、tools 等）
+  /** 原生 function calling（P1.1 请求侧）：OpenAI function schema 列表。 */
+  tools?: ToolSchema[];
+  // 未来可按需扩展（stream 等）
   [key: string]: unknown;
+}
+
+/** OpenAI function calling 工具 schema（请求侧透传用）。 */
+export interface ToolSchema {
+  name: string;
+  description?: string;
+  /** JSON Schema 形式的参数描述。 */
+  parameters?: Record<string, unknown>;
 }
 
 export interface ModelClientOutput {

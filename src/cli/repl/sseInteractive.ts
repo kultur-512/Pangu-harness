@@ -48,7 +48,11 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   // one shared session for rich + line paths (approval mode/allowlist
   // flow from here into the engine adapter; M2.2 resume seeds it).
-  const session: Session = opts.session ?? new Session({ workspace: opts.defaultWorkspace, tier: (opts.defaultTier as any) || 'high' });
+  const { applyConfigModel } = await import('./modelSeed.js');
+  const session: Session = applyConfigModel(
+    opts.session ?? new Session({ workspace: opts.defaultWorkspace, tier: (opts.defaultTier as any) || 'high' }),
+    opts.session?.workspace || opts.defaultWorkspace
+  ) as Session;
   if (!opts.session) {
     try { rollout.appendMeta(session); } catch {}
   }

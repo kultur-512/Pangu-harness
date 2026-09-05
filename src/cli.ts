@@ -36,6 +36,20 @@ for (let i = 0; i < rawArgs.length; i++) {
     process.env.PANSHA_HEADLESS = '1';
     continue;
   }
+  // --approval <readonly|default|full> — one-shot/headless 审批档位。
+  // 默认 readonly 下写文件会被拒，headless 自动化任务需要显式提权。
+  if (a === '--approval') {
+    const next = rawArgs[i + 1];
+    if (next && !next.startsWith('-')) {
+      process.env.PANSHA_APPROVAL = next;
+      i++;
+    }
+    continue;
+  }
+  if (a.startsWith('--approval=')) {
+    process.env.PANSHA_APPROVAL = a.slice('--approval='.length);
+    continue;
+  }
   if (a === '--resume' || a === '-r') {
     const next = rawArgs[i + 1];
     resumeArg = next && !next.startsWith('-') ? next : 'last';

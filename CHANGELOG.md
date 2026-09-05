@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.5 (部署落地：全局唤起 + 原生 function calling 请求侧 + 写工具全档位 + CC 风格提示词)
+
+产品主"部署后无法唤起"排查引出的全链路修复（本地 LM Studio openPangu-Embedded 实测驱动）：
+
+**部署与配置**
+- **全局部署**：`npm link` 生成 zhulong/panshalach bin（此前从未安装；旧名 `zorge` 孤儿 junction 指向无关项目，已清理）
+- **配置播种缺口**：`session.model` 此前只认 `PANSHA_MODEL` env，配置文件的 `model` 字段从未生效（不带 env 必报"未配置可用的模型客户端"）。新增 `modelSeed.ts`：`applyConfigModel` 在 env 缺席时从配置兜底播种，接入 runOneShot / startRepl / sseInteractive / classicRepl 全部入口
+- **ConfigManager 加载顺序修正**：原实现用户级 `~/.panshalach/config.json` 覆盖项目级 `.panshalach.json`（与注释意图相反）→ 改为项目级覆盖用户级；用户级目录支持 `PANSHA_USER_CONFIG_DIR` 重定向（测试隔离）
+- **审批通道**：`--approval <readonly|default|full>` flag 与 `PANSHA_APPROVAL` env——headless/一次性执行此前锁死 readonly，写文件必然被拒
+
+**原生 function calling（P1.1 请求侧闭环）**
+- `CompleteOptions.tools`（OpenAI function schema）→ openai-compatible 客户端 `stream:false/true` 两条请求路径透传 `tools + tool_choice:auto`；抓包代理实证 6 schema 随每次请求下发
+- `EngineAdapter.toolSchemas()`：内置 6 工具 + MCP 的 schema 导出（参数键与各实现严格一致）；VerifyCritiqueLoop 真实引擎自动携带，mock/旧引擎不受影响
+- 响应侧 `tool_calls` 透传此前已就绪（0.6.x），至此请求-响应闭环
+
+**工具与提示词**
+- **写工具全档位注册**（产品主裁决）：write_file/edit_file 不再限于 high+，quick/standard 同样注册；安全性由审批门禁 + RBW 兜底，不靠隐藏工具（实测：隐藏工具 + 教学示例含 write_file → UNKNOWN_TOOL 空转烧满步数）
+- **格式教学具体化**：`buildToolCallFormatEnforcementPrompt(toolNames?)` 按实际可用工具动态生成 few-shot 示例（抽象 `paramName1` 模板对小模型无效，实测改进后模型产出标准 `<> <write_file>` 调用）；任何档位首轮必注入
+- **身份提示 CC 化**（参考 claude-code-2.1.88 / harness-engineering 调研）：双职责定义（对话 vs 执行）+ 意图门槛（模糊输入先澄清不调工具）+ 歧义不往高风险方向解读 + 简洁回答风格；效果待 7B+ 模型验证（1B 分不清示例与指令）
+
+**验证边界（如实记录）**：openpangu-embedded-1b-i1 的 chat template 不支持 tool use（`tool_choice:required` 亦无法诱导 tool_calls）；文本协议 + few-shot 下可完成简单写文件任务（hello.txt 实测落盘、RBW/UNKNOWN_TOOL 反馈回路工作），但成功率与示例遵循度受 1B 能力限制。端到端验收建议使用支持 tool use / 指令遵循更强的模型（openPangu 7B+）。
+
+全套 545 例通过（另：node --test 全量高并发在 Windows 下有进程级崩溃假象，单文件或 `--test-concurrency=4` 均绿）。
+
 ## 0.6.4 (R0：双层终止语义 + 三先决修复)
 
 产品主批准的 R0 落地（对抗清单 #1/#6/T-22 + 终止语义双层化）：

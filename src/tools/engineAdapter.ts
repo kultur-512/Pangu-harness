@@ -76,6 +76,15 @@ export interface EngineAdapter {
   /** Exposed for tests / approval command introspection. */
   executor: ToolExecutor;
   ctx: ToolContext;
+  /**
+   * P1.1 请求侧：OpenAI function calling schema 列表（本 adapter 实际可执行的
+   * 工具集 = 注册表 ∩ schema 表，外加 MCP 工具）。smoke 环境返回 []。
+   */
+  toolSchemas(): Array<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  }>;
 }
 
 export const SMOKE_MOCK_RESULT = 'VERIFICATION: ALL_TESTS_PASSED';
@@ -104,6 +113,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         signal: opts.signal,
       }),
       ctx: { workspaceRoot: opts.workspaceRoot, approvalMode: 'readonly', signal: opts.signal },
+      toolSchemas: () => [],
     };
   }
 
@@ -129,18 +139,13 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     return res;
   };
 
-  // tier 工具集：quick/standard 不提供写工具（六档
-  // contract enforced at the execution layer). high/max/ex/pangu do.
-  // (B1 fix: 'max' was missing — TierConfig marks max isStrongMode with
-  // all-write confirmation, so it must carry write tools too.)
-  const tier = String(opts.tierConfig.tier || '').toLowerCase();
-  const writeTools: Record<string, ToolImpl> =
-    (tier === 'high' || tier === 'max' || tier === 'ex' || tier === 'pangu')
-      ? {
-          write_file: createWriteFileTool({ readFiles }),
-          edit_file: createEditFileTool({ readFiles }),
-        }
-      : {};
+  // tier 工具集（2026-09-05 裁决：写工具全档位注册）——quick/standard 也提供
+  // write/edit；安全性由审批门禁（readonly allowlist / default 确认 / RBW）
+  // 兜底，而不是靠隐藏工具（隐藏会诱导 UNKNOWN_TOOL 空转）。
+  const writeTools: Record<string, ToolImpl> = {
+    write_file: createWriteFileTool({ readFiles }),
+    edit_file: createEditFileTool({ readFiles }),
+  };
 
   // bash 按 tier 注册超时。只读强制
   // lives here (day-one rule): readonly mode → allowlist only; other modes
@@ -225,6 +230,96 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   }));
 
   const executor = createToolExecutor(ctx, extra, mcpTools as any);
+
+  // P1.1 请求侧：内置工具的 OpenAI function schema。
+  // 参数键与各工具实现实际读取的键严格一致（file_path/content/command/...）。
+  const BUILTIN_TOOL_SCHEMAS: Record<string, { description: string; parameters: Record<string, unknown> }> = {
+    read_file: {
+      description: '读取工作区内文本文件的内容（可指定起止行）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string', description: '相对工作区的文件路径' },
+          offset: { type: 'string', description: '起始行号（可选，默认 1）' },
+          limit: { type: 'string', description: '读取行数（可选，默认 2000）' },
+        },
+        required: ['file_path'],
+      },
+    },
+    glob: {
+      description: '按 glob 模式列出工作区内的文件路径。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: { type: 'string', description: 'glob 模式，例如 src/**/*.ts' },
+          path: { type: 'string', description: '起始目录（可选，默认工作区根）' },
+        },
+        required: ['pattern'],
+      },
+    },
+    grep: {
+      description: '在工作区内按正则搜索文件内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: { type: 'string', description: '正则表达式' },
+          path: { type: 'string', description: '搜索目录（可选，默认工作区根）' },
+          include: { type: 'string', description: '文件名 glob 过滤（可选，例如 *.ts）' },
+        },
+        required: ['pattern'],
+      },
+    },
+    bash: {
+      description: '在工作区执行 bash 命令（受审批模式门禁约束）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: '要执行的命令' },
+        },
+        required: ['command'],
+      },
+    },
+    write_file: {
+      description: '写入（或覆盖）工作区内的文件。写前必须先 read_file 该文件。',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string', description: '相对工作区的目标文件路径' },
+          content: { type: 'string', description: '完整文件内容' },
+        },
+        required: ['file_path', 'content'],
+      },
+    },
+    edit_file: {
+      description: '对工作区内已有文件做精确字符串替换。写前必须先 read_file 该文件。',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string', description: '相对工作区的目标文件路径' },
+          old_string: { type: 'string', description: '要被替换的原文（须唯一或配合 replace_all）' },
+          new_string: { type: 'string', description: '替换后的新文本' },
+          replace_all: { type: 'string', description: "'true' 时替换全部出现（可选）" },
+        },
+        required: ['file_path', 'old_string', 'new_string'],
+      },
+    },
+  };
+
+  function toolSchemas(): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+    const out: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+    for (const name of executor.availableTools()) {
+      const schema = BUILTIN_TOOL_SCHEMAS[name];
+      if (schema) out.push({ name, ...schema });
+    }
+    for (const mt of mcpTools) {
+      out.push({
+        name: mt.name,
+        description: mt.description || `MCP 工具 ${mt.name}`,
+        parameters: { type: 'object', properties: {} },
+      });
+    }
+    return out;
+  }
 
   function paramsOf(call: ToolCall): Record<string, string> {
     const out: Record<string, string> = {};
@@ -381,6 +476,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   return {
     executor,
     ctx,
+    toolSchemas,
     async execute(calls: ToolCall[]): Promise<string> {
       if (!Array.isArray(calls) || calls.length === 0) {
         return 'TOOL_ERROR: NO_CALLS verification engine received no tool calls';

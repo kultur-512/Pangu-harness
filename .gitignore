@@ -21,6 +21,7 @@ sandbox-test-runner.cjs
 /test-*.mjs
 /test-*.cjs
 /probe-*.cjs
+/probe-*.mjs
 
 # === Agent 协作记忆（强制入 git 留作追溯，仅临时副本忽略）===
 # docs/agent/logs/** 与 docs/agent/handover/** 是协作记忆，正常入 git
