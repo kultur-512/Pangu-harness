@@ -112,6 +112,47 @@ function joinUrl(base: string, path: string): string {
   return b + p;
 }
 
+// ==================== 改动包 B（对抗清单 #1/#三）：重试与空响应 ====================
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 522, 524, 529]);
+const MAX_RETRIES = 3;
+
+function parseRetryAfter(res: Response): number | null {
+  try {
+    const h = res.headers?.get?.('retry-after');
+    if (!h) return null;
+    const sec = Number(h);
+    if (Number.isFinite(sec) && sec >= 0) return Math.min(30_000, sec * 1000);
+    const at = Date.parse(h);
+    if (!Number.isNaN(at)) return Math.max(0, Math.min(30_000, at - Date.now()));
+  } catch {}
+  return null;
+}
+
+function isRetryableErr(e: any): boolean {
+  return !!(e && (e.retryable === true || e.emptyResponse === true ||
+    (typeof e.status === 'number' && RETRYABLE_STATUS.has(e.status)) || e.network === true));
+}
+
+const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** 429/5xx/网络错误/空响应的指数退避重试；Retry-After 头优先；耗尽后抛出最后错误。 */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let attempt = 0;
+  let lastErr: any;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      if (attempt >= MAX_RETRIES || !isRetryableErr(e)) throw e;
+      const base = e.retryAfterMs ?? Math.min(8_000, 500 * Math.pow(2, attempt));
+      const jittered = Math.round(base * (0.75 + Math.random() * 0.5)); // ±25% jitter
+      await sleepMs(jittered);
+      attempt++;
+    }
+  }
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -185,11 +226,15 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     }
 
     const url = joinUrl(baseUrl, '/chat/completions');
-    const res = await fetchWithTimeout(url, {
+    const res = await withRetry(() => fetchWithTimeout(url, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify(body),
-    }, timeoutMs);
+    }, timeoutMs).catch((e: any) => {
+      const err: any = new Error(`complete network error: ${e?.message || e}`);
+      err.network = true;
+      throw err;
+    }));
 
     if (!res.ok) {
       let bodyText = '';
@@ -197,6 +242,10 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       const err: any = new Error(`complete failed: ${res.status} ${res.statusText}`);
       err.status = res.status;
       err.body = bodyText;
+      if (RETRYABLE_STATUS.has(res.status)) {
+        err.retryable = true;
+        err.retryAfterMs = parseRetryAfter(res) ?? undefined;
+      }
       throw err;
     }
 
@@ -229,8 +278,14 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       }
     }
 
-    if (typeof content === 'string') {
+    if (typeof content === 'string' && content.length > 0) {
       return content;
+    }
+    // reasoning 模型（openPangu-Embedded 实测）：content 为空但 reasoning_content
+    // 承载全部输出——采用之，否则会落入 EMPTY_RESPONSE 重试。
+    const reasoning = message?.reasoning_content ?? json?.choices?.[0]?.delta?.reasoning_content;
+    if (typeof reasoning === 'string' && reasoning.length > 0) {
+      return reasoning;
     }
     // Some providers put it under delta or raw
     if (typeof json?.choices?.[0]?.text === 'string') {
@@ -254,11 +309,15 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       }
       if (parts.length > 0) return parts.join('');
     }
-    // Fallback to stringified if nothing matches (better than silent empty)
-    if (json) {
+    // 改动包 B：可识别的响应形状（有 choices）但提取失败 → 保留 stringify 兜底；
+    // 其余（真正空响应/无 choices）标记为可重试 EMPTY_RESPONSE，重试耗尽才返回空——
+    // 消灭"空响应静默返回空串 → 模型空转烧步数"。
+    if (json && Array.isArray(json.choices)) {
       try { return JSON.stringify(json); } catch { return ''; }
     }
-    return bodyText.length > 0 ? bodyText : '';
+    const emptyErr: any = new Error('EMPTY_RESPONSE');
+    emptyErr.emptyResponse = true;
+    throw emptyErr;
   }
 
   return {
@@ -292,7 +351,15 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     },
 
     async complete(prompt: string, opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
-      return doComplete(prompt, opts);
+      try {
+        return await withRetry(() => doComplete(prompt, opts));
+      } catch (e: any) {
+        if (e && e.emptyResponse === true) {
+          // 空响应重试耗尽 → 返回空（调用方按 NO_TOOL_CALLS 处理），不挂起
+          return '';
+        }
+        throw e;
+      }
     },
 
     /**

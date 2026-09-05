@@ -168,6 +168,11 @@ export class ProviderRegistry {
     let effectiveModel = modelName;
     if (!effectiveModel) {
       effectiveModel = this.config.model;
+      // 修复（2026-09-05 实测）：config.model 可能是 "provider:model" 路由串——
+      // 原样发给网关会 400（LM Studio 实测）。此处剥离 provider 前缀。
+      if (effectiveModel && effectiveModel.includes(':')) {
+        effectiveModel = effectiveModel.slice(effectiveModel.indexOf(':') + 1) || undefined;
+      }
       if (!effectiveModel && Array.isArray(prov.models) && prov.models.length > 0) {
         effectiveModel = prov.models[0];
       }
@@ -185,6 +190,12 @@ export class ProviderRegistry {
         const text = await rawClient.complete(prompt, merged as any);
         return text;
       },
+      // 对抗清单 T-22（2026-09-05）：透传 streamChat——此前 registry 客户端只有
+      // complete，chaser 流式包装永远回退非流式（生产恒非流式）。
+      ...(rawClient.streamChat ? {
+        streamChat: ((prompt: string, opts: CompleteOptions = {}) =>
+          rawClient.streamChat!(prompt, { ...opts, model: boundModel } as any)) as ModelClient['streamChat'],
+      } : {}),
     };
 
     return modelClient;

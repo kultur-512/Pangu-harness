@@ -50,6 +50,7 @@
 
 | ID | 交付 | Owner | 验收 | 时间 |
 |---|---|---|---|---|
+| **R0 双层终止 + 三先决** | 终止语义双层化（end_turn 自然停 + 判官有界续跑，PASS 降级 evidence）+ TurnStopReason 契约 + count 翻倍修复 + withRetry/空批保护 + streamChat 透传 | Leader | 测试：judge/双层终止/retry/空批/count 回归全绿；判官有界 ≤2 | U1-U2（✅ 已落地 2026-09-05） |
 | **R1 回合写闭环**（**最紧要**） | 任务落定统一 hook：`refine({trajectory, taskStyle, attemptCount, userFeedback})` → `save()` → `invalidateProjection()`；接 `Repl.executeTask`/`runAgentTask`/`sseInteractive` 三入口；正向 = 正向反馈 OR `trajectory.success` | 王浩宇 | 连续 3 个同风格任务后 `/memory list` 自动出现教训/成功卡（无需 /remember） | U1-U2 |
 | **R2 markVerified 信号源** | 任务落定取"本任务工具写入/验证过的文件集 ∩ 卡.referencedFiles"→ `markVerified(cardIds)`；`runAgentTask` 已持 lastBuildMeta.injectedCardIds | 王浩宇 | 卡被真实复用后 lastUsedAt/count 刷新（单测） | U2 |
 | **R3 Turn 结构化最小集** | `Turn.result` 增 `goal/changedFiles/verifyCmd`（summary 保留兼容）——多级摘要 envelope 的前置 | 王浩宇 | 落盘字段存在 + 旧格式兼容读 | U2 |
@@ -98,7 +99,9 @@
 | MemoryCard provenance/sourceEventIds/evidence/status 字段 | **不做**（悬空伪 provenance；provenance 由 context 事件承担） | 审查报告 A 表 |
 | rewind 事件 replay 消费、双 synthetic 幂等、listBranches O(N²) | 已知遗留，随评测工程处理 | 方案文件终稿章节 |
 | P6 存储名迁移目标（PANSHA_*→PANG_*） | **待 Leader 裁决**：与已落地 PANSHA_<PROV>_* 命名方向冲突 | ROADMAP.md:43 |
-| 方案书草案 7 项新缺陷（文件大小约束/Reviewer 证据语义/AbortSignal 透传/marker 顺序/FeatureTracker 返回值/glob 符号链接/auditStatus） | 部分并入 R1 批次，其余遗留 | ROADMAP-NEXT §3.2 |
+| ~~AbortSignal 透传~~ | ✅ 已随 R0 落地（runAgentTask 信号传递在 R1 批次收尾） | ROADMAP-NEXT §3.2 |
+| ~~count 翻倍~~ / ~~无重试+空批 undefined~~ / ~~生产恒非流式~~ | ✅ 已随 R0 落地（0.6.4） | §3.1 合同 |
+| 方案书草案其余缺陷（文件大小约束/Reviewer 证据语义/marker 顺序/FeatureTracker 返回值/glob 符号链接/auditStatus） | 遗留 | ROADMAP-NEXT §3.2 |
 
 ## 5. 完成条件（9/24）
 
