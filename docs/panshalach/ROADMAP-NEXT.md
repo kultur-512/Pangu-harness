@@ -62,6 +62,30 @@
 
 **评测防线**（先于结果指标，见 `tasks/context-memory-proposals-2026-09-04.md` 终稿章节）：B 档 memoryCardCount>0 会话占比（防 B≡A）、A/B prompt-diff 展品、T1×7B×A/B/C 最小 9 runs、envelope 触发率。
 
+### 3.1 已采纳的实施合同（源自本地方案书草案 2026-09-05；原稿不入 git，特化记忆机制仍按本路线自研）
+
+以下条款升级为对应 R 项的**验收合同**，实现时不可省略：
+
+- **R1 合同**：落定必须是**单一 finalizeTask 服务**（三入口共享，禁止各自复制判断）；五种路径都有明确结果——成功 / 真实验证失败 / 用户取消 / 异常退出 / 预算耗尽；`save` 结果与任务结果**分开记录**（写盘失败不改判任务成败）；保存后必须 `invalidateProjection`；重复落定（SSE 回调 + CLI 收尾 + 进程恢复同时观察）不得双写 count（9/24 前以事件层去重顶位，持久化幂等键后置）。
+- **R2 合同**：`provenFiles = changedFiles ∩ filesCoveredByPassingVerification`；仅 `injectedCardIds ∩ provenFiles 的卡 refs 交集非空` 才 `markVerified`；**无 refs 的通用卡不得默认标 verified**（否则注入越多越保鲜）。
+- **R5 合同**：任务状态机含 **UNKNOWN 态**（验证器崩溃或证据未落盘时显式显示未知，不猜）；`originalRequirement` 不可漂移；并发更新走 version 检查。
+- **R6 合同**：结果记录必含 `runId / source(real-openpangu|mock-smoke) / seedSupport / verdict / verification{signal,exitCode,commands} / memory{injectedCardIds,verifiedCardIds} / prompt{chars,estimatedTokens,hash} / failureTaxonomy / artifacts`；**A 档必须真溢出**（不溢出的样本标"不适用"，不进长程结论）；**B 档零注入 = 防线失败**，不计为有效样本；失败分类枚举运行前冻结，primary/secondary 分开；统计用配对差 + Wilson 区间，任务实例为统计单位；mock 永不入真实结果表。
+- **评审闸门（全 R 项）**：每次合入四问——①有真实生产调用点吗；②新状态可由旧事件/旧文件重建吗；③改了 A/B 非目标变量吗（prompt diff 可发现吗）；④有外部验证退出码吗。答不出①标 planned、②标 missing、③不能进因果比较、④不能声称成功。
+- **口径纪律**：`promptChars` 永不改写为 token；`memoryCardCount` 是存在性标志，评测只认 `injectedCardIds`；缺失填"—"不填零。
+
+### 3.2 方案书草案新发现的缺陷（已核实，纳入遗留/任务）
+
+| 缺陷 | 位置 | 处置 |
+|---|---|---|
+| `MAX_FILE_SIZE_BYTES`(200KiB) 声明但从未执行 | `RefinedMemoryCard.ts:91` | 遗留表：`save()` 补执行或删常量 |
+| Reviewer 把"探测到测试脚本"写成 `passed:true`（4 处，未执行） | `Reviewer.ts:122-170` | 遗留表：语义改 `detected`，执行后才 `executed-pass`（/review 命令） |
+| `AbortSignal` 只在 onStep 转发前检查，未传入 `solveIssue`（请求取消≠底层停止） | `runAgentTask.ts:135` | **并入王浩宇 R1 批次**（小改动） |
+| compact 先改内存后写 marker，marker 写失败产生双源分歧 | `compactService.ts` 落定顺序 | 遗留表：marker 先落盘成功再切内存 |
+| `FeatureTracker.markFeatureDone` 不检查 save 返回值（写失败仍显示成功） | `FeatureTracker.ts:88` | 遗留表 |
+| glob `walkFiles` 跟随目录符号链接可逃逸 pathGuard（只查基准目录） | `glob.ts:30-52` | 遗留表：受信工作区假设声明或补目录项 realpath |
+| rollout `appendEvent` 吞异常，"零事件"无法区分"没注入/写失败" | `rolloutStore.ts:59-66` | 遗留表：`auditStatus` 字段 9/24 后 |
+| 未采纳（记录在案）：事件 hash-chain、持久化幂等键、auditStatus 完整机制、SummaryNode 全量血缘、`compaction.mode` 四段开关 | — | 9/24 后按需立项 |
+
 ## 4. 已裁决不做 / 推迟（恢复指针）
 
 | 项 | 裁决 | 恢复 |
@@ -74,6 +98,7 @@
 | MemoryCard provenance/sourceEventIds/evidence/status 字段 | **不做**（悬空伪 provenance；provenance 由 context 事件承担） | 审查报告 A 表 |
 | rewind 事件 replay 消费、双 synthetic 幂等、listBranches O(N²) | 已知遗留，随评测工程处理 | 方案文件终稿章节 |
 | P6 存储名迁移目标（PANSHA_*→PANG_*） | **待 Leader 裁决**：与已落地 PANSHA_<PROV>_* 命名方向冲突 | ROADMAP.md:43 |
+| 方案书草案 7 项新缺陷（文件大小约束/Reviewer 证据语义/AbortSignal 透传/marker 顺序/FeatureTracker 返回值/glob 符号链接/auditStatus） | 部分并入 R1 批次，其余遗留 | ROADMAP-NEXT §3.2 |
 
 ## 5. 完成条件（9/24）
 
