@@ -21,13 +21,19 @@ export interface OpenAICompatConfig {
 export interface ModelStreamChunk {
   type: 'text' | 'thinking' | 'toolCalls';
   text?: string;
-  /** 仅 type:'toolCalls'：SSE delta.tool_calls 增量拼接出的完整调用（P1.1） */
+  /** 仅 type:'toolCalls'：SSE delta.tool_calls 增量拼接出的完整调用 */
   toolCalls?: unknown[];
+  /**
+   * finish_reason 透传（'length' = max_tokens 截断）。
+   * streamChat 在含 finish_reason 的尾 delta 上标记；回退路径由
+   * chunksFromCompleteOutput 从 doComplete 的 truncated 对象转写。
+   */
+  finishReason?: string;
 }
 
 /**
  * 结构化输出（镜像 cli/repl/types ModelClientOutput，避免 import cycle）。
- * complete() 在网关返回原生 message.tool_calls 时返回该对象（P1.1），
+ * complete() 在网关返回原生 message.tool_calls 时返回该对象，
  * VerifyCritiqueLoop 的 preParsedToolCalls 通道直接消费，无需再走文本解析。
  */
 export interface OpenAICompatOutput {
@@ -35,6 +41,8 @@ export interface OpenAICompatOutput {
   raw?: string;
   toolCalls?: unknown[];
   detectedFormat?: string;
+  /** finish_reason==='length'（max_tokens 截断）→ true，loop 禁判 answered。 */
+  truncated?: boolean;
 }
 
 /** 内部 ToolCall 形状（镜像 src/types/toolCall.ts ToolCall，避免 import cycle） */
@@ -116,9 +124,10 @@ function joinUrl(base: string, path: string): string {
   return b + p;
 }
 
-// ==================== 改动包 B（对抗清单 #1/#三）：重试与空响应 ====================
+// ==================== 重试与空响应处理 ====================
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 522, 524, 529]);
-const MAX_RETRIES = 3;
+// 远程网关抖动窗口常超 3 次退避周期——重试上限取 5 次。
+const MAX_RETRIES = 5;
 
 function parseRetryAfter(res: Response): number | null {
   try {
@@ -133,8 +142,15 @@ function parseRetryAfter(res: Response): number | null {
 }
 
 function isRetryableErr(e: any): boolean {
+  // 补传输类错误——undici 层故障常表现为 TypeError（"terminated"）或
+  // message 含 "fetch failed" 的网络错误，此前一律不重试。
+  // TypeError 必须带传输类 message 才重试：裸 name 匹配会把解析层的
+  // 编程性 TypeError 也当网络故障重试 5 次，掩盖真实缺陷。
+  const msg = String(e?.message || '');
+  const transportLike = /terminated|fetch failed|network/i.test(msg);
   return !!(e && (e.retryable === true || e.emptyResponse === true ||
-    (typeof e.status === 'number' && RETRYABLE_STATUS.has(e.status)) || e.network === true));
+    (typeof e.status === 'number' && RETRYABLE_STATUS.has(e.status)) || e.network === true ||
+    /fetch failed/i.test(msg) || (e?.name === 'TypeError' && transportLike)));
 }
 
 const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -177,17 +193,19 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-/** 把 doComplete 的结果转成 streamChat 回退 chunk 序列（toolCalls 对象不被吞掉） */
+/** 把 doComplete 的结果转成 streamChat 回退 chunk 序列（toolCalls/truncated 不被吞掉） */
 function chunksFromCompleteOutput(out: string | OpenAICompatOutput): ModelStreamChunk[] {
-  if (typeof out === 'string') return [{ type: 'text', text: out }];
+  const finishReason = (out as OpenAICompatOutput)?.truncated ? 'length' : undefined;
+  const withFr = (c: ModelStreamChunk): ModelStreamChunk => (finishReason ? { ...c, finishReason } : c);
+  if (typeof out === 'string') return [withFr({ type: 'text', text: out })];
   const chunks: ModelStreamChunk[] = [];
   if (Array.isArray(out.toolCalls) && out.toolCalls.length > 0) {
-    chunks.push({ type: 'toolCalls', toolCalls: out.toolCalls });
+    chunks.push(withFr({ type: 'toolCalls', toolCalls: out.toolCalls }));
   }
   if (typeof out.content === 'string' && out.content) {
-    chunks.push({ type: 'text', text: out.content });
+    chunks.push(withFr({ type: 'text', text: out.content }));
   }
-  if (chunks.length === 0) chunks.push({ type: 'text', text: '' });
+  if (chunks.length === 0) chunks.push(withFr({ type: 'text', text: '' }));
   return chunks;
 }
 
@@ -226,7 +244,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         { role: 'user', content: prompt },
       ],
       temperature,
-      // fix-a6-422: EXPLICIT non-stream. Some gateways (a6api) default to
+      // EXPLICIT non-stream. Some gateways (a6api) default to
       // stream semantics and 422/behave erratically per-model when the flag
       // is ambiguous; declaring stream:false makes them return clean JSON.
       stream: false,
@@ -289,8 +307,12 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     // Standard OpenAI response shape
     const message = json?.choices?.[0]?.message;
     const content = message?.content;
+    // finish_reason==='length' → 响应被 max_tokens 截断。残缺内容
+    // （尤其残缺 tool_calls/半句答复）静默通过会引发弱模型空转——标记 truncated
+    // 让 VerifyCritiqueLoop 禁判 answered 并注入精简提示。
+    const truncated = json?.choices?.[0]?.finish_reason === 'length';
 
-    // P1.1: 原生 function calling 通道——tool_calls 非空时返回结构化对象，
+    // 原生 function calling 通道——tool_calls 非空时返回结构化对象，
     // 上层 VerifyCritiqueLoop.preParsedToolCalls 直接消费（绕过文本解析）。
     if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
       const toolCalls = convertOpenAIToolCalls(message.tool_calls);
@@ -302,24 +324,26 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           raw: rawStr,
           toolCalls,
           detectedFormat: 'openai-json',
+          ...(truncated ? { truncated: true } : {}),
         };
       }
     }
 
     if (typeof content === 'string' && content.length > 0) {
-      return content;
+      return truncated ? { content, truncated: true } : content;
     }
     // reasoning 模型（openPangu-Embedded 实测）：content 为空但 reasoning_content
     // 承载全部输出——采用之，否则会落入 EMPTY_RESPONSE 重试。
     const reasoning = message?.reasoning_content ?? json?.choices?.[0]?.delta?.reasoning_content;
     if (typeof reasoning === 'string' && reasoning.length > 0) {
-      return reasoning;
+      return truncated ? { content: reasoning, truncated: true } : reasoning;
     }
     // Some providers put it under delta or raw
     if (typeof json?.choices?.[0]?.text === 'string') {
-      return json.choices[0].text;
+      const text = json.choices[0].text;
+      return truncated ? { content: text, truncated: true } : text;
     }
-    // fix-a6-routing: some gateways (e.g. a6api) return an SSE stream even for
+    // Some gateways (e.g. a6api) return an SSE stream even for
     // a NON-streaming request — parse `data:` lines and concat delta.content.
     if (!json && bodyText.includes('data:')) {
       const parts: string[] = [];
@@ -458,7 +482,9 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       const decoder = new TextDecoder();
       let buffer = '';
       let sawAny = false;
-      // P1.1: SSE delta.tool_calls 增量拼接（按 index 聚合 id/name/arguments 分片）
+      // 尾 delta 的 finish_reason（'length' = max_tokens 截断）
+      let streamFinishReason: string | undefined;
+      // SSE delta.tool_calls 增量拼接（按 index 聚合 id/name/arguments 分片）
       const toolCallAcc = new Map<number, { id?: string; name: string; args: string }>();
 
       outer: while (true) {
@@ -482,7 +508,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
           const dataStr = line.slice(5).trim();
           if (dataStr === '[DONE]') {
-            // P1.1: 不能直接 return——必须先走循环后的 delta.tool_calls 拼装
+            // 不能直接 return——必须先走循环后的 delta.tool_calls 拼装
             break outer;
           }
 
@@ -490,6 +516,11 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           try { json = JSON.parse(dataStr); } catch { continue; }
 
           const delta = json?.choices?.[0]?.delta;
+          if (!delta && typeof json?.choices?.[0]?.finish_reason !== 'string') continue;
+          // finish_reason 通常出现在最后一个（delta 为空的）chunk 上
+          if (typeof json?.choices?.[0]?.finish_reason === 'string') {
+            streamFinishReason = json.choices[0].finish_reason;
+          }
           if (!delta) continue;
 
           const reasoning = delta.reasoning_content ?? delta.reasoning;
@@ -519,7 +550,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         }
       }
 
-      // P1.1: 流式结束——拼好的 toolCalls 作为独立 chunk 交给上层
+      // 流式结束——拼好的 toolCalls 作为独立 chunk 交给上层
       // （chaser wrapper 聚合后以结构化对象返回给 VerifyCritiqueLoop）
       if (toolCallAcc.size > 0) {
         const assembled = [...toolCallAcc.entries()]
@@ -530,6 +561,12 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           sawAny = true;
           yield { type: 'toolCalls', toolCalls } as ModelStreamChunk;
         }
+      }
+
+      // 截断标记随尾 chunk 透传（chaser wrapper 聚合进返回对象）
+      if (streamFinishReason === 'length') {
+        sawAny = true;
+        yield { type: 'text', text: '', finishReason: 'length' } as ModelStreamChunk;
       }
 
       // Endpoint accepted stream:true but sent nothing parseable — fall back once.

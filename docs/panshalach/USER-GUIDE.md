@@ -1,7 +1,7 @@
 # Panshalach 使用手册（烛龙 Zhulong）
 
 > 烛龙（Zhulong）· 内部代号盤沙拉克 Panshalach：基于 openPangu 的记忆增强长程上下文智能体。
-> 本手册对齐 **0.6.5 部署落地 + 0.7.0 终止语义重构**（意图分类 / 回合三态 / AbortSignal 真中止）。
+> 本手册对齐 **0.6.5 部署落地 + 0.7.0 终止语义重构 + 0.7.1–0.7.3 迭代**（意图前移 / 记忆落定 / 审批全入口透传 / 窗口预算挂真值 / 中断现场保留）。
 
 ## 1. 环境要求
 - Node ≥ 18（含全局 fetch；开发实测 Node 22）；TypeScript 5.6（构建）。
@@ -54,6 +54,8 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 
 模型路由用 `openpangu:` 前缀（`provider:model`），如 `openpangu:openPangu-7B`；启动后 `/model list`（遍历已配置 provider 拉模型）→ `/model openpangu:openPangu-7B` 切换。
 
+**上下文窗口预算（0.7.3 起挂真值）**：auto-compact 阈值与执行循环的窗口预算按当前模型的真实窗口计算——优先级：`PANSHA_CTX_WINDOW` env（显式覆盖）> 配置 `modelContexts` > `/model list` 端点探测缓存。**未知窗口回落 32768 保守值**（只多压缩不误判，8K 小模型不再被 128000 假定撑爆）；`/model list` 对未知上下文如实显示"未知"并持久化 `null`（不再写 256000 假值），`/model` 切换后占用计量清零重取。
+
 若 openPangu 网关需要 key（如昇腾云/ModelArts）：把 `apiKey` 换成真实 key；或用 env 三件套（key 不进配置文件）：`PANSHA_OPENPANGU_API_KEY`（可再加 `_BASE_URL`/`_MODEL` 覆盖）；或配 `apiKeyCmd`（执行命令取 stdout 首行作密钥）。`SCNET_API_KEY` 仅作为 scnet provider 的历史别名。
 
 > 适配说明：模型协议原生 `tool_calls`（OpenAI JSON，`detectedFormat:'openai-json'`）为主路径——0.6.5 起请求侧随每次请求透传 `tools + tool_choice:auto`（原生 function calling 闭环）；文本协议/`<>` 严格三路探测为兜底（`PANSHA_USE_LEGACY_PARSER=1` 可强制走文本解析）。
@@ -66,8 +68,8 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 | `default` | 读放行；写需确认 |
 | `full` | 全部放行（写不确认） |
 
-- one-shot/headless：`--approval <readonly|default|full>` 或 `PANSHA_APPROVAL` env（0.6.5 前锁死 readonly，写文件必然被拒）。
-- REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。
+- one-shot/headless：`--approval <readonly|default|full>` 或 `PANSHA_APPROVAL` env（0.6.5 前锁死 readonly，写文件必然被拒）。**0.7.3 起审批语义在全部入口真实生效**——one-shot / classic / simulate 向执行引擎透传 `approvalMode`、会话放行清单与审批桥（此前 flag 只改会话字段、引擎收不到）。
+- REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。审批提示选 **`a`（本会话总是允许）**时，决策同时持久化到项目配置 `.panshalach.json` 的 `approvalAllowlist`（0.7.3 起）——下次会话启动自动并入放行清单，不再重复确认（best-effort，写失败不影响审批流）。
 
 ## 5. 意图分类与执行行为（0.7）
 
@@ -82,12 +84,13 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 
 - 逃生门：`PANSHA_INTENT_GATE=0` 关闭分类，全部按 execution 走完整循环。
 - **回合结局三态**：`completed`（真实验证 PASS → UI"已通过验证"，喂记忆成功卡）/ `answered`（end_turn 有面向用户正文 → UI"已回复"并显示正文，**不**喂成功卡）/ `no-verification`（空白空转 → UI"未通过验证"）；另有 `max-steps`/`consecutive-failures`/`aborted`。
+  - 0.7.3 起 `completed` **真机可达**：执行引擎对真实成功的工具结果（bash `EXIT_CODE:0` 尾行、写/改成功）确定性追加 `VERIFICATION: PASS` 规范尾标，验证信号不再只认 smoke mock；截断响应（`finish_reason=length`）禁判 answered，execution 意图下"只说话不动手"首次会被注入格式提醒重试一步。
 
 ## 6. Ctrl+C 与中断（0.7 AbortSignal 贯穿）
 
-- 运行中 Ctrl+C **真正中止任务**：信号贯穿 `runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，回合记 `stopReason='aborted'`，UI 显示"已中断"并等待底层 settle——不再"提示符回来了、网关还在刷 POST"。
-- 已知边界（如实声明）：fetch 已发出后 abort 中断的是读取/连接，网关侧生成可能仍在后台算完；bash 子进程的强杀（tree-kill 联动）计划 0.7.1 落地。
-- 会话安全：中断的回合照常入 rollout jsonl（可 `/rewind`/`--resume` 续接），已写盘文件可用 `/undo` 撤销。
+- 运行中 Ctrl+C **真正中止任务**：信号贯穿 `runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，回合记 `stopReason='aborted'`，UI 显示"已中断"并等待底层 settle——不再"提示符回来了、网关还在刷 POST"（0.7.3 起 classic REPL 路径同样贯穿，不再假中止）。
+- 已知边界（如实声明）：fetch 已发出后 abort 中断的是读取/连接，网关侧生成可能仍在后台算完；bash 子进程强杀已落地（0.7.1 tree-kill：Windows `taskkill /T /F`，POSIX `kill(-pid)`）。
+- 会话安全（0.7.3 起**现场保留有数据支撑**）：中断的回合写入 session 与 rollout jsonl（可 `/rewind`/`--resume` 续接），并保留中断时已流出的部分正文（turn 的 `partialText` 字段）；中断前已解析未执行的工具调用补合成结果保持 call/result 成对；已写盘文件可用 `/undo` 撤销。
 
 ## 7. 命令总表（REPL 内 `/` 前缀）
 
@@ -130,6 +133,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 记忆卡存于 `<workspace>/.panshalach-memory.json`（内部名），自动加入 `.gitignore`。
 
 > 0.7 信号收紧：success 卡只来自 `stopReason==='completed'`（真实验证通过）或用户正向反馈——**纯问答/闲聊的 answered 回合不再产生成功卡**（UI 成功 ≠ 记忆成功）。
+> 0.7.2 起任务落定**自动产卡**：completed 任务在落定点自动 refine→save（无需 `/memory remember`）；被注入的卡若其参照文件被本任务真实写集触碰，自动 `markVerified` 保鲜（发 `memory.finalized` 事件）。覆盖 SSE/server/headless 路径；classic 直调路径待统一执行器收口。
 
 ## 10. 长程使用姿势
 1. 开场用 `/init` 生成项目指令页 `.panshalach/AGENTS.md`（验证命令 + 不变量），agent 每轮能读到"如何验证"。

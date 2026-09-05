@@ -87,7 +87,10 @@ zhulong
 
 # 2) 一次性执行（headless 真实执行 + full 审批档位，写文件不被拒）
 zhulong --headless --approval full run "在 hello.txt 写入一行文本 pong，然后读取验证"
-#    预期：回合结局 completed（真实验证 PASS），hello.txt 落盘
+#    预期（0.7.3 已按真实引擎行为重验）：写文件成功（hello.txt 落盘且内容为 pong，
+#    过程出现 write_file 的 "Wrote N lines" 卡片），回合结局 completed（真实验证
+#    PASS）；completed 任务自动沉淀记忆卡（/memory 可见）。注意：省略 --approval
+#    时默认 readonly，写文件会被拒（预期以 "未通过验证" 收尾，属门禁正确行为）。
 
 # 3) 只读巡检（验证审批门禁）
 zhulong --headless run "总结当前目录结构"
@@ -107,7 +110,7 @@ zhulong --headless run "总结当前目录结构"
 | `apiKeyCmd` | 密钥不落盘方案：执行命令取 stdout 首行作密钥，成功后缓存（借鉴 claude-code apiKeyHelper） |
 | `headers` | 追加请求头 |
 | `models` | 该 provider 可用模型名列表 |
-| `modelContexts` | 模型名 → 上下文长度（token）。用于上下文占比/压缩触发的正确计算；也可被端点 `/models` 探测缓存覆盖合并 |
+| `modelContexts` | 模型名 → 上下文长度（token）。已接入压缩触发（未知回落 32768 保守值）：auto-compact 阈值与 loop 窗口预算均按此真值计算；未知/遗留 256000 哨兵一律按 unknown 处理回落 32768。也可被端点 `/models` 探测缓存覆盖合并（未知模型的上下文持久化为 null，不再写 256000 假值） |
 
 ### 3.2 环境变量三件套（provider 级）
 
@@ -140,7 +143,7 @@ export PANSHA_MODEL=openpangu:openPangu-7B
 | `PANSHA_SMOKE` | `=1` 强制工具 mock（零 spawn，测试/CI） | 优先级高于 headless |
 | `PANSHA_INTENT_GATE` | `=0` 关闭入口意图分类，全部按 execution 完整循环 | 逃生门 |
 | `PANSHA_USER_CONFIG_DIR` | 重定向用户级配置目录（默认 `~/.panshalach`） | 便携部署/测试隔离 |
-| `PANSHA_CTX_WINDOW` | 上下文窗口 token 数，默认 `128000` | 压缩触发阈值基于它；小模型务必与 `modelContexts` 对齐 |
+| `PANSHA_CTX_WINDOW` | 上下文窗口 token 数**显式覆盖**（0.7.3 起不再默认 128000 常量） | 未设置时按当前模型真实窗口：配置 `modelContexts` → `/model list` 探测缓存 → 未知回落 **32768** 保守值；压缩阈值与 loop 窗口预算均按该真值，每任务边界重取（`/model` 切换即生效） |
 | `PANSHA_VERBOSE` | `=1` 初始开启 thinking 展示 | REPL 内可切换 |
 | `PANSHA_SERVE_TOKEN` | SSE 服务（`/serve`）Bearer token | 未配置时仅允许 localhost 来源 |
 | `PANSHA_SKILLS_USER` | 用户级 skills 根目录覆盖（默认 `~/.panshalach/skills`） | |
@@ -215,7 +218,7 @@ LM Studio 默认 `1234`、vLLM 默认 `8000`。端口被占时在服务侧换端
 两种常见原因：① 端点侧模型未加载——LM Studio 未加载模型时 `/v1/chat/completions` 会报 400，先加载模型并用 `curl http://localhost:1234/v1/models` 核对模型名与配置 `models` 字段**逐字符一致**；② 请求体里带了 `provider:model` 前缀路由串——0.6.4 已修复（注册表剥离前缀），若复现请确认部署版本 ≥ 0.6.4。
 
 **Q3：模型返回 200 但内容为空（reasoning_content 空响应）**
-openPangu-Embedded 实测偶发"content 空但 reasoning_content 非空"的 200 空响应。0.6.4 起已有双重兜底：非流式响应 content 为空时采用 `reasoning_content`；空响应纳入 `withRetry` 可重试（429/5xx/网络错误，≤3 次）。若仍频繁出现：检查是否上下文超窗（`modelContexts` 是否配小/配大）、量化版本是否过激，或换 7B+ 模型验证。
+openPangu-Embedded 实测偶发"content 空但 reasoning_content 非空"的 200 空响应。0.6.4 起已有双重兜底：非流式响应 content 为空时采用 `reasoning_content`；空响应纳入 `withRetry` 可重试（429/5xx/网络错误 + 传输类错误 fetch failed/TypeError，≤5 次——0.7.3 起从 3 次放宽）。若仍频繁出现：检查是否上下文超窗（`modelContexts` 是否配小/配大）、量化版本是否过激，或换 7B+ 模型验证。
 
 **Q4：`--approval readonly` 下写文件被拒**
 设计行为，不是故障：readonly 档写文件/执行类一律拒绝。headless/一次性执行需要显式提权：`zhulong --headless --approval full run "…"` 或 `PANSHA_APPROVAL=full`；REPL 内用 `/approvals full`。另注意非 TTY 一次性执行必须带 `--headless`，否则工具走 mock 守卫不真实落盘。

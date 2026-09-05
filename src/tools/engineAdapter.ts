@@ -20,6 +20,8 @@ import { createWriteFileTool } from './writeFile.js';
 import { createEditFileTool } from './editFile.js';
 import { classify, describeRequest, WRITE_TOOLS, cancelActiveApproval, type ApprovalDecision } from './approval.js';
 import { checkpointBeforeMutation } from './fileHistory.js';
+// 'a' 决策持久化到项目配置（best-effort；ConfigManager 无反向依赖，无环）
+import { appendProjectApprovalAllowlist } from '../cli/repl/ConfigManager.js';
 import path from 'path';
 import type { ToolContext, ToolImpl, ToolResult, DiffHunk } from './types.js';
 
@@ -40,10 +42,10 @@ export function withWriteLock<T>(fn: () => Promise<T> | T): Promise<T> {
 export interface EngineAdapterOptions {
   workspaceRoot: string;
   tierConfig: TierConfig;
-  /** 2.4 injects the session's approval mode here (default: readonly). */
+  /** Injects the session's approval mode here (default: readonly). */
   approvalMode?: 'readonly' | 'default' | 'full';
-  /** 2.4 injects an approval bridge (rich ConfirmBar / readline / headless).
-   *  返回放宽为 string：line 桥可返回 `n:<指导语>`（P0-3.4，拼进拒绝反馈）。 */
+  /** Injects an approval bridge (rich ConfirmBar / readline / headless).
+   *  返回放宽为 string：line 桥可返回 `n:<指导语>`（拼进拒绝反馈）。 */
   approvalBridge?: (req: {
     tool: string;
     description: string;
@@ -58,7 +60,7 @@ export interface EngineAdapterOptions {
   approvalTimeoutMs?: number;
   /** 事件发射器（approval.request 卡片）— e.g. config.onStep。 */
   emitEvent?: (event: any) => void;
-  /** Extra tools registered beyond the built-ins (bash in 2.2, write/edit in 2.3). */
+  /** Extra tools registered beyond the built-ins (bash, write/edit). */
   extraTools?: Record<string, import('./types.js').ToolImpl>;
   /** MCP 工具（命名空间 mcp_<server>_<tool>），按 bash 同等门禁。 */
   mcpTools?: Array<{
@@ -67,7 +69,7 @@ export interface EngineAdapterOptions {
     description: string;
     call(args: Record<string, unknown>): Promise<{ ok: boolean; output: string; error?: string }>;
   }>;
-  /** Files already read this run (RBW bookkeeping, used from 2.3). */
+  /** Files already read this run (RBW bookkeeping). */
   readFiles?: Set<string>;
   signal?: AbortSignal;
 }
@@ -78,7 +80,7 @@ export interface EngineAdapter {
   executor: ToolExecutor;
   ctx: ToolContext;
   /**
-   * P1.1 请求侧：OpenAI function calling schema 列表（本 adapter 实际可执行的
+   * 请求侧：OpenAI function calling schema 列表（本 adapter 实际可执行的
    * 工具集 = 注册表 ∩ schema 表，外加 MCP 工具）。smoke 环境返回 []。
    */
   toolSchemas(): Array<{
@@ -91,7 +93,7 @@ export interface EngineAdapter {
 export const SMOKE_MOCK_RESULT = 'VERIFICATION: ALL_TESTS_PASSED';
 
 export function isSmokeEnvironment(): boolean {
-  // Priority (dogfood-①): PANSHA_SMOKE=1 wins over everything (tests/CI keep
+  // Priority: PANSHA_SMOKE=1 wins over everything (tests/CI keep
   // the power to force mock even if HEADLESS was mis-set in CI).
   if (process.env.PANSHA_SMOKE === '1') return true;
   // Explicit headless escape hatch: PANSHA_HEADLESS=1 or `pangu --headless`
@@ -183,7 +185,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     call: async (args: Record<string, unknown>) => {
       const toolNorm = mt.name.toLowerCase();
       const danger = /write|delete|remove|exec|run|push|create|edit/i.test(toolNorm);
-      // T-27（高危）: 先查全名 allowlist（mcp_<server>_<tool>——'a' 决策只放行该
+      // 先查全名 allowlist（mcp_<server>_<tool>——'a' 决策只放行该
       // MCP 工具，绝不解锁 bash）。未放行才走 classify('bash') 语义（MCP 视同
       // bash：readonly 一律拒、default 需审批、full 放行）。
       const allowlisted = sessionAllowlist.has(toolNorm);
@@ -208,7 +210,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         emitEvent?.({ version: 2, type: 'approval.request', requestId: `mcp_${Date.now()}_${++approvalSeq}`, tool: mt.name, description, danger });
         let decision = 'n';
         try {
-          // 评审 P2：timer 改 race 局部（adapter 级共享变量会被并发 MCP 审批互相覆盖/漏清）
+          // timer 限定在 race 局部（adapter 级共享变量会被并发 MCP 审批互相覆盖/漏清）
           decision = await Promise.race([
             approvalBridge({ tool: mt.name, description, danger }),
             new Promise<string>((resolve) => {
@@ -221,13 +223,17 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         } catch {
           decision = 'n';
         }
-        // T-27（高危）: 'a'（always allow）按 MCP 工具全名放行（mcp_<server>_<tool>），
+        // 'a'（always allow）按 MCP 工具全名放行（mcp_<server>_<tool>），
         // 绝不 add('bash')——否则放行一个 MCP 工具即解锁全部 bash 免审。
-        // P0-3.4: `n:<指导语>` 同样拼进 MCP 拒绝反馈。
+        // `n:<指导语>` 同样拼进 MCP 拒绝反馈。
         const mRaw = String(decision || 'n');
         const mGuidance = mRaw.startsWith('n:') ? mRaw.slice(2).trim() : '';
         const mEff: ApprovalDecision = mRaw === 'a' ? 'a' : mRaw === 'y' ? 'y' : 'n';
-        if (mEff === 'a') sessionAllowlist.add(mt.name);
+        if (mEff === 'a') {
+          sessionAllowlist.add(mt.name);
+          // 与 bash/write gate 同语义——'a' 持久化（best-effort）
+          try { appendProjectApprovalAllowlist(opts.workspaceRoot, mt.name); } catch {}
+        }
         if (mEff !== 'y' && mEff !== 'a') {
           return { ok: false, output: `✗ DENIED (user) · ${mt.name}${mGuidance ? `\n│ 用户指导: ${mGuidance}` : ''}`, error: 'DENIED_BY_USER' };
         }
@@ -238,7 +244,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
   const executor = createToolExecutor(ctx, extra, mcpTools as any);
 
-  // P1.1 请求侧：内置工具的 OpenAI function schema。
+  // 请求侧：内置工具的 OpenAI function schema。
   // 参数键与各工具实现实际读取的键严格一致（file_path/content/command/...）。
   const BUILTIN_TOOL_SCHEMAS: Record<string, { description: string; parameters: Record<string, unknown> }> = {
     read_file: {
@@ -368,6 +374,26 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     if (diff && diff.length > 0) {
       head += `\n${DIFF_MARK}${JSON.stringify(diff)}`;
     }
+
+    // 真实成功信号确定性入册——
+    // 按 `res.ok` + 工具类别在结果尾部追加规范尾标，让 loop 的 classifySignal
+    // 能识别真实引擎的成功（此前唯一 PASS 产出方是 smoke mock，真实成功被误判
+    // FAIL → completed 真机不可达）。不做正文字符串扫描：
+    //   bash（EXIT_CODE:0 尾行已有）→ 追加 VERIFICATION: PASS（命令真跑通=验证）
+    //   write_file / edit_file      → 追加 VERIFICATION: APPLIED（写盘成功 ≠ 任务
+    //                                 验证通过；PASS 留给真实验证命令，
+    //                                 APPLIED=PARTIAL——清零连败但不触发 completed）
+    //   read_file / glob / grep     → 追加 VERIFICATION: NEUTRAL（只读，无验证效力）
+    // 失败分支（TOOL_ERROR）不追加任何 VERIFICATION 行——失败永远不该长得像成功。
+    if (res.ok) {
+      if (name === 'bash') {
+        head += '\nVERIFICATION: PASS';
+      } else if (name === 'write_file' || name === 'edit_file') {
+        head += '\nVERIFICATION: APPLIED';
+      } else if (name.includes('read') || name === 'glob' || name === 'grep') {
+        head += '\nVERIFICATION: NEUTRAL';
+      }
+    }
     return head;
   }
 
@@ -463,22 +489,24 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     } catch {
       decision = 'n';
     }
-    // 评审 Bug#3：引擎侧 60s race 超时放行时，桥接侧 finish 未跑会残留
+    // 引擎侧 60s race 超时放行时，桥接侧 finish 未跑会残留
     // activeApprovalCancel → isApprovalActive() 恒真（gerund 永久暂停 +
     // 后续 Ctrl+C 被死审批劫持）。超时路径显式清钩子。
     if (timedOut) {
       try { cancelActiveApproval('timeout'); } catch {}
     }
 
-    // P0-3.4: `n:<指导语>` — 拒绝的同时携带用户给模型的一句指导。
+    // `n:<指导语>` — 拒绝的同时携带用户给模型的一句指导。
     const dRaw = String(decision || 'n');
     const guidance = dRaw.startsWith('n:') ? dRaw.slice(2).trim() : '';
     let eff: ApprovalDecision = dRaw === 'a' ? 'a' : dRaw === 'y' ? 'y' : 'n';
     if (eff === 'a') {
       sessionAllowlist.add(tool);
-      // 评审 Bug#1：'a' = 加入会话 allowlist 且**本次放行**（与 MCP gate
-      // 语义一致）。旧实现 `decision='a'; decision='y'` 的等价语义在改造
-      // 中丢失，导致首次选"总是允许"反而被拒。
+      // 'a' 决策同时持久化到项目配置 approvalAllowlist（best-effort，
+      // 失败静默）——下一会话启动时经 Session 构造器加载回 sessionAllowlist。
+      try { appendProjectApprovalAllowlist(opts.workspaceRoot, tool); } catch {}
+      // 'a' = 加入会话 allowlist 且**本次放行**（与 MCP gate
+      // 语义一致：选"总是允许"当次也必须放行，否则首次选 a 反而被拒）。
       eff = 'y';
     }
     if (eff !== 'y') {
@@ -506,7 +534,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         const params = paramsOf(call);
         const deniedRes = await gate(String(call.toolName || ''), params);
         if (deniedRes) {
-          // 评审核销缺口：gate 拒绝的调用也要发 post-execute（ok:false），
+          // gate 拒绝的调用也要发 post-execute（ok:false），
           // 否则 line 模式拒绝零卡片反馈（pre 行已由调用方在 execute 前无
           // 从发出——这里连 pre 一起补齐）。
           const deniedTool = String(call.toolName || '').trim().toLowerCase();
@@ -554,7 +582,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
           ? await withWriteLock(() => executor.execute(String(call.toolName || ''), params))
           : await executor.execute(String(call.toolName || ''), params);
         // tools/post-execute event (result + duration) for observability.
-        // P1-2: 附带轻量结果载荷（截断 output / 行数 / diff 摘要），line 模式
+        // 附带轻量结果载荷（截断 output / 行数 / diff 摘要），line 模式
         // 工具实时卡片的结果行由此渲染（Wrote N lines / Read N lines / Added-removed）。
         try {
           emitEvent?.({

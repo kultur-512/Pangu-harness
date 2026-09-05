@@ -23,7 +23,7 @@ export type StepEvent =
   | { version: 1; type: 'critique'; rolloutId: string; stepNumber: number; critique: string }
   | { version: 1; type: 'softLimit'; usedRatio: number }
   | { version: 1; type: 'degradation'; reason: string }
-  // M1-2.4 (append-only per instruction): approval request surfaces through the
+  // (append-only): approval request surfaces through the
   // same onStep channel so rich/line UIs can render a confirm card.
   | {
       version: 2;
@@ -45,11 +45,16 @@ export interface Turn {
     summary: string;
     trajectoryId?: string;
     budgetReport?: BudgetReport;
-    /** 0.7：回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification）。 */
+    /** 回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification）。 */
     stopReason?: string;
   };
   tier: Tier;
   durationMs?: number;
+  /**
+   * 中断现场落盘：aborted 回合保留的已流出模型正文（部分结果）。
+   * 仅 stopReason='aborted' 的 turn 携带；completed/answered 回合恒不写该字段。
+   */
+  partialText?: string;
 }
 
 export interface SessionFile {
@@ -61,7 +66,7 @@ export interface SessionFile {
   tier: Tier;
   workspace: string;
   model: string;
-  // M1-2.4 (append-only per instruction): approval state persists with the session
+  // (append-only): approval state persists with the session
   approvalMode?: 'readonly' | 'default' | 'full';
   sessionApprovalAllowlist?: string[];
   turns: Turn[];
@@ -89,7 +94,14 @@ export interface CommandContext {
   renderer: OutputRenderer;
   input: InputReader;
   repl: any;              // Repl instance
-  provider?: ModelProvider; // P3: ModelProvider for resolving clients (never pass null to PanshalachChaser)
+  provider?: ModelProvider; // ModelProvider for resolving clients (never pass null to PanshalachChaser)
+  /**
+   * 审批桥与中止信号——由宿主（Repl.buildContext /
+   * sseInteractive 注册点）注入；RunCommand 等任务命令原样透传给 solveIssue，
+   * 使 one-shot / classic 路径与 SSE 主路径共享同一审批与中断语义。
+   */
+  approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
+  signal?: AbortSignal;
 }
 
 export interface CommandResult {
@@ -330,6 +342,11 @@ export interface ModelClientOutput {
   raw?: string;
   toolCalls?: unknown[];
   detectedFormat?: string;
+  /**
+   * finish_reason==='length'（max_tokens 截断）时置 true。
+   * VerifyCritiqueLoop 收到截断响应禁判 answered，注入提示继续下一步。
+   */
+  truncated?: boolean;
 }
 
 /** 模型提供者：负责把模型名解析为可调用客户端。create* 不可用时必须返回 null（不 throw）。 */

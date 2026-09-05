@@ -26,7 +26,7 @@ import { fuzzyFilter, fuzzyScore } from './FuzzyMatcher.js';
 import { buildHelpView } from './commands/HelpCommand.js';
 import type { ModelProvider } from './types.js';
 
-// ---- P1（批次 A）：line 模式渲染纯助手（模块级，便于测试） ----
+// ---- line 模式渲染纯助手（模块级，便于测试） ----
 const ANSI_DIM = '\x1b[2m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_RED = '\x1b[31m';
@@ -89,7 +89,7 @@ function firstLine(text: string, max: number): string {
   return '';
 }
 
-/** 工具参数摘要（P1-2 头行）：bash→command 截 160；文件类→path；grep/glob→pattern；其余取前两个键值。 */
+/** 工具参数摘要（工具卡片头行）：bash→command 截 160；文件类→path；grep/glob→pattern；其余取前两个键值。 */
 export function summarizeToolParams(tool: string, params: any): string {
   const p = (params && typeof params === 'object') ? params : {};
   const flat = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -109,7 +109,7 @@ export function summarizeToolParams(tool: string, params: any): string {
   return keys.map((k) => `${k}=${truncateByWidth(flat(p[k]), 60)}`).join(' ');
 }
 
-/** pre→post 间隔超 3s 时 gerund 行的进行时动词（P1-2 可选项）。 */
+/** pre→post 间隔超 3s 时 gerund 行的进行时动词。 */
 function doingVerb(tool: string): string {
   const t = String(tool || '').trim().toLowerCase();
   if (t === 'write_file') return 'Writing';
@@ -137,7 +137,7 @@ const TOOL_ERROR_GLOSS: Record<string, string> = {
 };
 
 /**
- * P1-2 结果行（CC 式动词句：动词+加粗数字+单位+dim 后缀）。
+ * 工具结果行（CC 式动词句：动词+加粗数字+单位+dim 后缀）。
  * data 来自 tools/post-execute 事件（tool/ok/durationMs/error/outputPreview/lines/diff），
  * preParams 为该工具 tools/pre-execute 记住的参数。
  */
@@ -192,7 +192,7 @@ export function toolResultLine(data: any, preParams: any): string {
   return `Done ${dim('· ' + ms)}`;
 }
 
-/** P1-3 「下一步」按 stopReason 分支。 */
+/** 「下一步」按 stopReason 分支。 */
 export function nextStepHint(stopReason?: string): string {
   const sr = String(stopReason || '');
   if (sr === 'completed') return '继续下一个任务 · /memory 查看沉淀';
@@ -202,7 +202,7 @@ export function nextStepHint(stopReason?: string): string {
   return '模型未完成验证 · 可补充要求重试 · /undo 回退变更';
 }
 
-// ==================== 批次 B（P2 引导级 + P3 质感级）纯助手 ====================
+// ==================== 纯助手（引导级 + 质感级） ====================
 // 模块级、无 IO、无 timer — 便于单测；line 段只做接线。
 
 let cachedPkgVersion: string | null = null;
@@ -218,14 +218,14 @@ export function pkgVersion(): string {
   return cachedPkgVersion;
 }
 
-/** P2-1：模型名剥掉 `provider:` 前缀（`openpangu:xxx` → `xxx`；无前缀原样）。 */
+/** 模型名剥掉 `provider:` 前缀（`openpangu:xxx` → `xxx`；无前缀原样）。 */
 export function stripModelProviderPrefix(model: string): string {
   const s = String(model || '').trim();
   const i = s.indexOf(':');
   return i === -1 ? s : s.slice(i + 1);
 }
 
-/** P2-1 启动横幅 v2：粗体名 + dim 元信息两行（颜色由调用方套，这里只管内容与截断）。 */
+/** 启动横幅：粗体名 + dim 元信息两行（颜色由调用方套，这里只管内容与截断）。 */
 export function buildBanner(opts: {
   model: string;
   tier: string;
@@ -270,7 +270,7 @@ export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> 
 ];
 
 /**
- * P2-2：line 模式 readline completer（同步适配：只补全 `/` 开头的命令名，
+ * line 模式 readline completer（同步适配：只补全 `/` 开头的命令名，
  * 精确前缀优先，模糊兜底走 FuzzyMatcher；顺序即 LINE_COMMANDS 常用度）。
  */
 export function completeLineCommand(line: string): [string[], string] {
@@ -286,7 +286,7 @@ export function completeLineCommand(line: string): [string[], string] {
   return [[], raw];
 }
 
-/** P2-2：未知命令 → 最近命令建议（含别名得分；低于子序列档 0.35 视为无建议）。 */
+/** 未知命令 → 最近命令建议（含别名得分；低于子序列档 0.35 视为无建议）。 */
 export function suggestCommand(input: string): string | null {
   const q = String(input || '').replace(/^\//, '').toLowerCase().trim();
   if (!q) return null;
@@ -307,7 +307,7 @@ export function suggestCommand(input: string): string | null {
   return bestScore >= 0.35 ? best : null;
 }
 
-/** P2-2：`?` 快捷帮助面板（常用 8 条 + dim 尾行指向 /help；颜色由调用方套）。 */
+/** `?` 快捷帮助面板（常用 8 条 + dim 尾行指向 /help；颜色由调用方套）。 */
 export function buildQuickHelpLines(totalCommands: number): string[] {
   const entry = (label: string, desc: string) => `  ${padByWidth(label, 10)}  ${desc}`;
   return [
@@ -325,14 +325,14 @@ export function buildQuickHelpLines(totalCommands: number): string[] {
   ];
 }
 
-/** P2-4：模式徽标行（dim 由调用方套；full 同 auto-accept 的 ⏵⏵ 符号）。 */
+/** 模式徽标行（dim 由调用方套；full 同 auto-accept 的 ⏵⏵ 符号）。 */
 export function modeBadgeLine(mode: string): string {
   const m = String(mode || '');
   const glyph = m === 'plan' ? '⏸' : m === 'default' ? '⏵' : '⏵⏵';
   return `${glyph} ${m} · shift+tab 切换`;
 }
 
-/** P2-4：/mode 切换回执的一句后果说明。 */
+/** /mode 切换回执的一句后果说明。 */
 export const MODE_CONSEQUENCE: Record<string, string> = {
   plan: '只读计划模式，写操作与 bash 会被拒绝',
   default: '写操作需确认',
@@ -340,25 +340,25 @@ export const MODE_CONSEQUENCE: Record<string, string> = {
   full: '全部放行（危险操作仍标红）',
 };
 
-/** P2-4：切换回执整行。 */
+/** 切换回执整行。 */
 export function modeSwitchReceipt(mode: string): string {
   return `已切换: ${mode} · ${MODE_CONSEQUENCE[String(mode)] || ''}`.replace(/ · $/, '');
 }
 
-/** P3-2：phase 值本地化（渲染层映射，不改事件值；未知值原样透传）。 */
+/** phase 值本地化（渲染层映射，不改事件值；未知值原样透传）。 */
 export function localizePhase(phase: string): string {
   const map: Record<string, string> = { explore: '侦察', rollout: '执行', judge: '评判', done: '收尾' };
   return map[String(phase || '')] || String(phase || '');
 }
 
-/** P3-2：rollout 状态本地化（/agents 展示用）。 */
+/** rollout 状态本地化（/agents 展示用）。 */
 export function localizeRolloutStatus(status: string): string {
   const map: Record<string, string> = { running: '进行中', done: '完成', failed: '失败', pending: '等待' };
   return map[String(status || '')] || String(status || '');
 }
 
 /**
- * P3-3：情境 tip 节流 — 每类触发点一次性（key 去重）+ 每会话全局上限（默认 2 条）。
+ * 情境 tip 节流 — 每类触发点一次性（key 去重）+ 每会话全局上限（默认 2 条）。
  */
 export function createTipGate(max = 2) {
   let shown = 0;
@@ -379,7 +379,7 @@ export function createTipGate(max = 2) {
   };
 }
 
-/** P3-3：启动 tip 条件 — 新会话（无历史轮、非 resume）且掷中 50% 概率。 */
+/** 启动 tip 条件 — 新会话（无历史轮、非 resume）且掷中 50% 概率。 */
 export function shouldShowStartupTip(turns: number, resumed: boolean, rand: number): boolean {
   return turns === 0 && !resumed && rand < 0.5;
 }
@@ -393,9 +393,9 @@ export interface SseInteractiveOptions {
 }
 
 export async function startSseInteractive(opts: SseInteractiveOptions = {}): Promise<void> {
-  // ---- P0/P1（批次 A）：line 模式输出纪律 + 流式状态 ----
+  // ---- line 模式输出纪律 + 流式状态 ----
   // inlineLine：当前"活行"的占用者（gerund 标签 / thinking 单行滚动）。
-  // 任何正式输出前必须先 \r\x1b[K 清行（P0-2 gerund 污染修复的单一纪律点）。
+  // 任何正式输出前必须先 \r\x1b[K 清行（防 gerund 运行标签残留污染正式输出的单一纪律点）。
   const lineUi: {
     inlineLine: null | 'gerund' | 'thinking';
     messageStreaming: boolean;
@@ -437,7 +437,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
   }
 
-  // P0-2：renderer 包装器 — 所有正式输出（writeLine/success/warn/…）前先清活行。
+  // renderer 包装器 — 所有正式输出（writeLine/success/warn/…）前先清活行。
   // gerund/thinking 的原地重绘不经过这里（直接 stdout + 记 inlineLine），
   // 因此清行纪律只有这一个入口。
   const rawRenderer = createOutputRenderer();
@@ -460,14 +460,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   if (!isInteractiveTty) {
     // Silent downgrade: use the classic REPL path.
-    // B8: carry a restored session (--resume) through the downgrade — the
+    // Carry a restored session (--resume) through the downgrade — the
     // classic fallback must not lose the resume state.
     const { startClassicRepl } = await import('./classicRepl.js');
     return startClassicRepl(opts.session ? { session: opts.session } : {});
   }
 
   // one shared session for rich + line paths (approval mode/allowlist
-  // flow from here into the engine adapter; M2.2 resume seeds it).
+  // flow from here into the engine adapter; resume seeds it).
   const { applyConfigModel } = await import('./modelSeed.js');
   const session: Session = applyConfigModel(
     opts.session ?? new Session({ workspace: opts.defaultWorkspace, tier: (opts.defaultTier as any) || 'high' }),
@@ -479,7 +479,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // resumed sessions already carry __resumed marker from repl.ts
   const resumedInfo = (session as any).__resumed as { from: string; turns: number } | undefined;
 
-  // P5-5.2: MCP stdio servers from .panshalach.json mcpServers (append-only config).
+  // MCP stdio servers from .panshalach.json mcpServers (append-only config).
   // Clients spawn lazily at first task; closed on process exit (hang discipline).
   const mcpClients = new Map<string, any>();
   let mcpToolsReady: any[] = [];
@@ -522,8 +522,22 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     for (const c of mcpClients.values()) { try { c.close(); } catch {} }
   });
 
-  // Nominal context window for the top-bar meter (heuristic chars/4 estimate).
-  const CTX_WINDOW_TOKENS = Number(process.env.PANSHA_CTX_WINDOW || 128000);
+  // 上下文窗口挂真值——不再用 const 常量
+  // `PANSHA_CTX_WINDOW||128000` 与所连模型零耦合；改为每个任务边界调
+  // provider.getModelContextLength(session.model) 重取（CTX_WINDOW_TOKENS 去
+  // const 化）。≤0 或遗留 256000 哨兵视为 unknown → 32768 保守值（只多压缩，
+  // 不会让 8K 模型爆窗）。PANSHA_CTX_WINDOW 环境变量保留为显式覆盖。
+  let ctxWindowTokens = 32768;
+  function resolveCtxWindowTokens(): number {
+    const env = Number(process.env.PANSHA_CTX_WINDOW || 0);
+    if (Number.isFinite(env) && env > 0) return env;
+    try {
+      const p = (opts.provider ?? (session as any).provider) as any;
+      const n = Number(p?.getModelContextLength?.(session.model));
+      if (Number.isFinite(n) && n > 0 && n !== 256000) return n;
+    } catch {}
+    return 32768;
+  }
   let ctxUsedChars = 0;
   function bumpCtx(text: any) {
     if (typeof text === 'string') ctxUsedChars += text.length;
@@ -534,14 +548,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   let lineRl: readline.Interface | null = null;
   let lineSetPrompt: () => void = () => {};
 
-  // 批次 B（P2/P3）：待定命令建议 / 模式徽标待打印 / 情境 tip 节流。
+  // 待定命令建议 / 模式徽标待打印 / 情境 tip 节流。
   // pendingSuggestion 只在 line 空闲态由「未知命令」分支置位；回车确认执行，
   // Esc / 任何其他输入取消。
   let pendingSuggestion: string | null = null;
-  let modeBadgePending = true; // 启动时输出一次（P2-4），此后仅模式变化后再输出
+  let modeBadgePending = true; // 启动时输出一次，此后仅模式变化后再输出
   const sessionTipGate = createTipGate(2);
 
-  // For /edit (P1 high-value): remember last meaningful surfaced content (result text, big markdown/thought)
+  // For /edit: remember last meaningful surfaced content (result text, big markdown/thought)
   // so user can pull it back into the input area to edit/resubmit or refine.
   let lastOutput = '';
   function recordOutput(text: string) {
@@ -553,15 +567,15 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   let currentAbort: AbortController | null = null;
   const isRunning = () => currentAbort !== null;
 
-  // P4-4.2/4.3: queued messages + steering inbox
+  // queued messages + steering inbox
   const queue = new InputQueue();
   let lastInjectedSteers: string[] = [];
   let lastAborted = false;
-  // P3-3.7: in-flight background compaction (cancelled on session exit)
+  // in-flight background compaction (cancelled on session exit)
   let bgCompact: { isReady(): boolean; result(): any; cancel(): void } | null = null;
   process.once('exit', () => { if (bgCompact) { try { bgCompact.cancel(); } catch {} } });
 
-  // P5-5.3: sub-agent rollout tree (fed by onEvent step/critique rolloutId).
+  // sub-agent rollout tree (fed by onEvent step/critique rolloutId).
   // Engine runs rollouts SERIALLY → honest serial progress list.
   const agentTree = new AgentTree();
   let treeTaskStart = 0;
@@ -571,9 +585,9 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
   }
 
-  // P4-4.7: mode ring — shift+tab cycles; plan floors approval to readonly,
+  // mode ring — shift+tab cycles; plan floors approval to readonly,
   // leaving plan restores the ring-mapped approval mode.
-  // P2-4（批次 B）：切换回执升级为 `已切换: <模式> · <后果>`；徽标行置 pending，
+  // 切换回执为 `已切换: <模式> · <后果>`；徽标行置 pending，
   // 下一次空闲提示符上方输出一次（避免刷屏）。
   const modeRing = new ModeRing('default', (m) => {
     if (m === 'plan') {
@@ -597,7 +611,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     return m;
   }
   function setMode(m: any) {
-    // fix（批次 B）：旧实现 set(m) 后又 cycleMode() —— cycle 会把模式再推进一格，
+    // 旧实现 set(m) 后又 cycleMode() —— cycle 会把模式再推进一格，
     // `/mode plan` 实际落在 default。set 只需同步 rich 徽标，不再 cycle。
     modeRing.set(m);
     pushRichModeBadge(String(m));
@@ -610,7 +624,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
   }
 
-  // dogfood-T4: unified synchronous compaction — client resolution, success/
+  // unified synchronous compaction — client resolution, success/
   // failure feedback and TopBar meter reset live HERE (was duplicated at
   // /compact and the critical sync-fallback).
   async function runSyncCompact(reasonPrefix = ''): Promise<any> {
@@ -627,7 +641,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       else if (reasonPrefix) renderer.warn(msg);
       else renderer.success(msg);
       if (rich && typeof bridge.setTop === 'function') {
-        const nr = Math.min(1, (ctxUsedChars / 4) / CTX_WINDOW_TOKENS);
+        const nr = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
         try { bridge.setTop({ ctxRatio: nr }); } catch {}
       }
     } else {
@@ -638,7 +652,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   }
 
   /**
-   * P4-4.2/4.3: route a user line according to running state.
+   * route a user line according to running state.
    * - idle:   normal task flow
    * - running: '/' → immediate local command; '!' → steer; else → queued task
    */
@@ -668,7 +682,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     updateQueueCount();
   }
 
-  // P2-3（批次 B）：与 classic（Repl.ts）完全同序的 26 命令注册表 —
+  // 与 classic（Repl.ts）完全同序的 26 命令注册表 —
   // /help 的分组渲染、/resume 的委托执行都以它为数据源，三处输出一致。
   let sharedRegistry: any = null;
   async function getSharedRegistry(): Promise<any> {
@@ -749,7 +763,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return;
     }
 
-    // M2.1/local commands shared by rich + line paths
+    // local commands shared by rich + line paths
     // (/undo now; /approvals + /usage + /compact land with their batches)
     if (trimmed.startsWith('/')) {
       const sp = trimmed.indexOf(' ');
@@ -765,7 +779,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       };
 
       if (cmd === '/agents') {
-        // P5-5.3: sub-agent rollout tree (serial progress list — honest)
+        // sub-agent rollout tree (serial progress list — honest)
         const nodes = agentTree.snapshot();
         const feedOrLine = (text: string, color?: 'bold' | 'gray') => {
           if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text, level: 'info' });
@@ -784,7 +798,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         const failed = nodes.filter((n) => n.status === 'failed').length;
         const pending = nodes.filter((n) => n.status === 'pending').length;
         const totalMs = nodes.reduce((a, n) => a + n.durationMs, 0);
-        // P3-2（批次 B）：统计行中文化
+        // 统计行中文化
         feedOrLine(`共 ${nodes.length} rollouts · 完成 ${done} · 进行中 ${running} · 等待 ${pending} · 失败 ${failed} · 总耗时 ${(totalMs / 1000).toFixed(1)}s`, 'bold');
         for (const n of nodes) {
           const glyph = n.status === 'running' ? '▶' : n.status === 'done' ? '✓' : n.status === 'failed' ? '✗' : '·';
@@ -799,23 +813,24 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             for (const e of edges) feedOrLine(`  ${e.from} --[${e.kind}]--> ${e.to}`, 'gray');
           }
         } catch {}
-        // D-parallel: high+ tiers run rollouts concurrently — the tree renders
-        // a REAL parallel tree (multiple running nodes coexist).
-        feedOrLine('（high+ 档并行 rollout：Promise.allSettled + 写互斥 + 预算聚合）', 'gray');
+        // 文案清漂：删除"并行 rollout"表述——引擎恒单 rollout
+        // 串行执行（Promise.allSettled 多 rollout 编排已随判官机制摘除），
+        // 文案必须与运行时一致。
+        feedOrLine('（当前为单 rollout 串行执行；rollout 列表记录任务内步骤进度）', 'gray');
         return;
       }
 
       if (cmd === '/rewind') {
-        // P3-3.6: turn-level rewind lives in the classic command set
+        // turn-level rewind lives in the classic command set
         // (registered RewindCommand); rich-mode panel wiring is deferred.
-        // 评审 P3：line 模式不静默 no-op——提示真实可用路径并按已处理返回
+        // line 模式不静默 no-op——提示真实可用路径并按已处理返回
         //（false 会把命令当任务发给引擎）。
         emit('rewind 目前在经典模式可用：先 /classic 进入，或使用 /undo 回退最近变更', 'info');
         return true;
       }
 
       if (cmd === '/mode') {
-        // P4-4.7: hidden alias for keyboard-less environments (also the
+        // hidden alias for keyboard-less environments (also the
         // testable entry point of ModeRing).
         const a = arg.toLowerCase();
         if (['plan', 'default', 'auto-accept', 'full'].includes(a)) {
@@ -827,7 +842,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
 
       if (cmd === '/verbose') {
-        // P1-1.4: thinking 展示开关（内存标志；PANSHA_VERBOSE=1 初始为开）
+        // thinking 展示开关（内存标志；PANSHA_VERBOSE=1 初始为开）
         lineUi.verbose = !lineUi.verbose;
         emit(`思考显示: ${lineUi.verbose ? '全文多行（verbose）' : '单行滚动（默认）'}`, 'info');
         return;
@@ -872,7 +887,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
 
       if (cmd === '/compact') {
-        // dogfood-T4: unified via runSyncCompact (client resolve + feedback + meter)
+        // unified via runSyncCompact (client resolve + feedback + meter)
         const r = await runSyncCompact();
         if (r.ok) {
           const preview = r.summary.length > 300 ? r.summary.slice(0, 300) + '…' : r.summary;
@@ -882,7 +897,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
 
       if (cmd === '/model') {
-        // fix (user-facing): /model must be handled LOCALLY, not fall through
+        // /model must be handled LOCALLY, not fall through
         // to the engine as a coding task (that produced the confusing
         // "No model client available" error).
         const sub = arg.trim();
@@ -907,16 +922,20 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         }
         // /model <name> → switch session.model (validated on next task)
         session.model = sub;
+        // 切换模型后旧模型的上下文计量失效——
+        // ctxUsedChars 清零 + 窗口立即重取（下次任务边界也会再取一次兜底）。
+        ctxUsedChars = 0;
+        ctxWindowTokens = resolveCtxWindowTokens();
         emit(`模型已切换: ${sub}（下次任务生效）`, 'success');
         return;
       }
 
-      // fix-rich-local-cmds (①): rich mode slash commands MUST resolve
+      // rich mode slash commands MUST resolve
       // locally — /help /status /clear /tier and any unknown slash command are
       // handled here; a slash-prefixed line is NEVER submitted to the engine
       // as a coding task (iron rule).
       if (cmd === '/help' || cmd === '/h') {
-        // P2-3（批次 B）：三处（classic/line/派发器）统一走 HelpCommand 分组渲染
+        // 三处（classic/line/派发器）统一走 HelpCommand 分组渲染
         const reg = await getSharedRegistry();
         const view = buildHelpView(reg.list(), arg ? [arg.split(/\s+/)[0]] : []);
         for (const l of view.lines) emit(useRich ? l.text : (l.style ? renderer.color(l.text, l.style) : l.text), 'info');
@@ -924,7 +943,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (cmd === '/memory') {
-        // P2-2（批次 B）：快捷帮助收录了 /memory — line 模式给非交互直通
+        // 快捷帮助收录了 /memory — line 模式给非交互直通
         //（默认 list；无参数时 classic 的交互子菜单依赖 ctx.input，line 没有）
         const { runMemoryCommand } = await import('../MemoryCommand.js');
         try {
@@ -936,7 +955,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (cmd === '/resume') {
-        // P2-2（批次 B）：委托注册表里的 ResumeCommand（只依赖 renderer）
+        // 委托注册表里的 ResumeCommand（只依赖 renderer）
         const reg = await getSharedRegistry();
         const rctx: any = {
           session,
@@ -945,6 +964,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           input: null,
           repl: null,
           provider: (session as any).provider,
+          // sseInteractive 的 CommandContext 注册点——
+          // 注入与当前路径一致的现成审批桥 + 在途任务的 abort signal，使经此
+          // 派发的 registry 命令与主任务路径共享审批/中断语义。
+          approvalBridge: useRich
+            ? (req: { tool: string; description: string; danger: boolean }) => (bridgeRef.current.setConfirm(req) as Promise<string>)
+            : createCliApprovalBridge(),
+          signal: currentAbort?.signal,
         };
         const res = await reg.execute(rctx, 'resume', arg ? arg.split(/\s+/) : []);
         if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
@@ -967,7 +993,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (cmd === '/status') {
-        const pct = Math.min(100, Math.floor((ctxUsedChars / 4 / CTX_WINDOW_TOKENS) * 100));
+        const pct = Math.min(100, Math.floor((ctxUsedChars / 4 / ctxWindowTokens) * 100));
         emit(`模式 ${session.approvalMode} · 档位 ${session.tier} · 模型 ${session.model} · 上下文 ~${pct}% · 队列 ${queue.taskCount} 任务 / ${queue.steerCount} 插话`, 'info');
         return;
       }
@@ -1049,9 +1075,9 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
 
       // iron rule: unknown slash commands never reach the engine.
-      // P2-2（批次 B）：加模糊建议 — line 空闲态置待定命令（回车确认执行，
+      // 加模糊建议 — line 空闲态置待定命令（回车确认执行，
       // Esc/其他输入取消）；rich / 运行中只提示建议。
-      // 评审 P2：建议不能指向命令本身（自指：确认后又落"未知命令"无限循环），
+      // 建议不能指向命令本身（自指：确认后又落"未知命令"无限循环），
       // 且待定命令确认路径会先过 handleLocalCommand（/exit /clear 只在那注册）。
       {
         const sug = suggestCommand(cmd);
@@ -1069,10 +1095,10 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return;
     }
 
-    // P3-3.7: auto-compact pre-flight (CC-style) — background-first, applied at
+    // auto-compact pre-flight (CC-style) — background-first, applied at
     // task boundary, never blocks input. Sync fallback only when critical.
     {
-      const ratioNow = Math.min(1, (ctxUsedChars / 4) / CTX_WINDOW_TOKENS);
+      const ratioNow = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
       const cs = await import('./compactService.js');
       if (cs.shouldAutoCompact(session, ratioNow)) {
         const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
@@ -1087,7 +1113,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             const applied = cs.applyCompactResult(session, res);
             ctxUsedChars = cs.estimateSessionTokens(session) * 4;
             const msg = `${applied.message}`;
-            // 评审 P3：拒绝/失败以 warn 呈现（盘故障不该与普通回执同级）
+            // 拒绝/失败以 warn 呈现（盘故障不该与普通回执同级）
             if (!applied.ok) {
               if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'warn' });
               else renderer.warn(msg);
@@ -1096,7 +1122,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
               else renderer.info(msg);
             }
             if (useRich && typeof bridge.setTop === 'function') {
-              const nr = Math.min(1, (ctxUsedChars / 4) / CTX_WINDOW_TOKENS);
+              const nr = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
               try { bridge.setTop({ ctxRatio: nr }); } catch {}
             }
           }
@@ -1108,14 +1134,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             emitFeed('⏳ 已在后台预压缩历史（阈值为 ≥85% 上下文）……', 'warn');
           } else if (ratioNow >= 0.95) {
             // Critical: stream is about to blow up — do a sync fallback.
-            // dogfood-T4: unified via runSyncCompact (feedback + meter reset)
+            // unified via runSyncCompact (feedback + meter reset)
             await runSyncCompact('⏳ auto-compact 同步兜底：');
           }
         }
       }
     }
 
-    // P4-4.3: steering injection — unconsumed steers join THIS round's prompt,
+    // steering injection — unconsumed steers join THIS round's prompt,
     // then are consumed immediately (injected ones cannot be recalled).
     const pendingSteers = queue.consumeSteers();
     if (pendingSteers.length > 0) {
@@ -1141,7 +1167,9 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     const abortPromise = new Promise<never>((_, reject) => { abortReject = reject; });
 
     const startedAt = Date.now();
-    // P0/P1（批次 A）：任务边界重置 line 模式流式/卡片状态
+    // 任务边界重取当前模型真实窗口（/model 切换后立即生效）
+    ctxWindowTokens = resolveCtxWindowTokens();
+    // 任务边界重置 line 模式流式/卡片状态
     lineUi.taskStartedAt = startedAt;
     lineUi.taskEndedAt = 0;
     lineUi.ghostIgnored = false;
@@ -1153,14 +1181,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     lineUi.messageStreaming = false;
     lineUi.toolStack = [];
     lineUi.pendingTool = null;
-    // P4-4.9: gerund interval handle (declared here so the finally can clear it)
+    // gerund interval handle (declared here so the finally can clear it)
     let gerundTimer: NodeJS.Timeout | null = null;
-    // P5-5.3: new task boundary — settle previous rollouts, start a fresh clock
+    // new task boundary — settle previous rollouts, start a fresh clock
     agentTree.markAll('running', 'done');
     treeTaskStart = startedAt;
 
     try {
-      // P5-5.2: ensure MCP servers are initialized (lazy, once) before the run
+      // ensure MCP servers are initialized (lazy, once) before the run
       await initMcpServers();
       const { runAgentTask } = await import('../../server/runAgentTask.js');
 
@@ -1172,24 +1200,24 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             (bridgeRef.current.setConfirm(req) as Promise<'y' | 'n' | 'a'>)
         : createCliApprovalBridge();
 
-      // P0-3.1：主 readline 不再全程 pause（那样会让任务运行中的 Ctrl+C
+      // 主 readline 不再全程 pause（那样会让任务运行中的 Ctrl+C
       // 无人接、输入缓冲成幽灵 ^C）。stdin 所有权只在审批 question 挂起时
       // 经 setApprovalActivityListener（line 段注册）临时交接。
 
-      // P4-4.9: gerund running label — line-mode inline updates every 4s.
-      // Timer unref'd (M2.0 discipline: non-deadline timers must not hold the
+      // gerund running label — line-mode inline updates every 4s.
+      // Timer unref'd (non-deadline timers must not hold the
       // process) and always cleared in the finally below.
-      // P0-2：重绘统一走本函数（清活行 → 原地写 → 记 inlineLine）。
-      // P0-3.1：审批挂起时暂停；P1-1.2：正文流式期间暂停。
+      // 重绘统一走本函数（清活行 → 原地写 → 记 inlineLine）。
+      // 审批挂起时暂停；正文流式期间暂停。
       if (!useRich) {
         try {
           const { nextGerund, formatRunningLabel } = await import('./GerundSpinner.js');
           const gStart = startedAt;
           const paint = () => {
-            // 评审 P2：thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
+            // thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
             if (isApprovalActive() || lineUi.messageStreaming || lineUi.inlineLine === 'thinking') return;
             try {
-              // P3-3.2（批次 B）：任务运行超 30s → 一次性等待 tip（受全局 ≤2 节流）
+              // 任务运行超 30s → 一次性等待 tip（受全局 ≤2 节流）
               if (Date.now() - gStart > 30000 && sessionTipGate.canShow('wait')) {
                 sessionTipGate.markShown('wait');
                 clearInlineLine();
@@ -1199,7 +1227,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
               let label: string;
               const pt = lineUi.pendingTool;
               if (pt && Date.now() - pt.at > 3000) {
-                // P1-2（可选）：pre 后 3s 未 post → 进行时工具标签
+                // pre 后 3s 未 post → 进行时工具标签
                 label = `${pt.doing} ${pt.summary}… ⏱ ${Math.floor((Date.now() - gStart) / 1000)}s`;
               } else {
                 label = formatRunningLabel(Date.now() - gStart, nextGerund());
@@ -1217,7 +1245,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       const runPromise = runAgentTask(
         {
           task,
-          // B2: the task must run against the LIVE session state — /tier and
+          // the task must run against the LIVE session state — /tier and
           // /workspace switches take effect immediately, and the session's
           // turns feed "最近 N 轮上下文" on the default path.
           tier: session.tier,
@@ -1237,7 +1265,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           onEvent: (ev: any) => {
             if (controller.signal.aborted) return;
 
-            // P5-5.3: feed the agent tree from rolloutId-carrying events
+            // feed the agent tree from rolloutId-carrying events
             if (ev && (ev.type === 'step' || ev.type === 'critique') && ev.rolloutId) {
               agentTree.upsert({
                 id: String(ev.rolloutId),
@@ -1259,7 +1287,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
                 }
               }
               if (useRich && typeof bridge.setTop === 'function') {
-                const ratio = Math.min(1, (ctxUsedChars / 4) / CTX_WINDOW_TOKENS);
+                const ratio = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
                 try { bridge.setTop({ ctxRatio: ratio }); } catch {}
               }
             } else if (ev && ev.type === 'critique') {
@@ -1282,32 +1310,49 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
       if (raced.kind === 'aborted') {
         try { controller.abort(); } catch {}
-        // 0.7：abort 已贯穿 solveIssue → loop → 模型 fetch / 工具执行。
+        // abort 已贯穿 solveIssue → loop → 模型 fetch / 工具执行。
         // 等待底层 promise 真正 settle（signal 已触发，通常在当前 in-flight
         // 请求中断后立即返回），避免"UI 已返回但网关仍在刷 POST"。
-        try { await runPromise.catch(() => {}); } catch {}
-        // B3: mark this turn as aborted so the queue-drain loop below does NOT
+        // 捕获 settle 结果——aborted 轨迹的 partialText 在这里。
+        let settled: any = null;
+        try { settled = await runPromise; } catch {}
+        // mark this turn as aborted so the queue-drain loop below does NOT
         // auto-execute the remaining queued tasks (the user keeps them to
         // rerun deliberately; previously lastAborted was never set → aborted
         // turns still drained and ran queued tasks automatically).
         lastAborted = true;
-        // P4-4.2 abort semantics: unconsumed steers are dropped (injected ones
+        // abort semantics: unconsumed steers are dropped (injected ones
         // cannot be recalled); queued TASKS are kept for the user to rerun.
         const droppedSteers = queue.consumeSteers();
         updateQueueCount();
         const tail = droppedSteers.length > 0 ? `（${droppedSteers.length} 条未注入插话已丢弃；排队任务保留）` : '';
-        // P0-1.3 + P1-3：中断提示合并为一条（SIGINT 处理器不再另发"已请求中断"），
+        // 中断提示合并为一条（SIGINT 处理器不再另发"已请求中断"），
         // 并带上 aborted 场景的「下一步」建议。
         const abortMsg = `⏹ 任务已被中断 · 现场已保留 · 重新描述任务可继续${tail}`;
         if (!useRich) { renderer.writeLine(renderer.color(abortMsg, 'yellow')); recordOutput(abortMsg); }
         else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: abortMsg, level: 'warn' });
+        // 中断现场落盘：aborted 回合也写 turn（session + rollout
+        // jsonl），携带已流出的部分正文——"现场已保留"从此有数据支撑。
+        const partialText: string | undefined = settled?.partialText;
+        const abortedTurn: any = {
+          id: Date.now().toString(36),
+          timestamp: Date.now(),
+          userInput: task.split('\n\n【用户插话')[0],
+          userInputType: 'task' as const,
+          tier: session.tier,
+          durationMs: Date.now() - startedAt,
+          ...(partialText ? { partialText } : {}),
+          result: { success: false, summary: '已中断', stopReason: 'aborted' },
+        };
+        try { session.addTurn(abortedTurn); } catch {}
+        try { rollout.appendTurn(session.id, abortedTurn); } catch {}
       } else {
         // persist the completed turn into the session + rollout jsonl
-        // P5-5.3: this task's rollouts are done
+        // this task's rollouts are done
         agentTree.markAll('running', 'done');
         const r = raced.result;
         const stopReason = (r as any)?.stopReason;
-        // 0.7 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
+        // 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
         const summary = stopReason === 'completed' ? '已通过验证'
           : stopReason === 'answered' ? '已回复'
           : stopReason === 'aborted' ? '已中断'
@@ -1328,8 +1373,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         (turn.result as any).stopReason = stopReason;
         try { session.addTurn(turn); } catch {}
         try { rollout.appendTurn(session.id, turn as any); } catch {}
-        // 0.7：answered 时把模型正文呈现给用户（/edit 可取回）
-        // P1-1.3：正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
+        // answered 时把模型正文呈现给用户（/edit 可取回）
+        // 正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
         // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。
         if (stopReason === 'answered' && r) {
           const traj = (r as any).bestTrajectory;
@@ -1337,7 +1382,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           if (answerText && useRich && typeof bridge.pushFeed === 'function') {
             bridge.pushFeed({ type: 'markdown', content: answerText });
           } else if (answerText && !useRich && lineUi.streamedAnswerChars < String(answerText).length) {
-            // 评审 P2：流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
+            // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
             const rest = String(answerText).slice(lineUi.streamedAnswerChars);
             if (rest) {
               renderer.writeLine(renderer.color(rest, 'white'));
@@ -1356,19 +1401,19 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       void startedAt;
       if (gerundTimer) { try { clearInterval(gerundTimer); } catch {} }
       gerundTimer = null;
-      // P0-2/P1-1：清活行（gerund/thinking 残留）；正文流式收尾换行
+      // 清活行（gerund/thinking 残留）；正文流式收尾换行
       clearInlineLine();
       if (lineUi.messageStreaming) { try { process.stdout.write('\n'); } catch {} }
       lineUi.messageStreaming = false;
       lineUi.pendingTool = null;
       lineUi.toolStack = [];
-      // P0-1.2：幽灵 ^C 窗口 — 任务刚结束的 1.5s 内缓冲的 Ctrl+C 只忽略一次
+      // 幽灵 ^C 窗口 — 任务刚结束的 1.5s 内缓冲的 Ctrl+C 只忽略一次
       lineUi.taskEndedAt = Date.now();
       lineUi.ghostIgnored = false;
-      // P3-3.3（批次 B）：上下文占用 >75% → 一次性 tip（启发式 chars/4 估算，
+      // 上下文占用 >75% → 一次性 tip（启发式 chars/4 估算，
       // 与 auto-compact 的 ratioNow 同源；受全局 ≤2 节流）
       if (!useRich) {
-        const ratio = (ctxUsedChars / 4) / CTX_WINDOW_TOKENS;
+        const ratio = (ctxUsedChars / 4) / ctxWindowTokens;
         if (ratio > 0.75 && sessionTipGate.canShow('ctx')) {
           sessionTipGate.markShown('ctx');
           try { renderer.writeLine(renderer.color(`Tip: 上下文占用约 ${Math.round(ratio * 100)}% · /compact 可立即压缩`, 'gray')); } catch {}
@@ -1384,7 +1429,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
     }
 
-    // P4-4.2: drain queued tasks once the turn settles (FIFO, one by one).
+    // drain queued tasks once the turn settles (FIFO, one by one).
     // An aborted turn stops the drain — the user keeps the remaining queue.
     while (queue.taskCount > 0 && !lastAborted) {
       const next = queue.drainTasks();
@@ -1476,7 +1521,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
     if (t === 'result' || event === 'result') {
       if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      // 0.7 三态文案：answered→已回复；aborted→已中断；success→已通过验证；否则未通过验证
+      // 三态文案：answered→已回复；aborted→已中断；success→已通过验证；否则未通过验证
       const sr2 = data.stopReason;
       const resultText = sr2 === 'answered' ? '已回复' : sr2 === 'aborted' ? '已中断'
         : data.success ? '完成（已通过验证）' : '任务未通过验证';
@@ -1490,7 +1535,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     if (t === 'done' || event === 'done') {
       if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
       if (data && data.durationMs && typeof b.pushFeed === 'function') {
-        // P1.5b: "Cooked for" style tail note (CC-inspired)
+        // "Cooked for" style tail note (CC-inspired)
         b.pushFeed({ type: 'text', text: `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`, level: 'info' });
       }
       if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
@@ -1511,7 +1556,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   }
 
   // Line-mode renderer for SSE events (used when rich UI is not active).
-  // P1-1（批次 A）：line 模式接住 version 2 流式增量 —
+  // line 模式接住 version 2 流式增量 —
   //   thinking.delta → 默认单行滚动（dim 斜体 ∴ + 最新行截断），verbose 开启时全文多行；
   //   message.delta  → 正文逐 delta 直接写 stdout（无前缀），回合结束补换行。
   function endThinkingBlock(r: ReturnType<typeof createOutputRenderer>) {
@@ -1536,7 +1581,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     void r;
     const text = String(line ?? '').replace(/\t/g, '  ');
     if (!text.trim()) return;
-    clearInlineLine(); // gerund 标签可能还占着当前行（P0-2 纪律）
+    clearInlineLine(); // gerund 标签可能还占着当前行（清行纪律）
     const w = Math.max(20, termWidth() - 4);
     for (const chunk of wrapByWidth(text, w)) {
       try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}  ${chunk}${ANSI_RESET}\n`); } catch {}
@@ -1554,7 +1599,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   function renderSseEvent(event: string, data: any, r: ReturnType<typeof createOutputRenderer>) {
     switch (event) {
       case 'thinking.start':
-        // P1-1.1：新思考段 — 记起点（首个 thinking.delta 也兜底记）；
+        // 新思考段 — 记起点（首个 thinking.delta 也兜底记）；
         // 上一段若还有正文流式未收尾，先补换行
         endMessageStream();
         lineUi.thinkingStart = Date.now();
@@ -1562,12 +1607,12 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         lineUi.thinkingPrinted = false;
         return;
       case 'thinking.delta': {
-        // P1-1.1：接住思考增量（旧 line 模式直接忽略）
+        // 接住思考增量（旧 line 模式直接忽略）
         const text = String(data.text || '');
         if (!text) return;
         if (!lineUi.thinkingStart) lineUi.thinkingStart = Date.now();
         if (lineUi.verbose) {
-          // P1-1.4：全文多行 — 按完整行宽度折行 + 2 空格缩进（增量按行 flush）
+          // 全文多行 — 按完整行宽度折行 + 2 空格缩进（增量按行 flush）
           lineUi.thinkingBuf += text;
           let nl: number;
           while ((nl = lineUi.thinkingBuf.indexOf('\n')) !== -1) {
@@ -1592,11 +1637,11 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       case 'message.start':
-        // thinking 结束（P1-1.1：收到 message.start → 折叠为灰字统计）
+        // thinking 结束（收到 message.start → 折叠为灰字统计）
         endThinkingBlock(r);
         return;
       case 'message.delta': {
-        // P1-1.2：正文流式 — 逐 delta 直接写 stdout（正文本体，无前缀）；
+        // 正文流式 — 逐 delta 直接写 stdout（正文本体，无前缀）；
         // gerund 重绘在 messageStreaming 期间暂停（paint 回调里检查）。
         const text = String(data.text || '');
         if (!text) return;
@@ -1610,7 +1655,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         r.writeLine(r.color(`开始执行: ${data.task || ''}`, 'cyan'));
         break;
       case 'phase':
-        // P3-2（批次 B）：phase 值本地化（渲染层映射，不改事件值）
+        // phase 值本地化（渲染层映射，不改事件值）
         r.writeLine(r.color(`── ${localizePhase(String(data.phase || data))} ──`, 'gray'));
         break;
       case 'step': {
@@ -1618,15 +1663,15 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         endThinkingBlock(r);
         endMessageStream();
         const n = Number(data.stepNumber);
-        if (Number.isFinite(n) && n > 0) lineUi.stepCount = n; // P1-3 步数（Chaser 末尾 lastStep = 总步数）
+        if (Number.isFinite(n) && n > 0) lineUi.stepCount = n; // 步数（Chaser 末尾 lastStep = 总步数）
         const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
         r.writeLine(r.color(msg, 'white'));
-        // P1-2.3：旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；
+        // 旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；
         // step 只剩 thinking 汇总；verificationResult 维持现有渲染（无单独渲染）。
         break;
       }
       case 'tools/pre-execute': {
-        // P1-2.1：工具实时卡片头行 `▸ <工具名青色> <参数摘要>`
+        // 工具实时卡片头行 `▸ <工具名青色> <参数摘要>`
         endMessageStream(); // 模型正文若刚流式完，先补换行再出卡片
         const tool = String(data.tool || 'tool');
         const params = (data.params && typeof data.params === 'object') ? data.params : {};
@@ -1638,7 +1683,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       }
       case 'tools/post-execute': {
-        // P1-2.2：结果行 `  ⎿ <动词句>`（从最近工具栈取回 pre 参数）
+        // 结果行 `  ⎿ <动词句>`（从最近工具栈取回 pre 参数）
         let preParams: any = null;
         for (let i = lineUi.toolStack.length - 1; i >= 0; i--) {
           if (lineUi.toolStack[i].tool === String(data.tool || '')) {
@@ -1653,7 +1698,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       }
       case 'critique':
-        // P3-2（批次 B）：删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
+        // 删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
         r.writeLine(r.color(String(data.critique || data), 'yellow'));
         break;
       case 'tool':
@@ -1693,10 +1738,10 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       case 'result':
         {
-          // P1-1：流式段收尾
+          // 流式段收尾
           endThinkingBlock(r);
           endMessageStream();
-          // P1-3：结束总结块 — `✓ 已通过验证 · N 步 · Xs · ~Yk tokens · 预算 Z%`
+          // 结束总结块 — `✓ 已通过验证 · N 步 · Xs · ~Yk tokens · 预算 Z%`
           // + 第二行灰字「下一步」按 stopReason 分支。[最终预算] 并入总结行。
           const sr = String(data.stopReason || '');
           const elapsedMs = lineUi.taskStartedAt ? Date.now() - lineUi.taskStartedAt : 0;
@@ -1721,7 +1766,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       case 'done':
         if (data.durationMs) {
-          // P1.5b: "Cooked for" style tail note (CC-inspired)
+          // "Cooked for" style tail note (CC-inspired)
           const t = `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`;
           r.writeLine(r.color(t, 'gray'));
           recordOutput(t);
@@ -1798,7 +1843,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // === Line streaming terminal (same in-process events, structured colored lines) ===
   // "通道升级" when rich UI (ink) is not available or TTY caps insufficient.
   renderer.clearScreen();
-  // P2-1（批次 B）：启动横幅 v2 — 粗体名 + dim 元信息（cwd 按显示宽度截断）
+  // 启动横幅 — 粗体名 + dim 元信息（cwd 按显示宽度截断）
   {
     const banner = buildBanner({
       model: session.model,
@@ -1810,11 +1855,26 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     renderer.writeLine(renderer.color(banner[0], 'bold'));
     renderer.writeLine(renderer.color(banner[1], 'gray'));
     renderer.writeLine(renderer.color(banner[2], 'gray'));
+    // 首跑预检——横幅处探测无任何可用 provider 时打一行灰字配置
+    // 指引（不阻塞、不报错；用户配置好后 /model list 会热加载）。
+    try {
+      const { createDefaultModelProvider } = await import('../../cli/repl/ModelProvider.js');
+      const probe = opts.provider ?? createDefaultModelProvider();
+      const names = typeof probe.listModels === 'function' ? probe.listModels() : [];
+      const anyUsable = names.some((n) => { try { return !!probe.createClient(n); } catch { return false; } })
+        || !!(typeof probe.createDefaultClient === 'function' && probe.createDefaultClient());
+      if (!anyUsable) {
+        renderer.writeLine(renderer.color(
+          '未检测到可用模型。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3） ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择',
+          'gray'
+        ));
+      }
+    } catch {}
   }
   if (resumedInfo) {
     renderer.info(`已恢复会话 ${resumedInfo.from}（${resumedInfo.turns} 轮上下文，模式 ${session.approvalMode}）——/status 查看，/undo 撤销最近写盘`);
   } else if (shouldShowStartupTip(session.turns.length, false, Math.random()) && sessionTipGate.canShow('startup')) {
-    // P3-3.1（批次 B）：新会话 50% 概率出一条启动 tip
+    // 新会话 50% 概率出一条启动 tip
     sessionTipGate.markShown('startup');
     renderer.writeLine(renderer.color('Tip: 直接输入任务描述即可开始，如 "修复 README 里的错别字"', 'gray'));
   }
@@ -1823,7 +1883,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     input: process.stdin,
     output: process.stdout,
     prompt: renderer.color('▸ ', 'cyan'),
-    // P2-2（批次 B）：Tab 补全 `/` 命令名（精确前缀优先 + 模糊兜底，常用命令在前）
+    // Tab 补全 `/` 命令名（精确前缀优先 + 模糊兜底，常用命令在前）
     completer: (line: string): [string[], string] => completeLineCommand(line),
   });
 
@@ -1831,7 +1891,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // after consuming the SSE stream in the line-mode fallback.
   lineRl = rl;
 
-  // P2-4（批次 B）：空闲提示符上方的模式徽标行 — 只在启动与模式变化后输出一次。
+  // 空闲提示符上方的模式徽标行 — 只在启动与模式变化后输出一次。
   function printModeBadgeIfPending() {
     if (!modeBadgePending) return;
     modeBadgePending = false;
@@ -1854,7 +1914,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     process.exit(0);
   });
 
-  // P0-3.1：审批 question 挂起/结束时交接 stdin（暂停/恢复主 readline）。
+  // 审批 question 挂起/结束时交接 stdin（暂停/恢复主 readline）。
   // 审批桥（approval.ts）经模块级钩子通知这里；gerund 的暂停在 paint 回调里
   // 直接检查 isApprovalActive()。
   try {
@@ -1864,24 +1924,24 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     });
   } catch {}
 
-  // P0-1：Ctrl+C 全链路 — 统一入口（readline raw 模式的 \x03 走 rl 'SIGINT'；
+  // Ctrl+C 全链路 — 统一入口（readline raw 模式的 \x03 走 rl 'SIGINT'；
   // cooked 模式 / POSIX 信号 / Windows console ctrl 走 process 'SIGINT' 兜底）。
   // 同一次按键两个入口都触发时用 100ms 去重。
   function handleSigint() {
     const now = Date.now();
     if (now - lineUi.lastSigintAt < 100) return;
     lineUi.lastSigintAt = now;
-    // 1) 审批挂起 → 立即拒绝该次审批（P0-1.4 / P0-3.2）
+    // 1) 审批挂起 → 立即拒绝该次审批
     if (isApprovalActive()) {
       cancelActiveApproval('sigint');
       return;
     }
-    // 2) 任务运行中 → 中断（P0-1.1；提示合并：只由 aborted 分支出一条消息）
+    // 2) 任务运行中 → 中断（提示合并：只由 aborted 分支出一条消息）
     if (currentAbort) {
       try { currentAbort.abort(); } catch {}
       return;
     }
-    // 3) 幽灵 ^C：任务刚结束 1.5s 内的缓冲按键只忽略一次，随后放行到二次确认（P0-1.2）
+    // 3) 幽灵 ^C：任务刚结束 1.5s 内的缓冲按键只忽略一次，随后放行到二次确认
     if (lineUi.taskEndedAt && now - lineUi.taskEndedAt < 1500) {
       if (!lineUi.ghostIgnored) {
         lineUi.ghostIgnored = true;
@@ -1890,7 +1950,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       }
       // 窗口内第二次按：已提示过一次，落到二次确认分支
     }
-    // 4) 空闲 → 二次确认模式（P0-1.1）：2s 内再按才退出
+    // 4) 空闲 → 二次确认模式：2s 内再按才退出
     if (lineUi.idleCtrlCAt && now - lineUi.idleCtrlCAt < 2000) {
       renderer.writeLine('\n再见。');
       process.exit(0);
@@ -1904,7 +1964,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   rl.on('SIGINT', () => handleSigint());
   process.on('SIGINT', () => handleSigint());
 
-  // P2-4/P2-2（批次 B）：shift+tab 循环模式环；Esc 取消待定命令建议。
+  // shift+tab 循环模式环；Esc 取消待定命令建议。
   // 审批挂起期间（stdin 所有权在审批桥）与任务运行中（提示符不在屏，
   // 输出会被流式内容污染）一律忽略。
   try {
@@ -1935,7 +1995,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
 
     if (trimmed === '?') {
-      // P2-2（批次 B）：快捷帮助面板 — 常用条目 + dim 尾行指向 /help 全部命令
+      // 快捷帮助面板 — 常用条目 + dim 尾行指向 /help 全部命令
       const reg = await getSharedRegistry();
       const ql = buildQuickHelpLines(reg.list().length);
       ql.forEach((l, i) => {
@@ -1945,7 +2005,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
 
     if (trimmed === '/help' || trimmed === '/h') {
-      // P2-3（批次 B）：与派发器 / classic 完全一致的分组帮助（HelpCommand 渲染）
+      // 与派发器 / classic 完全一致的分组帮助（HelpCommand 渲染）
       const reg = await getSharedRegistry();
       const view = buildHelpView(reg.list());
       for (const l of view.lines) renderer.writeLine(l.style ? renderer.color(l.text, l.style) : l.text);
@@ -1954,9 +2014,9 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
 
     if (trimmed === '/status') {
-      const pct = Math.min(100, Math.floor((ctxUsedChars / 4 / CTX_WINDOW_TOKENS) * 100));
+      const pct = Math.min(100, Math.floor((ctxUsedChars / 4 / ctxWindowTokens) * 100));
       renderer.writeLine('传输: 进程内直连（in-process events，无端口）。远程 UI 可用 /serve 启动 SSE 服务。');
-      renderer.writeLine(`上下文估算: ~${pct}% of ${CTX_WINDOW_TOKENS} tokens（启发式）`);
+      renderer.writeLine(`上下文估算: ~${pct}% of ${ctxWindowTokens} tokens（启发式）`);
       renderer.writeLine(`队列: ${queue.taskCount} 个排队任务；未注入插话: ${queue.steerCount}`);
       try {
         const { isBranch } = await import('../../cli/repl/rolloutStore.js');
@@ -1999,16 +2059,16 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   }
 
   // Main input loop (line mode over SSE transport)
-  let pendingPaste: string | null = null; // P4-4.4 folded paste awaiting Enter
+  let pendingPaste: string | null = null; // folded paste awaiting Enter
   linePromptIdle();
 
   rl.on('line', async (line) => {
-    // 评审 Bug#2（P1）：审批挂起期间主 readline 虽被暂停仍会消费同一 stdin——
+    // 审批挂起期间主 readline 虽被暂停仍会消费同一 stdin——
     // 用户答 'y'/'n'/指导语会同时触发这里的 'line'。直接丢弃，防幽灵任务排队。
     if (isApprovalActive()) return;
     const trimmed = line.trim();
     if (!trimmed) {
-      // P0-1：任务运行中（readline 已恢复消费输入）不打印提示符，避免污染流式输出
+      // 任务运行中（readline 已恢复消费输入）不打印提示符，避免污染流式输出
       if (isRunning()) return;
       if (pendingPaste !== null) {
         // 折叠粘贴的第二次回车 = 提交
@@ -2019,8 +2079,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
       if (pendingSuggestion) {
-        // P2-2：回车确认执行建议命令。
-        // 评审 P2：先过本地命令注册（/exit /clear 等只在 handleLocalCommand），
+        // 回车确认执行建议命令。
+        // 先过本地命令注册（/exit /clear 等只在 handleLocalCommand），
         // 否则建议 /exit 确认后又落 runTaskViaSse 的"未知命令"分支自指循环。
         const sug = pendingSuggestion;
         pendingSuggestion = null;
@@ -2031,7 +2091,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         if (!isRunning()) linePromptIdle();
         return;
       }
-      // P2-1（批次 B）：空输入回车给灰字引导（原来是静默重出提示符）
+      // 空输入回车给灰字引导（原来是静默重出提示符）
       renderer.writeLine(renderer.color('输入任务描述，或 ? 看快捷帮助', 'gray'));
       linePromptIdle();
       return;
@@ -2046,7 +2106,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return;
     }
 
-    // P4-4.4: paste guard (line mode) — large pastes fold and need a second
+    // paste guard (line mode) — large pastes fold and need a second
     // Enter to confirm (Esc-free simplification per instruction).
     const { detectPaste } = await import('./PasteGuard.js');
     const pasteInfo = detectPaste(line);

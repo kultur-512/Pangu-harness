@@ -60,7 +60,7 @@ export interface ChaserConfig {
   /** Session-scoped allow-always list ('a' decisions). */
   sessionAllowlist?: Set<string>;
   /** Interactive approval bridge (rich ConfirmBar / readline / headless).
-   *  返回放宽为 string：line 桥可返回 `n:<指导语>`（P0-3.4）；'y'/'a' 语义不变。 */
+   *  返回放宽为 string：line 桥可返回 `n:<指导语>`；'y'/'a' 语义不变。 */
   approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
   /** Approval confirm timeout (default 60s → treated as 'n'). */
   approvalTimeoutMs?: number;
@@ -68,10 +68,16 @@ export interface ChaserConfig {
   planMode?: boolean;
   /** MCP 工具（命名空间化，按 bash 同等门禁）。 */
   mcpTools?: any[];
-  /** 0.7：外部中止信号，贯穿到 loop / 模型调用 / 工具执行。 */
+  /** 外部中止信号，贯穿到 loop / 模型调用 / 工具执行。 */
   signal?: AbortSignal;
-  /** 0.7：任务意图（execution/search/chat/meta），决定执行路径。 */
+  /** 任务意图（execution/search/chat/meta），决定执行路径。 */
   intent?: TaskIntent;
+  /**
+   * 上下文窗口预算（tokens）。由调用方从 provider
+   * getModelContextLength 解析（unknown 回落 32768），传给 loop 做
+   * history 超 70% 窗口裁中段。
+   */
+  windowTokens?: number;
 }
 
 /**
@@ -135,7 +141,7 @@ export class PanshalachChaser {
 
     const taskStyle = config.taskStyle ?? (config as any).benchmarkType;
 
-    // 0.7：意图分类（config.intent 由调用方显式传入；否则在此按 issueDescription 推断）。
+    // 意图分类（config.intent 由调用方显式传入；否则在此按 issueDescription 推断）。
     // chat/search 走单次/受限路径，不进完整 agent 循环。
     const intent: TaskIntent = config.intent ?? classifyTaskIntent(issueDescription);
 
@@ -168,10 +174,9 @@ export class PanshalachChaser {
       return { success: false, totalRollouts: 0, tierConfig };
     }
 
-    // #3/#5/#6（2026-09-05）：任务前仓库扫描/锚点注入、任务风格提示头、
-    // FailureMemory 轨道均已摘除（archive/2026-09-05-removals/）。
-    // 记忆注入（RefinedMemoryStore）保留——这是主线。
-    // 0.7：按意图分支组装 prompt——chat 用单轮对话指令（不灌工具教学），
+    // 任务前仓库扫描/锚点注入、任务风格提示头、FailureMemory 轨道均已摘除
+    // （archive/2026-09-05-removals/）。记忆注入（RefinedMemoryStore）保留——这是主线。
+    // 按意图分支组装 prompt——chat 用单轮对话指令（不灌工具教学），
     // search 用只读搜索指令；execution 才走完整推理 + 格式教学。
     let basePrompt: string;
     if (intent === 'chat') {
@@ -251,11 +256,11 @@ export class PanshalachChaser {
     let estimatedUsedTokens = 0;
     let triggeredSoftLimit = false;
     let triggeredDegradation = false;
-    const rolloutsExecuted = 1; // 0.7：恒单 rollout
+    const rolloutsExecuted = 1; // 恒单 rollout
     let stepsExecuted = 0;
     const budgetNotes: string[] = [];
 
-    // 0.7：search 意图用受限只读循环（≤3 步，写/bash 被拒）；execution 用完整循环。
+    // search 意图用受限只读循环（≤3 步，写/bash 被拒）；execution 用完整循环。
     const isSearchIntent = intent === 'search';
     const dynamicOptions: VerifyCritiqueLoopOptions = {
       strictStructured: isHighRigor && !isSearchIntent,
@@ -268,6 +273,7 @@ export class PanshalachChaser {
       benchmarkType: taskStyle,
       ironLawInjectionLevel: isSearchIntent ? 'none' : tierConfig.ironLawInjectionLevel,
       signal: config.signal,
+      windowTokens: config.windowTokens,
     };
 
     const rolloutId = 'rollout-0';
@@ -300,8 +306,13 @@ export class PanshalachChaser {
           let startedThinking = false;
           let startedMessage = false;
           let streamToolCalls: unknown[] | null = null;
+          // 流式尾 chunk 的 finish_reason（'length' = max_tokens 截断）
+          let truncated = false;
 
           for await (const chunk of streamable.streamChat(prompt, opts)) {
+            // finish_reason 检查必须先于 toolCalls continue——截断的 tool_calls
+            // （arguments 半截 JSON）正是本防御的目标场景。
+            if ((chunk as any).finishReason === 'length') truncated = true;
             if (chunk && (chunk as any).type === 'toolCalls' && Array.isArray((chunk as any).toolCalls)) {
               streamToolCalls = ((chunk as any).toolCalls as unknown[]).slice();
               continue;
@@ -321,14 +332,18 @@ export class PanshalachChaser {
             ToolCallFormatDetector.probeAndParse(text, { strictStructured: isHighRigor });
           } catch {}
 
+          const truncTag = truncated ? { truncated: true } : {};
           if (streamToolCalls && streamToolCalls.length > 0) {
             return {
               content: text,
               toolCalls: streamToolCalls,
               detectedFormat: 'openai-json',
+              ...truncTag,
             } as ModelClientOutput;
           }
 
+          // 截断时必须以对象返回（裸 string 无法携带 truncated 标记）
+          if (truncated) return { content: text, truncated: true } as ModelClientOutput;
           return text;
         };
       };
@@ -367,7 +382,7 @@ export class PanshalachChaser {
       const tag = `[Rollout: ${rolloutId}]${extraFormat}`;
       const loopResult = await loop.run(basePrompt + tag);
 
-      // 0.7 预算累计：按模型调用估算（网关无 usage 字段时用长度估算，标注估算）。
+      // 预算累计：按模型调用估算（网关无 usage 字段时用长度估算，标注估算）。
       estimatedUsedTokens += Math.ceil((basePrompt.length + tag.length) / 4)
         + loopResult.steps.reduce((acc, s) => acc + Math.ceil((s.reasoning.raw?.length ?? 0) / 4), 0);
       stepsExecuted = loopResult.steps.length;
@@ -407,6 +422,8 @@ export class PanshalachChaser {
 
       traj.success = loopResult.success;
       traj.stopReason = loopResult.stopReason;
+      // aborted 时保留本步已流出正文（宿主落 turn 用）
+      if (loopResult.partialText) traj.partialText = loopResult.partialText;
       traj.estimatedUsedTokens = estimatedUsedTokens;
       best = traj;
     } catch (e: any) {

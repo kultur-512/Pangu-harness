@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.7.3 (主链确定性：真实成功信号入册 + 三入口审批/中断透传 + 窗口预算挂真值 + 中断现场落盘)
+
+方案：`docs/panshalach/USABLE-PLAN-0.7.3.md`（5 份子智能体审查报告收敛——CC / dsh / hermes / oh-my-pi / 红队对抗自审）。红队用可复现探针实测出**两个被 629 例绿灯密封的 P0**：真实工具成功被误判为失败（唯一 PASS 产出方是 smoke mock，真实引擎的 `EXIT_CODE:0`/`WRITE_SUCCESS:` 被判 FAIL，勤奋模型被连败掐死、只说话的模型反而 `answered` 计成功）、completed 真机不可达导致记忆闭环死码；外加文档主验证命令的审批断链（A3）与 classic 假中止（A4）。本轮 13 项三梯队全部落地，回答一个问题：**砍掉什么、修什么，才能让评委/新用户明天拿真实模型跑通一天**。
+
+**真实成功信号入册（T1#1，A1+A2 同修）**
+- `src/tools/engineAdapter.ts` `describeResult` 按 `res.ok` + 工具类别**确定性追加**规范尾标（不做正文字符串扫描）：bash/write_file/edit_file → `VERIFICATION: PASS`（bash 的 `EXIT_CODE:0` 尾行已有）；read_file/glob/grep → `VERIFICATION: NEUTRAL`（只读，无验证效力）；失败分支不追加任何 VERIFICATION 行——失败永远不该长得像成功
+- `src/loop/VerifyCritiqueLoop.ts` `classifySignal`：`VERIFICATION: NEUTRAL`/`PARTIAL` → PARTIAL（清零连败但不计 PASS、不触发 completed/产卡），子句置于 FAIL/ERROR 检查**之前**（只读输出正文可能偶然含 "error" 字样）；裸 `EXIT_CODE:0` 用尾部锚定 `/\nEXIT_CODE:0\s*$/` 判 PASS（排在 FAIL 之后，防正文内嵌字面量误判）；`didRealVerification` 的 `verification:` 松匹配收紧为 `verification: pass`（防 NEUTRAL 尾标误计真实验证）
+- 效果：真实成功 → PASS → **completed 真机可达** → 记忆闭环（0.7.2 finalizeTaskMemory）激活
+
+**三入口审批/中断透传（T1#2，A3+A4）**
+- `RunCommand` / `Repl.executeTask` / `SimulateCommand` 向 solveIssue 透传 `approvalMode / sessionAllowlist / approvalBridge / signal`（照 runAgentTask 已有形态的**最小透传面**，每处 ≤10 行）；`types.ts` `CommandContext` 增可选 `approvalBridge?/signal?`，Repl.buildContext 与 sseInteractive resume 注册点注入现成审批桥
+- 效果：`--approval full` 在 one-shot/headless **真实生效**（此前 flag 只改 session 字段、引擎收不到，写文件必被拒）；classic 路径独立 AbortController 贯穿 solveIssue → loop → 模型 fetch/工具执行，Ctrl+C 不再假中止；SimulateCommand 仅透传 approvalMode（dryRun 在 adapter 构造前返回，桥/信号无消费方，声明不做）
+
+**集成测试去 mock 回环（T1#3）**：新增 `tests/integration/realEngineLoop.test.ts` / `tests/loop/RealSignal.test.ts`——用**真实引擎输出形状**（`EXIT_CODE:0` / `WRITE_SUCCESS:` 文本协议，mock 关闭）驱动 completed 判定与 finalizeTaskMemory 断言，锁定尾标行为
+
+**中断现场落盘（T2#4）**
+- `loop.run` 返回 `partialText`（aborted 时本步已流出的模型正文）；`Trajectory`/`Turn`/`RunResult` 增可选 `partialText`；sseInteractive 与 Repl classic 两路径的 aborted 回合都写 turn（session + rollout jsonl，`Repl.recordAbortedTurn`）——**"现场已保留"文案从此有数据支撑**（0.7 时该文案与现实相反）
+- 中止检查从"complete 返回后立即 break"移到本地解析之后：解析是纯本地操作，先做它才能保全"已流出正文 + 已解析 toolCalls"的现场；已解析 toolCalls 补 `aborted before dispatch` 合成失败结果（call/result 成对进历史）
+
+**answered 空转防呆（T2#5）**：execution 意图且从未做过真实验证时，"有正文却只说话不动手"的**第一次不终局**——注入一次格式提醒重试一步（消费型旗标，不引入新状态机）；第二次仍无动作按 `no-verification` 终局（不计 success）
+
+**窗口预算挂真值（T2#6）**
+- `ModelProvider.getModelContextLength` 未知回落 256000 → **32768 保守值**（把未知窗口当 256K 用会让 8K 模型长任务必爆；保守值只多压缩不误判）；预算侧（`runAgentTask.resolveWindowTokens` / `sseInteractive.resolveCtxWindowTokens`）把 `≤0` 与 `===256000` 哨兵一律视为 unknown → 32768（消化历史配置已写入的哨兵）
+- `PANSHA_CTX_WINDOW||128000` const 常量废弃：上下文窗口每任务边界调 `getModelContextLength` 重取（去 const 化），`/model` 切换清零 ctxUsedChars 并立即重取；`PANSHA_CTX_WINDOW` 保留为显式覆盖
+- loop 增 `windowTokens`：history 组装后超窗口 70%（chars/4 估算）裁中段——保前 2 步 + 后 2 步 + 显式裁剪标记（未提供时保持旧行为）
+- `ModelCommand /model list` 未知上下文**持久化 null**（不再写 256000 假值）、列表显示"未知"（不再冒充 256K）
+
+**finish_reason=length 防御（T2#7）**：`openai-compatible.ts` complete/streamChat 捕获 `finish_reason==='length'` → `truncated` 标记三层透传（非流式返回对象 / 流式尾 chunk `finishReason` / chaser 流式 wrapper 聚合）；loop 对截断响应**禁判 answered**，注入"上一条响应被 max_tokens 截断，请精简后继续"重试一步——残缺 tool_calls / 半句答复不再静默假完成
+
+**首跑报错质量（T2#8）**：`resolveSharedClient` 报错改三选一中文指引（① 项目 `.panshalach.json` ② 用户级 `~/.panshalach/config.json` ③ `/model list`）；REPL 启动横幅预检无可用 provider 时打一行灰字配置指引（不阻塞、可热加载）
+
+**结果截断改超阈值才剪（T2#9）**：`buildHistoryPrompt` 结果上限 200-300 字符 → **4000 阈值**：≤4000 原样保留；超限保留头 2500 + 尾 800 + 显式 `[...已修剪 N 字符...]` 标记与重读提示——read_file 输出不再被静默剪成"文件不完整"
+
+**withRetry 对齐（T2#10）**：重试 3 → **5 次**（远程网关抖动窗口常超 3 次退避）；`isRetryableErr` 补传输类错误（`TypeError` / "fetch failed"）
+
+**写集提取修正则（T3#11）**：新增 `extractShellWriteTargets`——重定向目标支持引号内空格（`> "my file.txt"`）与 Windows 盘符整体捕获（不再截成 `C:` 碎片）、tee/tee -a 按管道段解析、fd 前缀（`2>`）处理；`extractWrittenFilePaths` 导出供测试
+
+**'a' 决策持久化（T3#12）**：审批"总是允许"best-effort 写入项目配置 `.panshalach.json` 的 `approvalAllowlist`（`ConfigManager.appendProjectApprovalAllowlist`，主 gate 与 MCP gate 同语义）；Session 构造器启动时并集加载回 sessionApprovalAllowlist——跨会话不再重复确认
+
+**文档清漂（T3#13）**：DEPLOY-CN §2.4 验证命令按真实引擎行为重验重写（completed 预期 + 省略 `--approval` 的 readonly 拒写为门禁正确行为）、§3.1 `modelContexts` 表述改准（预算挂真值 + null 持久化）；`/agents` "并行 rollout" 文案删除（0.7 起恒单 rollout 串行）；`package.json` 版本 0.7.0 → **0.7.3**
+
+**明确不进本轮（L 级，登记 ROADMAP-NEXT §3.2）**：消息数组协议重构（complete/streamChat 的 messages 入口）、sseInteractive 巨函数拆分、会话树指针化、subagent 委派、hooks 总线、后台 bash——均与"明天跑通一天"无直接因果且为跨文件大手术
+
+**Tests**: `npx tsc --noEmit` EXIT=0；`node --test --import tsx --test-concurrency=4 "tests/**/*.test.ts"` **663 例：662 pass + 1 skip + 0 fail**（2026-09-06，Windows/Node 22）。新增 5 个测试文件：`tests/integration/realEngineLoop.test.ts`、`tests/loop/RealSignal.test.ts`、`tests/loop/Resilience073.test.ts`、`tests/model/openai-compatible.073.test.ts`、`tests/server/Resilience073.test.ts`；`tests/loop/CritiqueContext.test.ts`（T2#9 新契约：>4000 才剪 + 头尾保留断言）与 `tests/repl/ModelProviderEnv.test.ts`（未知回落 32768）随契约更新
+**Risks**: 真机四用例待端点（LM Studio 恢复后按 F6 纪律执行，禁止预填 PASS）；记忆闭环本版仅 runAgentTask 路径（SSE/server/headless）生效，Repl 直调 PanshalachChaser 三口 finalize 待统一执行器收口；MCP 工具结果无验证尾标（尾标只覆盖内置工具，MCP 调用不参与 PASS 判定）；fetch 发出后 abort 网关侧生成可能仍算完（0.7 既有边界）
+
+## 0.7.2 (反思迭代：意图分类前移接线 + 记忆落定主线版 + 集成测试锁死 + 提交物定稿)
+
+反思审查（`docs/panshalach/REFLECTION-0.7.2.md`，8 维度）核心结论：**主线空心化**——0.7/0.7.1 在集成线上完成了终止语义与 UI 工程，但意图分类在富化文本上分类致 chat/search 恒不可达（0.7 宣称的修复运行时未生效）、记忆闭环 4 环只真 1 环（refine/markVerified 生产调用点为零）；625 例全绿里没有一条入口级意图路由或记忆落定的集成断言。本轮消灭前两个（commit ff6dce9）。
+
+**意图前移（4/4 入口接线）**：`runAgentTask` / `Repl` / `RunCommand` / `SimulateCommand` 在 `buildForTask` 之前对**原始输入**分类，intent 同时传富化与 solveIssue——chat 直答 / search 只读 ≤3 步 / task 循环在运行时首次真正可达；`PANSHA_INTENT_GATE` 语义保持
+
+**记忆落定（R1/R2 主线版）**：`finalizeTaskMemory` 单一落定点（runAgentTask result 前）——completed 时 refine→save（R1）+ `injectedCardIds ∩ 轨迹写集` → markVerified（R2），发 `memory.finalized` 事件；失败不影响任务返回。覆盖 sseInteractive/server/headless 路径（Repl 直调 PanshalachChaser 的三口未接，留统一执行器收口）
+
+**集成测试 4 例**（`tests/integration/intentAndMemory.test.ts`，先红后绿实证：接线前 1/4 红、接线后 4/4 绿）：greeting→answered 无格式教学、.ts 整理→search readonly ≤3 步、completed→自动产卡 + markVerified、非 completed 守卫
+
+**提交物定稿**：`SUBMISSION.md`（概述 922 字，创新点与代码事实逐条对齐，评测零数字）+ `DEPLOY-CN.md` 新建（已验证本机路径 + PANSHA_* 全集 13 项 + 昇腾/麒麟标注待实测）
+
+**Tests**: `npx tsc --noEmit` 干净；全量 **629 例（628 pass + 1 skip + 0 fail）**；cleanup/protected-files PASS
+**Risks**: 三队友分支合入（B1-B3 评审）与 R6 评测合入为本轮明确不做的最高优先移交项；Repl 直调三口 finalize 待统一执行器；真机手测待端点
+
+## 0.7.1 (UI 手感两批次：信任级/反馈级 + 引导级/质感级 + backlog C/F/D 组)
+
+对标 CC 2.1.88 源码解剖的 REPL 手感改造（方案：`docs/panshalach/UI-UX-REVAMP-0.7.1.md`），两批次全部落在 line 模式主路径（`sseInteractive.ts`）。
+
+**批次 A——P0 信任级 + P1 反馈级（commit e88048a）**
+- **P0-1 Ctrl+C 全链路**：SIGINT 兜底 / 空闲二次确认退出 / 幽灵窗口消除 / 审批即拒
+- **P0-2 gerund 清行纪律**：renderer Proxy 单点，治"研磨中…⏱[Step 1]"输出拼接污染
+- **P0-3 审批三连伤**：暂停 gerund 重绘 / Ctrl+C 即拒 / 每秒倒计时 / 拒绝附指导语 `n:<语>`
+- **P1-1 真流式**：thinking 单行滚动∴ + 折叠统计、message.delta 逐字、`/verbose` 开关
+- **P1-2 工具实时卡片**：`▸` 头行 + `⎿` 动词句结果行（pre/post 事件接线）
+- **P1-3 结束总结块**：三态·步数·耗时·tokens·按 stopReason 分支的下一步建议
+- 新增 25 例 UI 单测（`tests/repl/sseInteractiveUi.test.ts`）；评审后修复 'a' 决策回归 / 审批 stdin 泄漏 / 超时钩子残留 / denied 事件缺口等 7 项
+
+**批次 B——引导级 + 质感级（commit 72bdf21）**：横幅 v2（模型/档位/模式/cwd 分层）、Tab 补全 + `?` 快捷面板 + 未知命令模糊建议、`/help` 三处统一（26 命令分组）、模式徽标 + shift+tab 切换 + `/mode` 回执、CJK 宽度治理（stringWidth 接入 table/截断/横幅）、文案纯中文化、情境 tip（≤2 条/会话）；顺带修复 `/mode plan` 落错档的既有 bug
+
+**backlog C 组技术债 8 项**：C1 记忆文件 200KiB 上限执行、C2 compact 先写盘后改内存、C3 FeatureTracker 写失败告警、C4 walkFiles symlink 防御、C5 appendEvent auditStatus、C6 Reviewer 探测/执行两态（消假 passed:true）、C7/C8 bash abort 击杀树 + 跨平台 killTree 归一（Windows `taskkill /T /F`，POSIX `kill(-pid)`）
+
+**F 组收尾 / D 组工程**：F2 abort 传播 4 例、F3 单次调用 + chat answered 断言、F4 answered 不产 success 卡 2 例、F7 PromptBuilder intent 参数化（不传 intent 逐字节等价）；D1 cleanup 脚本增强（8 项 0.7 检查）+ D3 `scripts/check-protected-files.mjs` 新建
+
+**评审修复**：未知命令建议自指死循环（/exit 无限建议）、建议确认先过本地命令注册、后台 apply 失败 warn 级、`/rewind line` 提示真实路径（不再静默 no-op/误发任务）、rich 路径 phase 本地化
+
+**文档**：`UI-UX-REVAMP-0.7.1.md` 新增；backlog 文档 8 项（CHANGELOG 复验补强、ROADMAP 销项 + 遗留、ARCHITECTURE §1/§3 重画 + §5 模板、README/USER-GUIDE 对齐 0.6.5+0.7、REFACTOR-ASSESSMENT 申报累计）
+
+**Tests**: `npx tsc --noEmit` 干净；批次 A 后全量 **570 例（569 pass + 1 skip + 0 fail）**、批次 B 后 **625 例（624 pass + 1 skip + 0 fail）**（`--test-concurrency=4`）；cleanup PASS、protected-files PASS
+**Risks**: chat 意图在富化文本上分类致 REPL 路径 chat 不可达（0.7 既有错位，0.7.2 消灭）；真机 TTY 手测待 LM Studio 端点恢复
+
 ## 0.7.0 (终止语义重构：判官摘除 + 意图分类 + AbortSignal 贯穿)
 
 产品主实测复现的系统性问题修复：简单输入（"1"/"你好，回答我你是谁"）被重复执行十几次、单任务跑 905s 不收敛；运行中 Ctrl+C 停不下来（网关侧仍持续 POST）；纯问答显示"任务未通过验证"且看不到模型答复。方案文档：`docs/panshalach/FIX-0.7-TERMINATION.md`。

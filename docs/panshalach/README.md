@@ -3,7 +3,7 @@
 > **命题**：基于 openPangu-1B/7B/7B-VL 构建具备长程上下文管理能力的智能体（华为 · 国产操作系统软件组）。
 > **场景主线**：软件工程长期维护——跨多轮需求演进、跨文件/长文档关联分析、持续任务状态跟踪。
 > **一句话**：把"每轮都从零记"的 Agent，变成"有卡片记忆 + 会话资产 + 事件/状态持续跟踪"的长程智能体，基于 openPangu 推理验证。
-> **当前版本 v0.7.0**（终止语义重构：判官摘除 + 意图分类 + AbortSignal 贯穿）· 外部产品 **烛龙 Zhulong** / 内部代号 **盤沙拉克 Panshalach**。
+> **当前版本 v0.7.3**（0.7.0 终止语义重构 → 0.7.1 UI 手感两批次 → 0.7.2 意图前移 + 记忆落定主线版 → 0.7.3 主链确定性修复；分版详录见根 [CHANGELOG.md](../../CHANGELOG.md)）· 外部产品 **烛龙 Zhulong** / 内部代号 **盤沙拉克 Panshalach**。
 
 ## 0.7.0 架构速览
 
@@ -12,8 +12,9 @@
 - **意图分类**（`src/cli/taskIntent.ts`）：`chat` 单次 complete 直答（不进循环、不灌格式教学与工具 schema）/ `search` 受限只读循环（≤3 步、禁写禁 bash、搜不到询问用户）/ `task`（execution）完整验证循环 / `meta`；`PANSHA_INTENT_GATE=0` 逃生门。
 - **AbortSignal 贯穿**：`runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ engineAdapter/executor`——Ctrl+C 真正中止任务（回合记 `aborted`），UI 不再"提前返回但网关继续刷 POST"。
 - **预算真实累计**：`estimatedUsedTokens` 按每次模型调用累加（修复 `[最终预算 0%]` 恒 0）。
+- **主链确定性（0.7.3）**：真实工具成功信号入册（engineAdapter 按 `res.ok`+工具类别追加 `VERIFICATION: PASS`/`NEUTRAL` 规范尾标 → **completed 真机可达**，记忆闭环激活）；`--approval`/Ctrl+C 在 one-shot/classic/simulate 三入口真实透传（此前引擎收不到）；上下文窗口预算挂 provider 真值（`modelContexts` → 未知回落 **32768** 保守值，`/model list` 未知持久化 null 不再写 256000 假值）；aborted 回合**现场落盘**（turn 带 `partialText` 已流出正文）。
 
-> 0.7 方案与遗留边界全文见 [FIX-0.7-TERMINATION.md](FIX-0.7-TERMINATION.md)；路线见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。
+> 0.7 方案与遗留边界全文见 [FIX-0.7-TERMINATION.md](FIX-0.7-TERMINATION.md)；0.7.3 方案见 [USABLE-PLAN-0.7.3.md](USABLE-PLAN-0.7.3.md)；路线见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。
 
 ## 文档导航
 

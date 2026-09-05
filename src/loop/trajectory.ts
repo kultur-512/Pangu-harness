@@ -27,10 +27,15 @@ export interface Trajectory {
   id: string;
   steps: TrajectoryStep[];
   finalPatch?: string;
-  /** 成败由验证信号判定（loop：存在 PASS/ALL_TESTS_PASSED 步；0.7 起 answered 亦计入成功） */
+  /** 成败由验证信号判定（loop：存在 PASS/ALL_TESTS_PASSED 步；answered 亦计入成功） */
   success?: boolean;
   /** 回合停止原因（单层终止语义） */
   stopReason?: TurnStopReason;
+  /**
+   * aborted 时本步已流出的模型正文（部分结果）。
+   * 宿主（sseInteractive/Repl）据此落带 partialText 的 aborted turn。
+   */
+  partialText?: string;
   /** 单 rollout 全部失败时保留的最后错误（空批保护） */
   lastError?: string;
   /** 是否高纪律/验证密集目标 */

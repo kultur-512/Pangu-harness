@@ -128,7 +128,9 @@ const command: Command = {
       ctx.renderer.info(`正在从 "${targetProvider}" 拉取模型列表...`);
 
       // === Primary path: direct fetch using the config we just discovered from the workspace ===
-      let listed: Array<{ id: string; contextLength?: number }> | null = null;
+      // contextLength 允许 null——未知窗口持久化为 null（不再写 256000
+      // 哨兵），预算侧把 null/≤0/256000 一律视为 unknown → 32768 保守值。
+      let listed: Array<{ id: string; contextLength?: number | null }> | null = null;
 
       if (targetProvider === 'scnet' && scnetCfg?.apiKey) {
         // S1: never echo key material (masked or not) to the terminal.
@@ -162,7 +164,7 @@ const command: Command = {
             }
             if (ids.length > 0) {
               const ctxMap = scnetCfg.modelContexts || {};
-              listed = ids.map((id: string) => ({ id, contextLength: ctxMap[id] ?? 256000 }));
+              listed = ids.map((id: string) => ({ id, contextLength: (typeof ctxMap[id] === 'number' && ctxMap[id] > 0) ? ctxMap[id] : null }));
             }
           } else {
             lastScnetListError = `${res.status} ${res.statusText}`;
@@ -185,7 +187,8 @@ const command: Command = {
           if (typeof (provider as any).listProviderModels === 'function') {
             const ids = await (provider as any).listProviderModels(targetProvider);
             if (ids?.length) {
-              listed = ids.map((id: string) => ({ id, contextLength: 256000 }));
+              // listProviderModels 不带上下文信息 → 未知，持久化 null
+              listed = ids.map((id: string) => ({ id, contextLength: null }));
             }
           }
         } catch {}
@@ -246,7 +249,10 @@ const command: Command = {
       // Success
       ctx.renderer.writeLine(`远程模型列表 (${targetProvider})：`);
       for (const m of listed) {
-        const k = m.contextLength ? `${Math.round(m.contextLength / 1000)}K` : '256K';
+        // 未知上下文如实显示"未知"（不再冒充 256K）
+        const k = (typeof m.contextLength === 'number' && m.contextLength > 0)
+          ? `${Math.round(m.contextLength / 1000)}K`
+          : '未知';
         ctx.renderer.writeLine(`  - ${m.id}  (上下文 ~${k})`);
       }
 
@@ -265,7 +271,12 @@ const command: Command = {
         if (!proj.providers[targetProvider]) proj.providers[targetProvider] = { type: 'openai-compatible', baseUrl: 'https://api.scnet.cn/api/llm/v1' };
         proj.providers[targetProvider].models = listed.map(m => m.id);
         if (!proj.providers[targetProvider].modelContexts) proj.providers[targetProvider].modelContexts = {};
-        for (const m of listed) proj.providers[targetProvider].modelContexts[m.id] = m.contextLength || 256000;
+        // 未知上下文持久化 null（不再写 256000 哨兵）——
+        // null 会被 typeof 检查自然跳过，预算侧回落 32768 保守值。
+        for (const m of listed) {
+          proj.providers[targetProvider].modelContexts[m.id] =
+            (typeof m.contextLength === 'number' && m.contextLength > 0) ? m.contextLength : null;
+        }
         writeFileSync(projPath, JSON.stringify(proj, null, 2), 'utf-8');
         ctx.renderer.info(`已保存到 ${projPath}`);
       } catch (e: any) {
@@ -276,7 +287,9 @@ const command: Command = {
         const active = ctx.provider || ctx.session.provider;
         if (active && typeof (active as any).adoptRemoteModels === 'function') {
           const map: Record<string, number> = {};
-          for (const m of listed) map[m.id] = m.contextLength || 256000;
+          for (const m of listed) {
+            if (typeof m.contextLength === 'number' && m.contextLength > 0) map[m.id] = m.contextLength;
+          }
           (active as any).adoptRemoteModels(targetProvider, listed.map(m => m.id), map);
         }
         ctx.renderer.info('已载入当前会话，可直接使用 /model <模型名>（例如 /model openPangu-7B）。');

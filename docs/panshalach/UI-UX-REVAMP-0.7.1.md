@@ -1,5 +1,7 @@
 # 烛龙 UI/UX 手感改良全量方案（0.7.1）
 
+> **执行状态：已执行**（commits e88048a 批次 A + 72bdf21 批次 B）——改造包 P0/P1/P2/P3 全部落地 line 模式主路径，含评审修复与 `/mode plan` 落错档既有 bug 修复；真机 TTY 手测仍待端点。验收数字见 CHANGELOG「0.7.1」段（批次 A 后 570 例、批次 B 后 625 例）。
+
 > 依据：CC 2.1.88 源码解剖（sourcemap 原始 TS，25 条可移植原则）× 本项目 REPL 病灶清单（12 项 / Top8）。
 > 核心判断：交互资产（Completer/SlashPicker/FuzzyMatcher/stringWidth/HelpCommand 分组版/耗时渲染）已在库中，**接线断在默认 line 模式**。主线是接线 + 堵信任级伤口，不是新造组件。
 > 约束：ink 未安装，line 模式（sseInteractive.ts）是唯一真实主路径；一切改良必须落在 line 模式。
@@ -91,7 +93,7 @@
 - 不动 0.7.0 意图分类/终止语义/AbortSignal 主链（只消费其事件）。
 
 ## 验收门
-1. `npx tsc --noEmit` 干净；`node --test --import tsx --test-concurrency=4` 全绿（现基线 545 例）。
+1. `npx tsc --noEmit` 干净；`node --test --import tsx --test-concurrency=4` 全绿（方案时点基线 545 例；执行后实际值见 CHANGELOG 0.7.1 段）。
 2. 真实 LM Studio 手测：流式问答可见、工具卡片实时、Ctrl+C 三态正确、审批不卡、Tab 补全可用。
 3. review 子智能体过审（对照本方案逐条核销）。
 

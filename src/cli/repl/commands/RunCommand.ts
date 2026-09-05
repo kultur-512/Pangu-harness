@@ -43,7 +43,7 @@ const command: Command = {
     // Build rich prompt (tier contract + memory cards + recent context)
     const tierConfig = TierRegistry.get(ctx.session.tier);
     const pb = new PromptBuilder(ctx.session, tierConfig);
-    // 0.7.2 主线 1：意图分类前移——对原始任务文本分类后再富化（chat 不灌工程块）
+    // 意图分类前移——对原始任务文本分类后再富化（chat 不灌工程块）
     const intent = classifyTaskIntent(finalTask);
     const enriched = await pb.buildForTask(finalTask, intent);
 
@@ -73,7 +73,14 @@ const command: Command = {
         tier: ctx.session.tier as any,
         yes: true,
         memoryPreInjected: true,
-        intent, // 0.7.2：入口前移的意图显式传入
+        intent, // 入口前移的意图显式传入
+        // one-shot / classic registry 路径与 SSE 主路径共享同一审批/中断语义。
+        // approvalBridge 缺席时（headless 无桥）引擎按拒绝处理（安全默认）；
+        // approvalMode 照传（--approval full 时写操作无需审批即可放行）。
+        approvalMode: ctx.session.approvalMode,
+        sessionAllowlist: ctx.session.sessionApprovalAllowlist,
+        approvalBridge: ctx.approvalBridge,
+        signal: ctx.signal,
         onStep: (event: any) => {
           if (event.type === 'step') {
             ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
@@ -93,14 +100,14 @@ const command: Command = {
       });
 
       const duration = Date.now() - start;
-      // 0.7 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
+      // 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
       const stopReason = (result as any)?.bestTrajectory?.stopReason;
       const summary = stopReason === 'completed' ? '已通过验证'
         : stopReason === 'answered' ? '已回复'
         : result.success ? '已通过验证' : '未通过验证';
       ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
 
-      // 0.7：answered 时把模型正文呈现给用户
+      // answered 时把模型正文呈现给用户
       if (stopReason === 'answered') {
         const traj = (result as any)?.bestTrajectory;
         const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';

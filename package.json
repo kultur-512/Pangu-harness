@@ -1,6 +1,6 @@
 {
   "name": "panshalach",
-  "version": "0.7.0",
+  "version": "0.7.3",
   "description": "烛龙（Zhulong）· 内部代号 Panshalach（盤沙拉克）：基于 openPangu 的记忆增强长程上下文智能体——记忆卡 + 会话资产（resume/branch/compact）+ 真实工具执行与验证铁律，面向软件工程长期维护等长周期任务场景。",
   "type": "module",
   "main": "dist/PanshalachChaser.js",

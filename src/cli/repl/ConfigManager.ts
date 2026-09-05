@@ -110,3 +110,35 @@ export class ConfigManager {
     return { ...this.config };
   }
 }
+
+/**
+ * 审批 'a'（总是允许）决策持久化——把工具追加进项目配置
+ * `.panshalach.json` 的 `approvalAllowlist: [tool...]`。会话启动时经
+ * Session 构造器加载回 sessionApprovalAllowlist（ConfigManager.mergeProjectConfig
+ * 已能读回同一文件）。best-effort：任何读/写失败静默返回 false，绝不阻塞审批流。
+ */
+export function appendProjectApprovalAllowlist(workspaceRoot: string, tool: string): boolean {
+  try {
+    const t = String(tool || '').trim().toLowerCase();
+    if (!t || !workspaceRoot) return false;
+    const p = join(workspaceRoot, '.panshalach.json');
+    let proj: any = {};
+    if (existsSync(p)) {
+      let text = readFileSync(p, 'utf-8');
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      text = text.trim();
+      if (text) proj = JSON.parse(text);
+      if (!proj || typeof proj !== 'object' || Array.isArray(proj)) proj = {};
+    }
+    const list: string[] = Array.isArray(proj.approvalAllowlist)
+      ? proj.approvalAllowlist.filter((x: unknown) => typeof x === 'string')
+      : [];
+    if (list.includes(t)) return true;
+    list.push(t);
+    proj.approvalAllowlist = list;
+    writeFileSync(p, JSON.stringify(proj, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
