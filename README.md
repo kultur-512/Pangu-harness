@@ -56,7 +56,7 @@ workspace / feature / tree / clear / help / exit
 ## 测试与验证
 
 ```bash
-npm test            # node --test + tsx，529 例
+npm test            # node --test + tsx
 npx tsc --noEmit    # 类型检查
 ```
 

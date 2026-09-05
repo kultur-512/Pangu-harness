@@ -30,9 +30,6 @@ export interface RefineInput {
  * 注：CJK 无 \b 词界（'很不错' 内 '不错' 前后均汉字），故中文直接匹配，
  * OK 用 ASCII 边界（申报：指令原 regex 的 \b 对 CJK 无效）。 */
 export const POSITIVE_FEEDBACK_RE = /(完美|可以|很好|不错|好的|没问题)|(?<![A-Za-z0-9])OK(?![A-Za-z0-9])/i;
-/** score 兜底阈值（写盘成功 ≠ 任务成功） */
-export const POSITIVE_SCORE_THRESHOLD = 85;
-
 export interface LoadFilter {
   /** 按任务风格过滤 */
   taskStyle?: string;
@@ -129,10 +126,10 @@ export class RefinedMemoryStore {
     // Positive Memory — 一次通过 + 正向信号 → success 卡
     if (input.attemptCount === 1) {
       const fb = (input.userFeedback || '').trim();
-      const score = input.trajectory?.score ?? 0;
-      const positive = POSITIVE_FEEDBACK_RE.test(fb) || score >= POSITIVE_SCORE_THRESHOLD;
+      // score 已移除（2026-09-05）：正向信号 = 用户正向反馈 OR 轨迹验证通过
+      const positive = POSITIVE_FEEDBACK_RE.test(fb) || input.trajectory?.success === true;
       if (positive) {
-        const card = this.createPositiveCard(input.taskStyle, input.applicableTiers, now, fb || `score=${score}`, writtenFiles);
+        const card = this.createPositiveCard(input.taskStyle, input.applicableTiers, now, fb || '一次通过且真实验证通过', writtenFiles);
         newCards.push(card);
       }
     }

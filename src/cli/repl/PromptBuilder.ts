@@ -554,12 +554,9 @@ export class PromptBuilder {
     const t = this.tierConfig;
     const iron = this.describeIron(t.ironLawInjectionLevel);
     const mem = this.describeMemory(t.memoryLoadLevel);
-    const crit = this.describeCritique(t.critiqueFrequency);
-
     const parts: string[] = [];
     parts.push(`纪律规则强度: ${iron}`);
     parts.push(`记忆加载: ${mem}`);
-    parts.push(`Critique: ${crit}`);
     parts.push(`探索深度: ${t.explorationDepth}，并行度: ${t.parallelRollouts}，锚点上限: ${t.anchorMax}`);
     if (t.userConfirmationRequired) {
       parts.push('高风险档位：涉及写操作或高预算时需用户确认。');
@@ -597,15 +594,6 @@ export class PromptBuilder {
     }
   }
 
-  private describeCritique(spec: TierConfig['critiqueFrequency']): string {
-    const bits: string[] = [];
-    if (spec.periodicEvery > 0) bits.push(`每 ${spec.periodicEvery} 步周期复盘`);
-    if (spec.onProblem) bits.push('问题步必复盘');
-    if (spec.longNoVerifyThreshold > 0) bits.push(`连续 ${spec.longNoVerifyThreshold} 步未真实验证则强制复盘`);
-    if (spec.skipFirstN > 0) bits.push(`前 ${spec.skipFirstN} 步跳过`);
-    return bits.length ? bits.join('；') : '默认复盘策略';
-  }
-
   /**
    * Return a compact summary of the last N turns.
    * Truncates long user inputs and keeps only key signals.
@@ -617,7 +605,7 @@ export class PromptBuilder {
       .map((t, i) => {
         const input = t.userInput.length > 80 ? t.userInput.slice(0, 77) + '...' : t.userInput;
         const ok = t.result?.success ? '✓' : (t.result ? '✗' : '?');
-        const score = t.result ? (t.result.summary || '?') : ''; // 修复：summary 本身已是 "score=NN"，勿再加前缀
+        const score = t.result ? (t.result.summary || '?') : ''; // summary 现为验证结果短文本（如"已通过验证"）
         return `Turn ${i + 1} [${t.tier}] ${ok} ${input} ${score}`.trim();
       })
       .join('\n');

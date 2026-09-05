@@ -32,7 +32,6 @@ export interface RunRequest {
 
 export interface RunResult {
   success: boolean;
-  score?: number;
   durationMs?: number;
   error?: string;
   budgetReport?: any;
@@ -117,7 +116,6 @@ export async function runAgentTask(
 
   ctx.onEvent({ type: 'phase', phase: 'explore' });
 
-  let lastScore = 0;
   let success = false;
 
   try {
@@ -143,14 +141,12 @@ export async function runAgentTask(
       },
     });
 
-    lastScore = result.score ?? 0;
     success = !!result.success;
 
-    ctx.onEvent({ type: 'result', success, score: lastScore, budgetReport: result.budgetReport });
+    ctx.onEvent({ type: 'result', success, budgetReport: result.budgetReport });
 
     return {
       success,
-      score: lastScore,
       durationMs: Date.now() - start,
       budgetReport: result.budgetReport,
     };

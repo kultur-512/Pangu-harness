@@ -143,14 +143,11 @@ Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsS
       ? `\n\n【需要注意的之前问题】:\n${previousCritiques.slice(-3).map((c, i) => `${i + 1}. ${c}`).join('\n')}`
       : '';
 
-    // 获取任务风格专属提示头（会包含强调 + 重点工具 + 必要时的纪律规则提醒）
-    const profile = BenchmarkProfiles.get(taskStyle ?? benchmarkType);
-    const benchHeader = BenchmarkProfiles.getPromptHeader(profile, isStrong && profile.defaultStrictIronLaws);
+    // 任务风格提示头已随性能叙事体系摘除（archive/2026-09-05-removals/）——prompt 只保留身份与纪律
 
     if (practical) {
       // 实用模式：更短、更温和、日常编码友好
-      return `${benchHeader}
-你是一个可靠的工程编码助手。请用简洁的结构思考并行动：
+      return `你是一个可靠的工程编码助手。请用简洁的结构思考并行动：
 
 <thinking>
 简要分析问题（80-150字）：理解、关键点、做法、主要风险。
@@ -176,7 +173,7 @@ ${failureMemory}
     }
 
     // 非实用模式（高纪律模式 / 高纪律路径）：保留更多结构与纪律提示
-    return `${benchHeader}
+    return `
 你是一个可靠的工程编码助手。请使用以下结构进行思考和行动（可根据任务复杂度适当精简）：
 
 <thinking>

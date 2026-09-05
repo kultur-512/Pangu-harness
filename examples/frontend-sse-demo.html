@@ -155,7 +155,7 @@
       <div class="panel">
         <div><strong>当前状态</strong></div>
         <div id="phase" class="muted">—</div>
-        <div id="score" class="muted" style="margin-top:4px;">得分: —</div>
+        <div id="score" class="muted" style="margin-top:4px;">状态: —</div>
         <div id="duration" class="muted" style="margin-top:2px;">耗时: —</div>
       </div>
 
@@ -383,9 +383,9 @@ function handleEvent(event, data) {
       break;
 
     case 'result':
-      scoreEl.textContent = `得分: ${data.score ?? '—'}`;
+      scoreEl.textContent = data.success ? '状态: 已通过验证' : '状态: 未通过验证';
       if (data.durationMs) durationEl.textContent = `耗时: ${data.durationMs}ms`;
-      addLine(`完成 (得分 ${data.score ?? '—'})`, data.success ? '' : 'error');
+      addLine(data.success ? '完成（已通过验证）' : '任务未通过验证', data.success ? '' : 'error');
       break;
 
     case 'done':

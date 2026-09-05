@@ -480,7 +480,7 @@ export class Repl {
         return;
       }
 
-      this.renderer.success(`完成 (${duration}ms) 得分: ${result.score}`);
+      this.renderer.success(`完成 (${duration}ms) ${result.success ? "· 已通过验证" : "· 未通过验证"}`);
 
       this.session.addTurn({
         id: Date.now().toString(36),
@@ -491,7 +491,7 @@ export class Repl {
         durationMs: duration,
         result: {
           success: result.success,
-          summary: `score=${result.score}`,
+          summary: result.success ? "已通过验证" : "未通过验证",
           budgetReport: result.budgetReport,
         },
       });

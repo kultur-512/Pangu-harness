@@ -14,10 +14,9 @@ import { StructuredReasoner, StructuredReasoningOutput } from '../reasoning/Stru
 import { StrictStructuredToolAdapter } from '../adapter/StrictStructuredToolAdapter.js';
 import { UniversalToolCallAdapter, ToolCallFormat } from '../adapter/UniversalToolCallAdapter.js';
 import { ToolCall, inferToolCategory } from '../types/toolCall.js';
-import { FailureMemory } from '../memory/FailureMemory.js';
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
 import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawInjectionLevel, Tier } from '../tiers/TierConfig.js';
-import { Reviewer, type StaticAnalysisResult } from '../review/Reviewer.js';
+import type { StaticAnalysisResult } from '../review/Reviewer.js';
 
 /**
  * Critique 构造上下文
@@ -49,7 +48,6 @@ export interface VerifyCritiqueLoopOptions {
   useUniversalAdapter?: boolean;
   maxSteps?: number;
   maxConsecutiveFailures?: number;
-  failureMemory?: FailureMemory;
   verifyFirstBias?: boolean;
   /** 
    * When true, the loop will use lighter prompts suitable for daily coding.
@@ -62,7 +60,7 @@ export interface VerifyCritiqueLoopOptions {
   benchmarkType?: BenchmarkType | string;
   /** 是否高纪律模式，等同于 !practicalMode 的高纪律路径。 */
   isStrongMode?: boolean;
-  /** critique 频率配置 */
+  /** 【休眠】critique 机制已摘除（archive/2026-09-05-removals/），字段仅为兼容保留、运行期忽略 */
   critiqueFrequency?: CritiqueFrequencySpec;
   /** 纪律规则注入强度 */
   ironLawInjectionLevel?: IronLawInjectionLevel;
@@ -93,13 +91,11 @@ export interface VerifyCritiqueLoopOptions {
 
 export class VerifyCritiqueLoop {
   private steps: LoopStep[] = [];
-  private extremeAdapter = new StrictStructuredToolAdapter();
   private universalAdapter = new UniversalToolCallAdapter();
   private consecutiveFailures = 0;
 
   private useUniversal: boolean;
   private strictStructured: boolean; // 为 true 时优先严格 <> 解析器 + 高纪律行为（与 !practicalMode 联合）
-  private failureMemory?: FailureMemory;
   private verifyFirstBias: boolean;
   private practicalMode: boolean;
   private benchmarkType?: BenchmarkType | string; // taskStyle 的别名（内部同步维护）
@@ -126,11 +122,12 @@ export class VerifyCritiqueLoop {
     private verificationEngine: any,
     options: VerifyCritiqueLoopOptions = {}
   ) {
-    this.useUniversal = options.useUniversalAdapter ?? false;
+    // #7（2026-09-05）：解析统一走三路自适应（JSON/文本/XML 容错探测）——
+    // useUniversalAdapter 选项仅为兼容保留，恒真；<> 严格独占解析路径已归档。
+    this.useUniversal = true;
     this.strictStructured = options.strictStructured ?? true;
     this.maxSteps = options.maxSteps ?? 25;
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
-    this.failureMemory = options.failureMemory;
     this.verifyFirstBias = options.verifyFirstBias ?? this.strictStructured;
     // 高纪律模式判定（behavioral）：优先 isStrongMode，其次 !practicalMode，再次 strictStructured
     const explicitStrong = options.isStrongMode;
@@ -183,22 +180,13 @@ export class VerifyCritiqueLoop {
     // Computed from:
     // - explicit isStrongMode (preferred public flag), or
     // - strictStructured (strict parser intent) + !practicalMode.
-    const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode) && !this.useUniversal;
-
-    // 任务风格相关元信息（用于 prompt 注入和纪律规则策略）
-    const benchHeader = BenchmarkProfiles.getPromptHeader(this.profile, highRigor && this.profile.defaultStrictIronLaws);
-    const verificationHint = BenchmarkProfiles.getVerificationHint(this.profile);
+    const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode);
 
     while (!done && stepNum < this.maxSteps) {
       stepNum++;
 
       const history = this.buildHistoryPrompt();
       let prompt = `${initialPrompt}\n\n[历史执行记录]\n${history}`;
-
-      // 轻量注入任务风格头（如果还没在 initialPrompt 里）
-      if (!prompt.includes('当前任务风格') && !prompt.includes('任务风格') && !prompt.includes('当前 Benchmark') && !prompt.includes('Terminal-Bench') && !prompt.includes('AutomationBench')) {
-        prompt = benchHeader + '\n' + prompt;
-      }
 
       // 构建 prompt 时根据 practicalMode + 任务风格调整纪律规则/格式注入强度
       // 高纪律模式设计目标：工程强 + 分数强
@@ -267,19 +255,6 @@ export class VerifyCritiqueLoop {
         if (this.stepsSinceLastRealVerification >= 3) {
           prompt += `\n\n【小提醒】已经连续几步没有明显验证，建议适当确认修改效果。`;
         }
-        // 轻量任务风格验证提示
-        if (stepNum % 3 === 0) {
-          prompt += `\n\n${verificationHint}`;
-        }
-      }
-
-      // FailureMemory 注入加 tier 门控
-      // 高纪律模式（!practicalMode）才允许注入旧 FailureMemory；
-      // 实用模式完全不注入（避免双记忆污染和 token 爆炸）。
-      // 最终目标：完全收敛到 RefinedMemoryStore（旧路径下线）。
-      if (!this.practicalMode && this.failureMemory && (this.isStrongMode ?? this.strictStructured)) {
-        const mem = this.failureMemory.toPromptInjection();
-        if (mem) prompt += '\n' + mem;
       }
 
       const rawOrObj = await this.modelClient.complete(prompt);
@@ -305,17 +280,14 @@ export class VerifyCritiqueLoop {
       let toolCalls: ToolCall[] = preParsedToolCalls ?? [];
 
       if (toolCalls.length === 0) {
-        if (this.useUniversal && !this.strictStructured) {
-          const res = this.universalAdapter.parse(rawContent, {
-            strictStructured: this.strictStructured,
-            tolerant: !this.strictStructured,
-          });
-          toolCalls = res.toolCalls;
-          detectedFormat = res.detectedFormat ?? detectedFormat;
-        } else {
-          const res = this.extremeAdapter.parse(rawContent, { strict: this.strictStructured });
-          toolCalls = res.toolCalls;
-        }
+        // #7：三路自适应解析（OpenAI JSON / 文本 / <> XML），恒容错；
+        // strictStructured 仅影响 XML 探测深度，不再独占解析路径。
+        const res = this.universalAdapter.parse(rawContent, {
+          strictStructured: this.strictStructured,
+          tolerant: true,
+        });
+        toolCalls = res.toolCalls;
+        detectedFormat = res.detectedFormat ?? detectedFormat;
       }
 
       // 确保每个工具调用都有 category（用于多任务风格纪律规则跟踪）
@@ -347,9 +319,6 @@ export class VerifyCritiqueLoop {
               if (fp) this.filesWrittenThisTrajectory.add(fp);
               if (fp && !this.filesReadThisTrajectory.has(fp)) {
                 this.readBeforeWriteViolations++;
-                if (this.failureMemory) {
-                  this.failureMemory.record('READ_BEFORE_WRITE_VIOLATION', `Wrote ${fp} without prior Read`);
-                }
               }
             }
           }
@@ -415,76 +384,10 @@ export class VerifyCritiqueLoop {
         this.stepsSinceLastRealVerification++;
       }
 
-      // 决定是否进行 critique（控制 token 消耗）
-      // - 高纪律模式（!practicalMode）：从第2步起高频 critique，以保持高纪律自我检查
-      // - 实用/日常模式：降低频率，避免无谓 token 消耗；只在必要时触发
-      let critique: string | undefined;
-      const shouldCritique = this.decideShouldCritique(stepNum, signal, highRigor);
-
-      if (shouldCritique) {
-        const lastData = this.steps.length > 0
-          ? JSON.stringify(this.steps[this.steps.length - 1])
-          : '（第一步）';
-
-        // 构造结构化上下文
-        // 顺序：
-        //   <static_analysis_context> （来自 Reviewer 的块）
-        //   <user_request>
-        //   <current_diff>
-        // 之后附加 lastData（历史步骤 JSON）供复盘连续性。
-        const contextParts: string[] = [];
-
-        // 1) 静态分析上下文（必须在 user_request 之前）
-        let saContent = '';
-        if (this.staticAnalysisBlocks && this.staticAnalysisBlocks.length > 0) {
-          saContent = this.staticAnalysisBlocks.join('\n');
-        } else if (this.staticAnalysis && this.staticAnalysis.length > 0) {
-          try {
-            saContent = Reviewer.formatStaticAnalysisBlock(this.staticAnalysis) || '';
-          } catch {}
-        }
-        if (saContent && saContent.trim().length > 0) {
-          if (saContent.length > 4000) {
-            saContent = saContent.slice(0, 4000) + '\n...[truncated]';
-          }
-          // 每块已包含 <static_analysis_result> 标签，这里整体包裹
-          contextParts.push(`<static_analysis_context>\n${saContent}\n</static_analysis_context>`);
-        }
-
-        // 2) user_request（显式标注，按 v2 要求）
-        let ur = this.userRequest;
-        if (!ur && this.initialPromptForContext) {
-          // 尽力从初始 prompt 提取 Issue / 任务描述
-          const m = this.initialPromptForContext.match(/(?:^|\n)\s*(?:Issue:|当前任务|Task:|问题描述)\s*[:：]?\s*([\s\S]{0,1200})/i);
-          ur = m ? m[1].trim() : this.initialPromptForContext.slice(0, 800).trim();
-        }
-        if (ur && ur.trim().length > 0) {
-          let urTrim = ur;
-          if (urTrim.length > 2000) urTrim = urTrim.slice(0, 2000) + '...';
-          contextParts.push(`<user_request>\n${urTrim}\n</user_request>`);
-        }
-
-        // 3) current_diff（显式标注，在 user_request 之后）
-        if (this.currentDiff && this.currentDiff.trim().length > 0) {
-          let cd = this.currentDiff.trim();
-          if (cd.length > 2000) cd = cd.slice(0, 2000) + '...';
-          contextParts.push(`<current_diff>\n${cd}\n</current_diff>`);
-        }
-
-        // 4) 附加最近一步的原始数据（保持原有复盘连续性）
-        contextParts.push(lastData);
-
-        const critiqueInput = contextParts.join('\n\n');
-
-        const critiquePrompt = StructuredReasoner.buildCritiquePrompt(
-          critiqueInput,
-          verificationResult,
-          toolCalls,
-          { practicalMode: this.practicalMode }
-        );
-        const critiqueRaw = await this.modelClient.complete(critiquePrompt);
-        critique = typeof critiqueRaw === 'string' ? critiqueRaw : (critiqueRaw?.content ?? '');
-      }
+      // #2（2026-09-05）：critique 自我批判已摘除（archive/2026-09-05-removals/）——
+      // 每次触发是一次额外完整模型调用，且打分器归档后其打分激励不复存在。
+      // LoopStep.critique 恒 undefined；buildCritiquePrompt/上下文装配保留为休眠代码。
+      const critique: string | undefined = undefined;
 
       const step: LoopStep = {
         stepNumber: stepNum,
@@ -500,33 +403,9 @@ export class VerifyCritiqueLoop {
 
       this.steps.push(step);
 
-      // 自动喂给 FailureMemory
-      if (this.failureMemory) {
-        this.failureMemory.autoExtractFromTrajectory([step]);
-      }
-
       // 失败保护（高纪律模式更宽松，允许更多探索）
       if (signal === 'FAIL' || signal === 'ERROR') {
         this.consecutiveFailures++;
-        // 多任务风格失败记忆增强
-        if (this.failureMemory) {
-          const lowerRes = verificationResult.toLowerCase();
-          if (lowerRes.includes('fail') || lowerRes.includes('error') || lowerRes.includes('non-zero')) {
-            this.failureMemory.record('COMMAND_FAILED', `Command failed or error: ${verificationResult.slice(0, 120)}`);
-          }
-          if (this.terminalNoCheckViolations > 0 && (stepNum % 2 === 0)) {
-            this.failureMemory.record('TERMINAL_NO_CHECK_AFTER_COMMAND', '关键终端命令后未及时检查输出/状态');
-          }
-          if (lowerRes.includes('fail') || lowerRes.includes('error') || lowerRes.includes('mismatch')) {
-            this.failureMemory.record('WORKFLOW_STEP_ERROR', `Step issue: ${verificationResult.slice(0, 120)}`);
-          }
-          if (this.automationStepsWithoutEffectCheck > 1) {
-            this.failureMemory.record('AUTOMATION_NO_EFFECT_VERIFICATION', '执行自动化动作后未验证业务效果');
-          }
-          if (lowerRes.includes('mismatch') || lowerRes.includes('state') && lowerRes.includes('expect')) {
-            this.failureMemory.record('STATE_MISMATCH', `状态不匹配: ${verificationResult.slice(0, 120)}`);
-          }
-        }
       } else {
         this.consecutiveFailures = 0;
       }
@@ -537,16 +416,12 @@ export class VerifyCritiqueLoop {
         done = true;
       }
 
-      // critique 文本单独不能终止任务
-      // 仅当 critique 声称"已解决"且本步有真实验证信号时才允许终止
+      // critique 文本单独不能终止任务（#2：critique 已摘除，本判定为休眠保留——
+      // LoopStep.critique 恒 undefined，条件永假）
       if (critique && /任务已解决|已修复|问题已解决|完全正确|验证通过/i.test(critique)) {
         // 必须本步有真实验证（PASS 信号或 ALL_TESTS_PASSED）才允许终止
         if (signal === 'PASS' || verificationResult.includes('ALL_TESTS_PASSED') || didRealVerificationThisStep) {
           done = true;
-        }
-        // 否则：critique 声称已解决但无验证信号 → 记录失败记忆，不终止
-        else if (this.failureMemory) {
-          this.failureMemory.record('NO_VERIFICATION_BEFORE_CLAIM', 'critique 声称已解决但无真实验证信号');
         }
       }
 
@@ -556,10 +431,8 @@ export class VerifyCritiqueLoop {
       }
     }
 
-    // 结束时把整条轨迹喂给记忆
-    if (this.failureMemory) {
-      this.failureMemory.autoExtractFromTrajectory(this.steps);
-    }
+    // 结束时把整条轨迹喂给记忆（#6：FailureMemory 轨道已摘除，收敛到
+    // RefinedMemoryStore.refine 的任务落定提炼——见 MEMORY-DESIGN §7.1）
 
     const success = this.steps.some(
       s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
@@ -572,45 +445,6 @@ export class VerifyCritiqueLoop {
     if (result.includes('PARTIAL')) return 'PARTIAL';
     if (result.includes('FAIL') || result.includes('ERROR')) return 'FAIL';
     return 'FAIL';
-  }
-
-  /**
-   * 决定本步是否需要生成 critique（控制 token 消耗 + 自我批评强度）
-   * 六档体系：优先使用 critiqueFrequency 配置，回退到 highRigor 默认策略。
-   * 
-   * 配置驱动策略：
-   * - onProblem: 任何问题（FAIL/ERROR/PARTIAL）必须复盘
-   * - periodicEvery: 每 N 步周期性复盘（0 = 不周期性）
-   * - longNoVerifyThreshold: 连续 N 步未真实验证后强制复盘（0 = 不强制）
-   * - skipFirstN: 前N步跳过复盘（减少早期噪音）
-   */
-  private decideShouldCritique(stepNum: number, signal: VerificationSignal, highRigor: boolean): boolean {
-    const isProblem = signal === 'FAIL' || signal === 'ERROR' || signal === 'PARTIAL';
-
-    // 六档体系：优先使用配置
-    if (this.critiqueFrequency) {
-      const cf = this.critiqueFrequency;
-      if (cf.skipFirstN > 0 && stepNum <= cf.skipFirstN) return false;
-      if (cf.onProblem && isProblem) return true;
-      if (cf.periodicEvery > 0 && stepNum % cf.periodicEvery === 0) return true;
-      if (cf.longNoVerifyThreshold > 0 && this.stepsSinceLastRealVerification >= cf.longNoVerifyThreshold) return true;
-      return false;
-    }
-
-    // 回退：highRigor 默认策略
-    if (highRigor && !this.practicalMode) {
-      if (isProblem) return true;
-      if (stepNum < 3) return false;           // 前两步跳过，减少早期噪音
-      const periodic = (stepNum % 3 === 0);    // 每 3 步一次
-      const longNoVerify = this.stepsSinceLastRealVerification >= 3;
-      return periodic || longNoVerify;
-    }
-
-    // 实用模式：更宽松
-    if (stepNum < 3) return false;
-    const periodic = (stepNum % 3 === 0);
-    const longNoVerify = this.stepsSinceLastRealVerification >= 4;
-    return isProblem || periodic || longNoVerify;
   }
 
   private buildHistoryPrompt(): string {

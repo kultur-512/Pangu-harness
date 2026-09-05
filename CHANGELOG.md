@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.3 (score 字段整体移除：成败唯一由验证信号判定)
+
+承接 0.6.1/0.6.2 的打分器归档，`score` 概念彻底退出：
+- `Trajectory.score` → `Trajectory.success?`（验证信号标注）；orchestrator 排序/早停/预算裁剪改按 success；`setScore`→`setSuccess`
+- `solveIssue` 返回值移除 `score`（REFACTOR-ASSESSMENT §4 禁区二次申报）；`RunResult`/result 事件/SSE `done` 事件/CLI 与 SSE 显示全部去 score
+- `Turn.result.summary` 从 `score=NN` 改为验证结果短文本（"已通过验证"/"未通过验证"）
+- 记忆正向信号：`refine()` 由 `score≥85` 改为 **trajectory.success（验证通过）或正向反馈**；`POSITIVE_SCORE_THRESHOLD` 删除
+- compact 补漏：信号源从"summary 正则抽 score≥85"改为 **result.success**；success 卡 evidence 改为该轮任务摘要（修复零信息量卡 + 高分 hash 撞卡问题）
+- 前端 demo 得分显示改验证状态；测试随语义更新（525 例全绿）
+
+## 0.6.2 (性能叙事装置摘除：单 rollout、去 critique/静态分析/锚点/风格头/FailureMemory 轨道)
+
+产品主裁决（2026-09-05，探测报告 7 项）落地，全部归档至 `archive/2026-09-05-removals/`：
+- **#1 全单次**：`maxRollouts` 六档收敛为 1（max 3→1、ex 4→1、pangu 5→1），`parallelRollouts` 显示口径同步 1；chaser 移除显式并行
+- **#2 critique 摘除**：VerifyCritiqueLoop 不再发起自我批判模型调用（打分器归档后其打分激励已消失）；`LoopStep.critique` 恒 undefined；`decideShouldCritique` 移除；`buildCritiquePrompt`/上下文装配保留为休眠代码；critique 事件不再发射；TierConfig 删除 `critiqueFrequency`
+- **#3 任务前仓库扫描+锚点注入摘除**：RepoExplorer.explore / AnchorMemory / ContextManager 从 chaser 移除并归档（`RepoExplorer.archived.ts`/`ContextManager.archived.ts`）——"仓库我知道什么"由记忆注入承担
+- **#4 静态分析预跑摘除**：chaser 不再起跑即执行 tsc/eslint（`/review` 命令与 Reviewer 本体保留）
+- **#5 任务风格头摘除**：`getPromptHeader`/`getVerificationHint` 删除，`scoringHints` 死配置删除（BenchmarkProfiles 保留 get/verifyFirstBias 供档位判断）；StructuredReasoner/PromptBuilder 档位契约去 Critique 行
+- **#6 FailureMemory 轨道摘除**：chaser/loop/engineAdapter 全链不再注入/记录；FailureMemory.ts 保留（UserConfirmation/MemoryCommand 兼容）；失败信号唯一归口 = RefinedMemoryStore.refine 任务落定提炼
+- **#7 解析恒走三路**：`useUniversal` 恒真，OpenAI JSON/文本/`<>` XML 容错探测统一；strictStructured 仅影响 XML 探测深度；`StrictStructuredToolAdapter` 独占路径退场（类与测试保留）
+- 测试：删除 2 个 critique 装配用例（随机制归档）、改写 UNKNOWN_TOOL 用例（引导保留、不记录）；527 例全绿
+
+## 0.6.1 (打分器摘除归档：记忆主线去性能叙事残留)
+
+- **归档** `TrajectoryScorer` 七因子过程纪律打分器 + Chaser 内联启发式评分（88/35+2N/格式/早过加分）→ `archive/2026-09-05-scoring/`（含恢复说明）
+- `score` 语义收敛为验证锚定两值：成功=100 / 未成功=0；下游不变式全部保持：success 闸门（≥80）、记忆 success 卡阈值（≥85）、compact 补漏（正则 score 抽取）行为不变
+- 顺带修复：旧failure 分 `max(30, 35+步数×2)` 使 ≥23 步失败轨迹也能过 80 闸门的潜在 bug
+- orchestrator 早停（≥92）现于首个成功 rollout 即停（token 节省）；缺分兜底 0（不猜）
+- 文档：ARCHITECTURE 执行链路描述、REFACTOR-ASSESSMENT §4 禁区注记同步
+
 ## 0.6.0 (全面改名：烛龙 Zhulong / 盤沙拉克 Panshalach)
 
 ### 模型接入：tool_calls 透传 + 多模型源（2026-09-04 df7a119）

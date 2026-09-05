@@ -193,7 +193,6 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
           sse.send('done', {
             runId,
             success: result.success,
-            score: result.score,
             durationMs: result.durationMs,
           });
 

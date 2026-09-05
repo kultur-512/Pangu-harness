@@ -54,7 +54,7 @@ const command: Command = {
         dryRun: true,
         memoryPreInjected: true,
       });
-      ctx.renderer.success(`模拟完成，预估得分: ${result.score}`);
+      ctx.renderer.success(`模拟完成（dry-run 不执行任务）`);
       return { data: result };
     } catch (err: any) {
       ctx.renderer.error('模拟失败: ' + (err?.message || err));
