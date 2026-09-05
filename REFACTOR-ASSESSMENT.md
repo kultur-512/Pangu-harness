@@ -28,15 +28,15 @@
 | 模块/文件 | 能力 | 命题契合点 | 差距 | 处置 |
 |---|---|---|---|---|
 | `src/memory/RefinedMemoryCard.ts` | 持久卡：`kind(failure/success/preference)`、`category`、`memoryCategory(architecture/failure/implementation/insight/general)`、`summary`、`weight`、`count`、`lastSeen/firstSeen`、`applicableTiers`、`sourceContext`、`decayWeight`、`lastUsedAt`、`pinned`、`status`、`mergedFrom`、`referencedFiles`；容量 每类10/总200、半衰期 30d | 结构化记忆卡 schema 完备，直接是"结构化记忆"技术路线的实体 | 无 | **保留** |
-| `src/memory/RefinedMemoryStore.ts` | `refine()`(从轨迹抽失败信号 + 一次通过正向提炼 success)、`save()`(mergeAndCap + gitignore)、`load()`、`loadFiltered()`(tier/style 可见性 + **P2-D 参照文件交集过滤** + 4 段阶梯衰减 + count≥2 升半衰期 + preference seat + keyword relevance 排序)、`loadFilteredCached()`(8 槽投影缓存/30d 阶梯 key/快照冻结)、`refineCompactSignals()`、`remember/forget/clear/import/export`、`mergeSimilarCards()`(2-gram 去重合并) | 记忆卡加载/过滤/衰减/去重/合并基本完备；**参照文件过滤**贴近"任务状态关联" | 见 §3.1（回合写闭环缺失、无 markUsed、无语义检索、无事件/任务状态） | **保留 + 演进** |
-| `src/memory/FailureMemory.ts` | 进程内 `Map<FailureCategory, string[]>` 失败记忆；`record/getRelevant/toPromptInjection/autoExtractFromTrajectory/injectIntoPrompt` | 会话内实时失败反馈（喂给循环与每步 prompt） | 不持久化、与 RefinedMemoryStore 双轨（代码注释已声明最终收敛到 Store） | **保留为会话内实时信号源**；长期收敛到 Store 提炼 |
+| `src/memory/RefinedMemoryStore.ts` | `refine()`(从轨迹抽失败信号 + 一次通过正向提炼 success)、`save()`(mergeAndCap + gitignore)、`load()`、`loadFiltered()`(tier/style 可见性 + **P2-D 参照文件交集过滤** + 4 段阶梯衰减 + count≥2 升半衰期 + preference seat + keyword relevance 排序)、`loadFilteredCached()`(8 槽投影缓存/30d 阶梯 key/快照冻结)、`refineCompactSignals()`、`remember/forget/clear/import/export`、`mergeSimilarCards()`(2-gram 去重合并) | 记忆卡加载/过滤/衰减/去重/合并基本完备；**参照文件过滤**贴近"任务状态关联" | 见 §3.1（回合写闭环缺失【R1 最紧要】、无语义检索、事件/任务状态运行时未落——二态 markUsed 已落） | **保留 + 演进** |
+| `src/memory/FailureMemory.ts` | 进程内失败记忆（文件保留仅为 UserConfirmation/MemoryCommand 兼容） | ~~会话内实时失败反馈~~ | **轨道已摘除（#6，2026-09-05）**：chaser/loop/engineAdapter 不再注入/记录；失败信号唯一归口 = RefinedMemoryStore.refine | 已摘除（归档见 archive/2026-09-05-removals/） |
 
-### 2.2 上下文 / 锚点 / 提示工程（契合度 ★★★★）
+### 2.2 上下文 / 锚点 / 提示工程（契合度 ★★★★；锚点子系统已摘除 2026-09-05）
 
 | 模块/文件 | 能力 | 处置 |
 |---|---|---|
-| `src/context/RepoExplorer.ts` | 仓库扫描(ignore node_modules/.git/dist)、按档位深度、`scoreFile` 打分推荐锚点、读锚点内容限 80 行 + `redact`(脱敏 key/token)、`AnchorMemory` 注入(每文件≤6000 chars) | **保留**；补：锚点生命周期版本化 + 跨会话锚点持久化（演进点） |
-| `src/context/ContextManager.ts` | 内存锚点+高重要性历史，预算估算 | **保留**；Chaser 实际用它注入锚点上下文 |
+| ~~`src/context/RepoExplorer.ts`~~ | 仓库扫描 + 锚点推荐/注入 | **已摘除归档**（#3，2026-09-05，archive/2026-09-05-removals/）——"仓库我知道什么"由记忆注入承担 |
+| ~~`src/context/ContextManager.ts`~~ | 内存锚点+预算估算 | **已摘除归档**（#3）；预算估算由 PromptBuilder 账本 + ContextSnapshot 事件承担 |
 | `src/cli/repl/PromptBuilder.ts` | 回合 prompt 最终组装：身份 → L0(≤3) → tier XML 约束 → 档位契约 → 负向工具清单 → 项目验证块 → plan-mode → thinking 阶梯 → **L1 记忆卡注入(去重/截 120/来源标签/按档位 3/6/8/10)** → skills → 当前特性 → ENV 增量 → 最近3轮 → 当前任务 → 压缩 → standard/high 探索自动拉取(预算 700) → injection_summary | **保留**；L1 是"长程记忆注入"主通道；演进点：语义检索替换/辅助子串 keyword、`markUsed` 刷新 |
 | `src/reasoning/StructuredReasoner.ts`、`src/benchmarks/BenchmarkProfiles.ts` | 思维链阶梯/铁律头/复盘 prompt；任务风格(swe/terminal/automation) profile | **保留**；去模型品牌措辞泛化为"工程纪律"（见 §4-P4） |
 

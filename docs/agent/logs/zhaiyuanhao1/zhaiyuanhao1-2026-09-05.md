@@ -75,3 +75,10 @@ last_updated: $(date +%H:%M)
 
 ### 卡点 / 需要别人决定（接口争议）
 - P6 存储名迁移目标（PANSHA_*→PANG_*）仍待 kultur/Leader 裁决，两份路线图均已标注冻结
+
+## 深夜批次（全部 md 口径对齐）
+
+### 实际干了什么（事实）
+- 对齐 8 个文件：ARCHITECTURE（执行循环层图/信号源 A/资源表去 critique 与多 rollout）、MEMORY-DESIGN（L0 层与写入源表 FailureMemory 已摘除）、docs/panshalach/README（目录树删 context/*、loop 描述、单 rollout）、SUBMISSION（架构分层描述）、REFACTOR-ASSESSMENT（FailureMemory/RepoExplorer/ContextManager 行改已摘除归档）、WORK-PLAN（U2/U3 矩阵对齐 R 编号、主力行、U9/U5 测试数动态口径）、zhaotianang 卡（任务线改 R5/R6/R7/R8，标注 Assertion/MemoryProjection 推迟与 ContextSnapshot 已提前落地）、wanghaoyu 卡（U3 ContextCompiler 推迟转 R6）
+- 历史文档（logs/、handover 调查报告）按"只追加不改"原则保留原文
+- 门槛：tsc EXIT=0；cleanup PASS（纯文档）
