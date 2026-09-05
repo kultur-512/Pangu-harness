@@ -66,10 +66,24 @@ export class DefaultModelProvider implements ModelProvider {
       return null;
     });
 
-    // If caller provided providersConfig at construction, prepare the registry eagerly
+    // If caller provided providersConfig at construction, prepare the registry eagerly.
+    // env 注入对显式配置同样生效（env 是配置分层的一部分，不属于文件系统探测）。
     if (opts?.providersConfig) {
-      this._providerRegistry = new ProviderRegistry(opts.providersConfig);
+      const cfg = {
+        ...opts.providersConfig,
+        providers: this._applyEnvInjection({ ...(opts.providersConfig.providers || {}) }),
+      };
+      this._providerRegistry = new ProviderRegistry(cfg);
       this._configIsAuthoritative = true;
+      // seed caches for bare-name routing / ctx lookup
+      for (const [pname, pcfg] of Object.entries(cfg.providers || {}) as Array<[string, any]>) {
+        if (Array.isArray(pcfg?.models) && pcfg.models.length > 0) {
+          this.remoteModelsCache.set(pname, pcfg.models.slice());
+        }
+        if (pcfg?.modelContexts && typeof pcfg.modelContexts === 'object') {
+          this.remoteContextsCache.set(pname, { ...pcfg.modelContexts });
+        }
+      }
     }
   }
 
@@ -100,26 +114,23 @@ export class DefaultModelProvider implements ModelProvider {
 
         let providers: any = (all.providers && typeof all.providers === 'object') ? { ...all.providers } : {};
 
-        // Also support env var injection
-        const envKey = process.env.SCNET_API_KEY || process.env.SCNET_KEY;
-        if (envKey && !providers.scnet) {
-          providers.scnet = {
-            type: 'openai-compatible',
-            baseUrl: 'https://api.scnet.cn/api/llm/v1',
-            apiKey: envKey,
-          };
-        }
+        // P1.2: env 注入泛化——PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL 三件套，
+        // SCNET_API_KEY/SCNET_KEY 保留为 scnet 历史别名（行为不变）。
+        providers = this._applyEnvInjection(providers);
 
-        // ULTRA ROBUST: if still no scnet key (e.g. BOM, parse oddity in this root's .panshalach.json),
-        // try to extract the key directly from the file bytes for this root.
-        if (!providers.scnet || !providers.scnet.apiKey) {
-          const extracted = this._extractScnetKeyFromFile(root);
+        // ULTRA ROBUST: if a configured provider still has no key (e.g. BOM / parse
+        // oddity in this root's .panshalach.json), try to extract the key directly
+        // from the file bytes for this root. Scans ALL providers (P1.2).
+        const keyless = Object.entries(providers).filter(([, v]: any) => v && !v.apiKey);
+        if (keyless.length > 0) {
+          const extracted = this._extractProviderKeyFromFile(root);
           if (extracted && extracted.apiKey) {
-            providers.scnet = {
-              type: 'openai-compatible',
-              baseUrl: extracted.baseUrl || 'https://api.scnet.cn/api/llm/v1',
-              apiKey: extracted.apiKey,
-            };
+            const cur = (providers[extracted.provider] && typeof providers[extracted.provider] === 'object')
+              ? { ...providers[extracted.provider] }
+              : { type: 'openai-compatible', baseUrl: extracted.baseUrl };
+            if (!cur.baseUrl && extracted.baseUrl) cur.baseUrl = extracted.baseUrl;
+            cur.apiKey = extracted.apiKey;
+            providers[extracted.provider] = cur;
           }
         }
 
@@ -129,21 +140,22 @@ export class DefaultModelProvider implements ModelProvider {
             model: all.model,
           });
 
-          if (newReg.isProviderConfigured('scnet') || Object.keys(providers).length > 0) {
+          if (Object.keys(providers).length > 0) {
             this._providerRegistry = newReg;
 
-            const scnet = providers.scnet;
-            if (scnet) {
-              if (Array.isArray(scnet.models) && scnet.models.length > 0) {
-                this.remoteModelsCache.set('scnet', scnet.models.slice());
+            // cache configured model lists/contexts for every provider (bare-name routing + ctx lookup)
+            for (const [pname, pcfg] of Object.entries(providers) as Array<[string, any]>) {
+              if (Array.isArray(pcfg?.models) && pcfg.models.length > 0) {
+                this.remoteModelsCache.set(pname, pcfg.models.slice());
               }
-              if (scnet.modelContexts && typeof scnet.modelContexts === 'object') {
-                this.remoteContextsCache.set('scnet', { ...scnet.modelContexts });
+              if (pcfg?.modelContexts && typeof pcfg.modelContexts === 'object') {
+                this.remoteContextsCache.set(pname, { ...pcfg.modelContexts });
               }
             }
 
-            // If we found a working scnet, great. Otherwise keep searching a bit.
-            if (newReg.isProviderConfigured('scnet')) {
+            // Found at least one usable provider (baseUrl + key) → done
+            const usable = Object.values(providers).some((v: any) => v?.baseUrl && v?.apiKey);
+            if (usable) {
               return this._providerRegistry;
             }
           }
@@ -155,11 +167,67 @@ export class DefaultModelProvider implements ModelProvider {
     return this._providerRegistry;
   }
 
+  /** provider 名 → env 变量中缀（大写，非字母数字折叠为 _） */
+  private static _envSuffix(name: string): string {
+    return String(name || '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  }
+
   /**
-   * Ultra-robust extraction of scnet apiKey directly from .panshalach.json bytes.
-   * Survives BOM, parse errors, etc. Used as last-chance in getProviderRegistry.
+   * P1.2 env 三件套注入（泛化，行为不变）：
+   * - `PANSHA_<PROV>_API_KEY` / `_BASE_URL` / `_MODEL`（<PROV> 为 provider 名大写）；
+   * - env key 优先于文件 apiKey（密钥不进配置文件的部署方式）；
+   * - `SCNET_API_KEY`/`SCNET_KEY` 保留为 scnet 历史别名（含默认 baseUrl 兼容）；
+   * - 非文件内新 provider 必须提供 `_BASE_URL`（无 baseUrl 的条目不注入，避免死配置）。
    */
-  private _extractScnetKeyFromFile(root: string): { apiKey: string; baseUrl?: string } | null {
+  private _applyEnvInjection(providers: Record<string, any>): Record<string, any> {
+    const out = (providers && typeof providers === 'object') ? { ...providers } : {};
+    const names = new Set<string>(Object.keys(out).filter(Boolean));
+
+    // discover env-only providers: PANSHA_<U>_API_KEY
+    for (const k of Object.keys(process.env)) {
+      const m = k.match(/^PANSHA_([A-Z0-9]+)_API_KEY$/);
+      if (m) {
+        const provName = m[1].toLowerCase();
+        // env 中缀还原为 provider 名：仅接受字母数字（_ 折叠场景罕见，按小写名匹配文件）
+        names.add(provName);
+      }
+    }
+    if (process.env.SCNET_API_KEY || process.env.SCNET_KEY) names.add('scnet');
+
+    for (const name of names) {
+      const u = DefaultModelProvider._envSuffix(name);
+      const envKey = process.env[`PANSHA_${u}_API_KEY`]
+        || (name === 'scnet' ? (process.env.SCNET_API_KEY || process.env.SCNET_KEY) : undefined);
+      const envBaseUrl = process.env[`PANSHA_${u}_BASE_URL`];
+      const envModel = process.env[`PANSHA_${u}_MODEL`];
+      if (!envKey && !envBaseUrl && !envModel) continue;
+
+      const existing = out[name];
+      const cur = (existing && typeof existing === 'object') ? { ...existing } : { type: 'openai-compatible' };
+
+      if (envBaseUrl) cur.baseUrl = envBaseUrl;
+      if (!cur.baseUrl && envKey && name === 'scnet') {
+        cur.baseUrl = 'https://api.scnet.cn/api/llm/v1'; // 历史别名兼容，行为不变
+      }
+      if (envKey) cur.apiKey = envKey;
+      if (envModel) {
+        const old = Array.isArray(existing?.models) ? existing.models : [];
+        cur.models = [...new Set([envModel, ...old])];
+      }
+
+      if (existing || (cur.baseUrl && cur.apiKey)) {
+        out[name] = cur;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Ultra-robust extraction of a provider apiKey directly from .panshalach.json bytes.
+   * Survives BOM, parse errors, etc. Scans ALL configured providers (P1.2 泛化),
+   * preferring scnet when present (历史别名兼容).
+   */
+  private _extractProviderKeyFromFile(root: string): { provider: string; apiKey: string; baseUrl?: string } | null {
     try {
       const p = join(root, '.panshalach.json');
       if (!existsSync(p)) return null;
@@ -169,22 +237,30 @@ export class DefaultModelProvider implements ModelProvider {
       }
       const txt = buf.toString('utf-8');
 
-      // Try clean JSON first
+      // Try clean JSON first: scan every providers.*.apiKey
       try {
         const j = JSON.parse(txt.trim());
-        const sc = j && j.providers && j.providers.scnet;
-        if (sc && typeof sc.apiKey === 'string' && sc.apiKey) {
-          return { apiKey: sc.apiKey, baseUrl: sc.baseUrl };
+        const provs = j && j.providers && typeof j.providers === 'object' ? j.providers : null;
+        if (provs) {
+          const names = Object.keys(provs).sort((a, b) => (a === 'scnet' ? -1 : b === 'scnet' ? 1 : 0));
+          for (const name of names) {
+            const pc = provs[name];
+            if (pc && typeof pc.apiKey === 'string' && pc.apiKey) {
+              return { provider: name, apiKey: pc.apiKey, baseUrl: pc.baseUrl };
+            }
+          }
         }
       } catch {}
 
-      // Regex fallback for sk-tp- style keys (and any long key)
+      // Regex fallback for sk- style keys (and any long key) — attribute to scnet
+      // when the file mentions a scnet block, otherwise to the first provider block.
       const m = txt.match(/"apiKey"\s*:\s*"([^"]+)"/i);
       if (m && m[1]) {
         const k = m[1];
         // only accept plausible keys (contains sk- or is long)
         if (k.includes('sk-') || k.length > 20) {
-          return { apiKey: k };
+          const provMatch = txt.match(/"(scnet|[a-z0-9_-]+)"\s*:\s*\{[^{}]*"apiKey"/i);
+          return { provider: provMatch ? provMatch[1] : 'scnet', apiKey: k };
         }
       }
     } catch {}
@@ -237,38 +313,45 @@ export class DefaultModelProvider implements ModelProvider {
     this.registry.set(name, factory);
   }
 
+  /** 是否至少有一个可用 provider（baseUrl + key 解析通过） */
+  private _hasAnyProvider(pr: ProviderRegistry | null): boolean {
+    if (!pr) return false;
+    try {
+      return (pr.listProviderNames() || []).some((p) => pr.isProviderConfigured(p));
+    } catch {
+      return false;
+    }
+  }
+
   listModels(): string[] {
     const others = Array.from(this.registry.keys()).filter(k => k !== 'default');
     let pr = this.getProviderRegistry();
-    let hasScnet = !!(pr && pr.isProviderConfigured('scnet'));
+    let hasAny = this._hasAnyProvider(pr);
 
-    // If we don't see scnet yet, try a one-time hot reload (user may have created .panshalach.json
-    // or set SCNET_API_KEY after starting this Panshalach process).
-    if (!hasScnet) {
+    // If we don't see any provider yet, try a one-time hot reload (user may have created
+    // .panshalach.json or set PANSHA_<PROV>_* / SCNET_API_KEY after starting this process).
+    if (!hasAny) {
       this.invalidateProviderCache();
       pr = this.getProviderRegistry();
-      hasScnet = !!(pr && pr.isProviderConfigured('scnet'));
+      hasAny = this._hasAnyProvider(pr);
     }
 
     const base = ['default', ...others];
-    if (hasScnet) {
-      if (!base.includes('scnet')) base.push('scnet');
+    if (pr) {
+      try {
+        const any = pr as any;
+        // fix-model-abc (Bug A): the real method is listProviderNames()
+        if (typeof any.listProviderNames === 'function') {
+          for (const p of any.listProviderNames() || []) {
+            if (pr.isProviderConfigured(p) && !base.includes(p)) base.push(p);
+          }
+        } else if (any.config?.providers) {
+          for (const p of Object.keys(any.config.providers)) {
+            if (!base.includes(p)) base.push(p);
+          }
+        }
+      } catch {}
     }
-    // fix-a6-routing: expose every configured provider name in the model list
-    try {
-      const pr2 = this.getProviderRegistry();
-      const any = pr2 as any;
-      // fix-model-abc (Bug A): the real method is listProviderNames()
-      if (pr2 && typeof any.listProviderNames === 'function') {
-        for (const p of any.listProviderNames() || []) {
-          if (!base.includes(p)) base.push(p);
-        }
-      } else if (pr2 && (any as any).config?.providers) {
-        for (const p of Object.keys((any as any).config.providers)) {
-          if (!base.includes(p)) base.push(p);
-        }
-      }
-    } catch {}
     return base;
   }
 
@@ -282,7 +365,7 @@ export class DefaultModelProvider implements ModelProvider {
       return !!c && typeof (c as any).complete === 'function';
     }
 
-    // scnet:xxx form or plain 'scnet' entry
+    // scnet:xxx form or plain 'scnet' entry (历史别名兼容)
     if (name === 'scnet' || name.startsWith('scnet:')) {
       let pr = this.getProviderRegistry();
       if (!pr || !pr.isProviderConfigured('scnet')) {
@@ -292,13 +375,22 @@ export class DefaultModelProvider implements ModelProvider {
       return !!(pr && pr.isProviderConfigured('scnet'));
     }
 
-    // Bare model name - check if scnet is configured
-    let pr = this.getProviderRegistry();
-    if (pr && pr.isProviderConfigured('scnet')) {
-      const cached = this.remoteModelsCache.get('scnet');
-      if (cached && cached.length > 0) {
-        return cached.includes(name);
+    // provider:model 形式 → 检查对应 provider 是否已配置
+    if (name.includes(':')) {
+      const provName = name.slice(0, name.indexOf(':'));
+      const pr = this.getProviderRegistry();
+      return !!(pr && pr.isProviderConfigured(provName));
+    }
+
+    // Bare model name - check every configured provider's cached model list
+    const pr = this.getProviderRegistry();
+    if (pr && this._hasAnyProvider(pr)) {
+      for (const [provName, cached] of this.remoteModelsCache) {
+        if (Array.isArray(cached) && cached.includes(name)) return true;
       }
+      // provider 明确声明了模型清单但不含该名字 → 不可用；无清单则乐观可用
+      const declared = [...this.remoteModelsCache.values()].filter((v) => Array.isArray(v) && v.length > 0);
+      if (declared.length > 0) return false;
       return true;
     }
 
@@ -308,7 +400,7 @@ export class DefaultModelProvider implements ModelProvider {
   createClient(name: string): ModelClient | null {
     if (!name) return null;
 
-    // 1. Exact registered factory (e.g. 'default', manually registered 'maoyulin' etc.)
+    // 1. Exact registered factory (e.g. 'default' or manually registered names)
     const factory = this.registry.get(name);
     if (factory) {
       const client = factory();
@@ -324,7 +416,7 @@ export class DefaultModelProvider implements ModelProvider {
     // 2. scnet prefix form: "scnet" or "scnet:some-model"
     if (name === 'scnet' || name.startsWith('scnet:')) {
       const modelPart = name.startsWith('scnet:') ? name.slice(6) : undefined;
-      return this._createScnetClient(modelPart);
+      return this._createProviderClient('scnet', modelPart); // 历史别名兼容
     }
 
     // 2b. Generic provider:model prefix (fix-a6-routing) — any configured
@@ -344,10 +436,23 @@ export class DefaultModelProvider implements ModelProvider {
       }
     }
 
-    // 3. If scnet provider is configured, treat bare name as a scnet model name
+    // 3. Bare name → route to whichever configured provider declares/cached it
+    //    (P1.2 泛化；scnet 保留为兜底别名)
     const pr = this.getProviderRegistry();
-    if (pr && pr.isProviderConfigured('scnet')) {
-      return this._createScnetClient(name);
+    if (pr) {
+      for (const [provName, cached] of this.remoteModelsCache) {
+        if (Array.isArray(cached) && cached.includes(name) && pr.isProviderConfigured(provName)) {
+          try {
+            return pr.createClientSync(provName, name);
+          } catch {
+            return null;
+          }
+        }
+      }
+      // 历史别名兼容：scnet 配置存在时，裸名仍走 scnet
+      if (pr.isProviderConfigured('scnet')) {
+        return this._createProviderClient('scnet', name);
+      }
     }
 
     return null;
@@ -376,7 +481,7 @@ export class DefaultModelProvider implements ModelProvider {
     // Finally, if scnet is configured, try to create a scnet default client
     const pr = this.getProviderRegistry();
     if (pr && pr.isProviderConfigured('scnet')) {
-      return this._createScnetClient(undefined);
+      return this._createProviderClient('scnet', undefined);
     }
 
     return null;
@@ -385,8 +490,8 @@ export class DefaultModelProvider implements ModelProvider {
   /**
    * Get the context window length (in tokens) for a model name.
    * Priority:
-   * 1. In-memory cache from a recent /model list (remoteContextsCache)
-   * 2. Persisted in .panshalach.json providers.<prov>.modelContexts
+   * 1. In-memory cache from a recent /model list (remoteContextsCache, ALL providers)
+   * 2. Persisted in .panshalach.json providers.<prov>.modelContexts (ALL providers)
    * 3. 256000 (256K) default
    */
   getModelContextLength(name: string): number {
@@ -394,19 +499,22 @@ export class DefaultModelProvider implements ModelProvider {
 
     const effective = this.getEffectiveModel(name);
 
-    // 1. Check remote cache first (most fresh after /model list)
-    const cachedCtx = this.remoteContextsCache.get('scnet');
-    if (cachedCtx && typeof cachedCtx[effective] === 'number') {
-      return cachedCtx[effective];
+    // 1. Check remote caches first (most fresh after /model list) — 跨 provider 遍历
+    for (const cachedCtx of this.remoteContextsCache.values()) {
+      if (cachedCtx && typeof cachedCtx[effective] === 'number') {
+        return cachedCtx[effective];
+      }
     }
 
-    // 2. Check persisted config (use effective name)
+    // 2. Check persisted config (use effective name) — 跨 provider 遍历
     try {
       const cm = new ConfigManager(process.cwd());
       const all = cm.getAll();
-      const scnet = all.providers?.scnet;
-      if (scnet?.modelContexts && typeof scnet.modelContexts[effective] === 'number') {
-        return scnet.modelContexts[effective];
+      const provs = all.providers && typeof all.providers === 'object' ? all.providers : {};
+      for (const pc of Object.values(provs) as Array<any>) {
+        if (pc?.modelContexts && typeof pc.modelContexts[effective] === 'number') {
+          return pc.modelContexts[effective];
+        }
       }
     } catch {}
 
@@ -447,13 +555,14 @@ export class DefaultModelProvider implements ModelProvider {
     }
   }
 
-  private _createScnetClient(modelName?: string): ModelClient | null {
+  /** 通用 provider 客户端构造（P1.2 收敛；scnet 走同一入口，无特化路径）。 */
+  private _createProviderClient(providerName: string, modelName?: string): ModelClient | null {
     const pr = this.getProviderRegistry();
     if (!pr) return null;
 
     // Use sync version to satisfy ModelProvider.createClient signature (sync)
     try {
-      return pr.createClientSync('scnet', modelName);
+      return pr.createClientSync(providerName, modelName);
     } catch {
       return null;
     }
@@ -498,13 +607,18 @@ export class DefaultModelProvider implements ModelProvider {
       const providerName = name.slice(0, sep);
       const modelPart = name.slice(sep + 1);
       if (modelPart) return modelPart;
-      // "scnet:" with no model — resolve a concrete model from the cache if present
-      if (providerName === 'scnet') return this._pickBestProviderModel('scnet');
-      return name;
+      // "<provider>:" with no model — resolve a concrete model from the cache if present
+      return this._pickBestProviderModel(providerName);
     }
-    // Provider alias given as a bare name: plain "scnet" → concrete model when cached
+    // Provider alias given as a bare name: resolve a concrete model when cached
+    const pr = this.getProviderRegistry();
+    if (pr) {
+      try {
+        if (pr.isProviderConfigured(name)) return this._pickBestProviderModel(name);
+      } catch {}
+    }
     if (name === 'scnet') {
-      return this._pickBestProviderModel('scnet');
+      return this._pickBestProviderModel('scnet'); // 历史别名兼容
     }
     return name;
   }

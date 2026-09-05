@@ -54,7 +54,7 @@
 | `CHANGELOG.md` | 在"## 0.X.Y"段下加变更条目；只增不改 |
 | 命名一致性 | 内部代号 = **Panshalach**（盤沙拉克）/ 外部产品 = **烛龙 Zhulong**；混用者 REVISE |
 | `npx tsc --noEmit` | 必须 EXIT=0 才允许 PR |
-| `node --test --import tsx --test-concurrency=1 "tests/**/*.test.ts"` | 必须 525+ 用例全绿（+ 允许 ≤2 skip，并说明） |
+| `node --test --import tsx --test-concurrency=1 "tests/**/*.test.ts"` | 必须 529+ 用例全绿（当前实际 529；以 `npm test` 输出为准，允许 ≤2 skip 并说明） |
 | `node verify-panshalach-cleanup.mjs` | 必须 PASS |
 
 ### 3.3 软区（Soft）— 约定
@@ -174,7 +174,7 @@ Reviewed-by: R <agent-id> (yyyy-mm-dd)
 
 CHECKS
 - [x] tsc        : PASS  (TSC_EXIT=0)
-- [x] tests      : PASS  (525/525)
+- [x] tests      : PASS  (529/529)
 - [x] cleanup    : PASS  (verify-panshalach-cleanup)
 - [x] scope      : OK    (无越界)
 - [x] docs       : OK    (CHANGELOG/REFACTOR-ASSESSMENT 已更新)
@@ -196,7 +196,7 @@ DECISION: APPROVE | REVISE
 提交 PR 前在描述里勾选：
 
 - [ ] `npx tsc --noEmit` 通过
-- [ ] `npm test` 通过（525+ 用例）
+- [ ] `npm test` 通过（529+ 用例）
 - [ ] `node verify-panshalach-cleanup.mjs` PASS
 - [ ] `CHANGELOG.md` 已加条目
 - [ ] 改动落在 `tasks/<task-id>.md` 声明范围内
@@ -270,7 +270,7 @@ git push origin <own-pinyin>1
 ## Why
 - <目标 + 引用 docs/agent/handover/ 对应行>
 ## Tests
-- npm test → 525/525
+- npm test → 529/529
 ## Docs
 - <改动的文档/日志/handover>
 ## Risks

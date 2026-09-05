@@ -82,6 +82,8 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
     const day = 24 * 60 * 60 * 1000;
     const HL = 180; // implementation
 
+    // 接口契约 v3：衰减锚 = max(lastSeen, lastUsedAt)（修复 ?? 短路导致复发卡不保鲜）。
+    // 分段测试场景 = 卡自该龄期后未被触碰/未再复发 → 两时间戳同置。
     const cardBase = makeCard({
       memoryCategory: 'implementation',
       lastSeen: now,
@@ -91,13 +93,13 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
     });
 
     // segment 1: age < 0.5 HL → ×1.0
-    const c1 = { ...cardBase, lastUsedAt: now - (HL * 0.4 * day) };
+    const c1 = { ...cardBase, lastSeen: now - (HL * 0.4 * day), lastUsedAt: now - (HL * 0.4 * day) };
     // segment 2: 0.5 HL ~ 1.0 HL → ×0.7
-    const c2 = { ...cardBase, lastUsedAt: now - (HL * 0.7 * day) };
+    const c2 = { ...cardBase, lastSeen: now - (HL * 0.7 * day), lastUsedAt: now - (HL * 0.7 * day) };
     // segment 3: 1.0 HL ~ 2.0 HL → ×0.4
-    const c3 = { ...cardBase, lastUsedAt: now - (HL * 1.5 * day) };
+    const c3 = { ...cardBase, lastSeen: now - (HL * 1.5 * day), lastUsedAt: now - (HL * 1.5 * day) };
     // segment 4: > 2.0 HL → ×0.1
-    const c4 = { ...cardBase, lastUsedAt: now - (HL * 2.1 * day) };
+    const c4 = { ...cardBase, lastSeen: now - (HL * 2.1 * day), lastUsedAt: now - (HL * 2.1 * day) };
 
     // M2.5: decay math is verified through the public effectiveWeightOf —
     // loadFiltered is a pure read (no hit-refresh) and applies a >=0.3
@@ -121,6 +123,7 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
 
     const oldImpl = makeCard({
       memoryCategory: 'implementation',
+      lastSeen: now - ageDays * day, // v3：衰减锚取 max(lastSeen, lastUsedAt)，两者同置
       lastUsedAt: now - ageDays * day,
       decayWeight: 3.5, // M2.5: effective base is decayWeight → 0.1×3.5=0.35 survives the 0.3 cutoff
       weight: 5,
@@ -137,7 +140,7 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
     assert.ok(factor <= 0.11, `effective weight factor must be <= 10% after 2*HL, got ${factor}`);
 
     // base weight=1 would fall under the cutoff and be dropped entirely
-    const low = makeCard({ memoryCategory: 'implementation', lastUsedAt: now - ageDays * day, decayWeight: 1.0, weight: 1 });
+    const low = makeCard({ memoryCategory: 'implementation', lastSeen: now - ageDays * day, lastUsedAt: now - ageDays * day, decayWeight: 1.0, weight: 1 });
     store.save([low]);
     const loaded2 = store.loadFiltered({ now, tier: 'high' });
     assert.ok(!loaded2.some(x => x.id === low.id), 'decayWeight=1 card at >2*HL must be filtered (<0.3)');

@@ -13,7 +13,7 @@ cd <repo>
 npm install            # devDependencies（tsx/typescript）
 npm run build          # → dist/
 # 全局可用（可选）
-npm install -g .       # 提供 panshalach（与旧别名 pangu）两个 bin
+npm install -g .       # 提供 panshalach / zhulong bin（保留旧别名 zorge）
 ```
 启动：
 ```bash
@@ -45,10 +45,10 @@ panshalach --headless run "任务..." # 显式逃逸 isTTY 守卫（真实执行
 ```bash
 export PANSHA_MODEL="openpangu:openPangu-7B"
 ```
-若 openPangu 网关需要 key（如昇腾云/ModelArts）：把 `apiKey` 换成真实 key，或设 `SCNET_API_KEY`（现有 env 注入通道——后续里程碑改为 `PANG_OPENPANGU_API_KEY`，见 ROADMAP）。
+若 openPangu 网关需要 key（如昇腾云/ModelArts）：把 `apiKey` 换成真实 key；或用 env 三件套（key 不进配置文件）：`PANSHA_OPENPANGU_API_KEY`（可再加 `_BASE_URL`/`_MODEL` 覆盖）；或配 `apiKeyCmd`（执行命令取 stdout 首行作密钥）。`SCNET_API_KEY` 仅作为 scnet provider 的历史别名。
 启动后在 REPL `/model list`（遍历已配置 provider 拉模型）→ `/model openpangu:openPangu-7B` 切换。
 
-> 适配说明：模型协议三路自适应（OpenAI JSON tool_calls · 文本协议 · `<>` 严格）由探测器自动判断；openPangu 输出 JSON 工具调用/文本格式均可容错。
+> 适配说明：模型协议原生 `tool_calls`（OpenAI JSON，`detectedFormat:'openai-json'`）为主路径——网关返回即结构化透传；文本协议/`<>` 严格三路探测为兜底（`PANSHA_USE_LEGACY_PARSER=1` 可强制走文本解析）。openPangu 输出 JSON 工具调用/文本格式均可容错。
 
 ## 4. 命令总表（REPL 内 `/` 前缀）
 
@@ -95,5 +95,5 @@ export PANSHA_MODEL="openpangu:openPangu-7B"
 
 ## 8. 内部名说明（品牌迁移中）
 Panshalach 为对外品牌。当前内部仍使用历史名保证既有会话/记忆/脚本兼容：
-`.panshalach.json` / `.panshalach-memory.json` / `~/.panshalach/` / `PANSHA_*` 环境变量 / `PanshalachChaser` 类 / `pangu` bin（保留别名）。
+`.panshalach.json` / `.panshalach-memory.json` / `~/.panshalach/` / `PANSHA_*` 环境变量 / `PanshalachChaser` 类 / `zorge` bin（保留别名）。
 收敛到 Panshalach 名的迁移计划见 [ROADMAP.md](ROADMAP.md) P6。

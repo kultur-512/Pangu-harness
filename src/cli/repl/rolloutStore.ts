@@ -6,6 +6,10 @@
 //   { type: 'meta',    id, tier, workspace, model, approvalMode, allowlist }
 //   { type: 'turn',    turn: Turn }
 //   { type: 'approval', approvalMode, allowlist }
+//   { type: 'rewind',  target }                                    — 审计（replay 暂不消费）
+//   { type: 'agent',   event: AgentEvent }                         — 业务语义事件（契约 v2）
+//   { type: 'compact', syntheticTurn, coveredTurnIds, tokens }     — 压缩标记（契约 v3，replay 消费）
+//   { type: 'context', snapshot: ContextSnapshotPayload }          — 注入审计（契约 v3）
 //
 // Resume strategy: replay events into a Session; fall back to
 // SessionStore.load(id) when the jsonl is missing/corrupt.
@@ -14,13 +18,31 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { Session } from './Session.js';
-import type { Turn } from './types.js';
+import type { Turn, AgentEvent } from './types.js';
+
+/** 接口契约 v3：ContextSnapshot 事件载荷——逐任务注入审计（"模型当时看见了什么"的唯一证据源）。 */
+export interface ContextSnapshotPayload {
+  taskId?: string;
+  model?: string;
+  memoryCardCount?: number;
+  overflowCount?: number;
+  injectedCardIds?: string[];
+  promptChars?: number;
+  promptHash?: string;
+  [k: string]: unknown;
+}
 
 export type RolloutEvent =
   | { type: 'meta'; ts: number; id: string; tier: string; workspace: string; model: string; approvalMode?: string; allowlist?: string[]; branchOf?: string }
   | { type: 'turn'; ts: number; turn: Turn }
   | { type: 'approval'; ts: number; approvalMode: string; allowlist: string[] }
-  | { type: 'rewind'; ts: number; target: string | number };
+  | { type: 'rewind'; ts: number; target: string | number }
+  // 接口契约 v2 (U1)：业务语义事件（AgentEvent）以 append-only 方式进入同一
+  // 事件流，MemoryEventStore（src/memory/events.ts，W3）在此之上做 topic/kind 查询。
+  | { type: 'agent'; ts: number; event: AgentEvent }
+  // 接口契约 v3：压缩标记（自足化——内嵌完整 synthetic turn，replay 无需模型重建）
+  | { type: 'compact'; ts: number; syntheticTurn: Turn; coveredTurnIds: string[]; beforeTokens?: number; afterTokens?: number }
+  | { type: 'context'; ts: number; snapshot: ContextSnapshotPayload };
 
 function rolloutsDir(): string {
   return path.join(os.homedir(), '.panshalach', 'rollouts');
@@ -65,6 +87,58 @@ export function appendApprovalChange(session: Session): void {
   });
 }
 
+/** 接口契约 v2 (U1)：追加一条业务语义事件（事实层，append-only，不参与 session replay）。 */
+export function appendAgentEvent(sessionId: string, event: AgentEvent): void {
+  appendEvent(sessionId, { type: 'agent', ts: Date.now(), event });
+}
+
+/** 接口契约 v3：压缩标记——内嵌完整 synthetic turn，replayInto 消费后 resume 无需模型即可重建压缩态。 */
+export function appendCompactMarker(
+  sessionId: string,
+  syntheticTurn: Turn,
+  coveredTurnIds: string[],
+  beforeTokens?: number,
+  afterTokens?: number
+): void {
+  appendEvent(sessionId, {
+    type: 'compact', ts: Date.now(),
+    syntheticTurn, coveredTurnIds: [...coveredTurnIds],
+    beforeTokens, afterTokens,
+  });
+}
+
+/** 接口契约 v3：逐任务 ContextSnapshot（注入审计账本）。 */
+export function appendContextSnapshot(sessionId: string, snapshot: ContextSnapshotPayload): void {
+  appendEvent(sessionId, { type: 'context', ts: Date.now(), snapshot });
+}
+
+/** 读取某 session 的全部 ContextSnapshot（评测/审计用；有界）。 */
+export function readContextSnapshots(sessionId: string): ContextSnapshotPayload[] {
+  const out: ContextSnapshotPayload[] = [];
+  for (const ev of readEvents(sessionId)) {
+    if (ev.type === 'context' && ev.snapshot) {
+      out.push(ev.snapshot);
+      if (out.length >= MAX_DERIVED_EVENTS) break;
+    }
+  }
+  return out;
+}
+
+/** 有界读取：派生查询（事件/快照）最多返回的条数（防全量重放拖垮交互路径；resume 不受限）。 */
+const MAX_DERIVED_EVENTS = 5000;
+
+/** 读取某 session 的全部业务语义事件（损坏行跳过；有界）。 */
+export function readAgentEvents(sessionId: string): AgentEvent[] {
+  const out: AgentEvent[] = [];
+  for (const ev of readEvents(sessionId)) {
+    if (ev.type === 'agent' && ev.event) {
+      out.push(ev.event);
+      if (out.length >= MAX_DERIVED_EVENTS) break;
+    }
+  }
+  return out;
+}
+
 function readEvents(sessionId: string): RolloutEvent[] {
   const p = fileFor(sessionId);
   if (!fs.existsSync(p)) return [];
@@ -89,6 +163,9 @@ export interface RolloutSummary {
   branchOf?: string;
 }
 
+/** 有界扫描：单文件最多解析的行数（防超长 rollout 拖垮 /resume 列表；超出部分计数近似）。 */
+const LIST_SCAN_MAX_LINES = 5000;
+
 /** Most recent rollouts, newest first (scans the whole dir; n is small). */
 export function listRecent(n = 10): RolloutSummary[] {
   const dir = rolloutsDir();
@@ -104,8 +181,10 @@ export function listRecent(n = 10): RolloutSummary[] {
     let branchOf: string | undefined;
     try {
       mtimeMs = fs.statSync(file).mtimeMs;
-      for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
-        const s = line.trim();
+      const lines = fs.readFileSync(file, 'utf-8').split('\n');
+      const scan = lines.length > LIST_SCAN_MAX_LINES ? lines.slice(0, LIST_SCAN_MAX_LINES) : lines;
+      for (const raw of scan) {
+        const s = raw.trim();
         if (!s) continue;
         try {
           const ev = JSON.parse(s);
@@ -126,7 +205,7 @@ export function listRecent(n = 10): RolloutSummary[] {
   return out.slice(0, n);
 }
 
-/** Replay a rollout file into the session (turns + approval state). */
+/** Replay a rollout file into the session (turns + approval state + compact markers). */
 export function replayInto(session: Session, events: RolloutEvent[]): number {
   let applied = 0;
   for (const ev of events) {
@@ -136,6 +215,11 @@ export function replayInto(session: Session, events: RolloutEvent[]): number {
     } else if (ev.type === 'approval') {
       session.approvalMode = (ev.approvalMode as any) || session.approvalMode;
       session.sessionApprovalAllowlist = new Set(ev.allowlist || []);
+    } else if (ev.type === 'compact' && ev.syntheticTurn) {
+      // 接口契约 v3：resume 端消费压缩标记——与在线 applyCompactResult 同一语义：
+      // 覆盖账本内的轮次以 synthetic turn 替换，其余（含标记后新增轮）保留。
+      const covered = new Set(ev.coveredTurnIds || []);
+      session.turns = [ev.syntheticTurn, ...session.turns.filter(t => !covered.has(t.id))];
     }
   }
   return applied;

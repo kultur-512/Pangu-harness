@@ -2,6 +2,29 @@
 
 ## 0.6.0 (全面改名：烛龙 Zhulong / 盤沙拉克 Panshalach)
 
+### 模型接入：tool_calls 透传 + 多模型源（2026-09-04 df7a119）
+- `openai-compatible.complete` 返回 `string | {content, raw, toolCalls, detectedFormat:'openai-json'}`；SSE `delta.tool_calls` 按 index 增量拼装（修复 `[DONE]` 早退跳过拼装）；支持 `providers.<name>.headers`
+- chaser 流式 wrapper 聚合 toolCalls chunk 后返回结构化对象；`VerifyCritiqueLoop` 的 `preParsedToolCalls` 消费通道零改动
+- env 三件套泛化 `PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL`（`SCNET_API_KEY/SCNET_KEY` 保留为 scnet 历史别名，行为不变）；`getModelContextLength` 跨 provider；裸名路由泛化
+- 新增 `providers.<name>.apiKeyCmd`（借鉴 claude-code apiKeyHelper：stdout 首行作密钥，成功缓存，显式 apiKey 优先）
+- 删除死代码：`ScnetClient.ts`/`UniversalMaoyulinClient.ts`/`maoyulin-client.cjs`/`probe-scnet-real.mjs`（内含硬编码密钥，git 历史仍在，**需服务侧轮换**）/`probe-maoyulin-models.cjs`；`verify-scnet.mjs` 改配置驱动任意 provider
+- 接口契约 v2 类型：`AgentEvent`/`Assertion`/`TaskState`/`SourceRef`（`src/cli/repl/types.ts`）；rolloutStore 增 `agent` 事件 schema
+
+### 记忆与上下文 v3（2026-09-04 bf5f4a7，两轮对抗批判收敛）
+- 修复衰减锚：`calculateEffectiveWeight` 取 `max(lastSeen, lastUsedAt)`（旧 `??` 短路使复发卡的 lastSeen 刷新对衰减不可见）
+- `markUsed` 二态化：`markInjected`（注入纯记账，不影响衰减/count）/ `markVerified`（原位刷新 lastUsedAt+count+1，直写持久化）；markCited 推迟（[M1] 卡号引用协议已就位）
+- `loadFiltered` 过滤 `archived` 卡（merge 软删真正退出注入）
+- PromptBuilder：记忆卡注入带 `[M1]` 连续编号（顺序==lastInjectedCardIds，跨 L1/溢出块单一序列）；修复 `getRecentContext` "score=score=NN" 双前缀
+- compact：`CompactResult` 增 `generation(turnCount,lastTurnId)`/`coveredTurnIds`/`summarySource`/`syntheticTurn`；apply 按覆盖账本安全合并（修复快照→apply 间新增轮静默丢失）；血统断开（rewind）拒绝 apply；摘要来源显式化
+- rolloutStore：新增 `compact`（自足标记，replayInto 消费后 resume 无模型重建压缩态）与 `context`（逐任务注入审计：promptHash/injectedCardIds）事件；`readAgentEvents`/`readContextSnapshots` 有界读取；`listRecent` 单文件扫描上限
+- `runAgentTask`：逐任务 ContextSnapshot + `memory_injected` 事件 + markInjected 双账本对齐（best-effort）
+- 新增测试：`tests/memory/MemoryMark.test.ts`、`tests/repl/ContextMemoryV3.test.ts`、`tests/repl/ModelProviderEnv.test.ts`（全套 529 例）
+
+### 文档（2026-09-04 6b7cb5e）
+- `docs/panshalach/SUBMISSION.md` 国创赛项目书骨架（≤1000 字概述占位 + 大纲 + 创新点按"claim 指向已落地工件"表述）
+- `docs/panshalach/EVALUATION.md`：C 档口径对齐（语义检索单列 C4 消融档）；记忆卡利用率口径二选一写死；测试数以 `npm test` 实际值为准
+- `tasks/context-memory-proposals-2026-09-04.md`：两方案 + 两轮 3 视角对抗批判 + 终稿裁决 + 已知遗留 + 评测防线留档
+
 ### 模型层去模型品牌特化（openPangu 泛化）
 - `src/cli/repl/ModelProvider.ts`：删除 bare `glm`/`glm5` magic shorthand、`_pickBestGLMModel` 及 `listModels` 里 `glm` 伪入口；泛化为 `_pickBestProviderModel(providerName)`（取指定 provider 模型列表第一个可用）；`getEffectiveModel` 对 `provider:model` / `provider:` / 裸 provider 名做通用解析
 - `src/cli/repl/commands/ModelCommand.ts`：description/usage/提示文案去旧品牌特化（保留 `/model list` 与 scnet 密钥引导，scnet 作为合法 OpenAI 兼容 provider）

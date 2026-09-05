@@ -13,17 +13,82 @@ export interface OpenAICompatConfig {
   baseUrl: string;
   apiKey: string;
   timeoutMs?: number; // default 120000
+  /** 附加请求头（网关场景），与默认 Authorization 合并 */
+  headers?: Record<string, string>;
 }
 
 /** streaming chunk type (mirrors cli/repl/types ModelStreamChunk to avoid import cycle) */
 export interface ModelStreamChunk {
-  type: 'text' | 'thinking';
-  text: string;
+  type: 'text' | 'thinking' | 'toolCalls';
+  text?: string;
+  /** 仅 type:'toolCalls'：SSE delta.tool_calls 增量拼接出的完整调用（P1.1） */
+  toolCalls?: unknown[];
+}
+
+/**
+ * 结构化输出（镜像 cli/repl/types ModelClientOutput，避免 import cycle）。
+ * complete() 在网关返回原生 message.tool_calls 时返回该对象（P1.1），
+ * VerifyCritiqueLoop 的 preParsedToolCalls 通道直接消费，无需再走文本解析。
+ */
+export interface OpenAICompatOutput {
+  content?: string;
+  raw?: string;
+  toolCalls?: unknown[];
+  detectedFormat?: string;
+}
+
+/** 内部 ToolCall 形状（镜像 src/types/toolCall.ts ToolCall，避免 import cycle） */
+export interface OpenAICompatToolCall {
+  toolName: string;
+  params: Array<{ name: string; value: string }>;
+  rawBlock: string;
+  format?: string;
+}
+
+/** OpenAI 原生 tool_call → 内部 ToolCall（function.arguments JSON → params 键值对） */
+export function convertOpenAIToolCalls(rawToolCalls: unknown[]): OpenAICompatToolCall[] {
+  const out: OpenAICompatToolCall[] = [];
+  if (!Array.isArray(rawToolCalls)) return out;
+  for (const tc of rawToolCalls) {
+    const t: any = tc;
+    const name = t?.function?.name;
+    if (typeof name !== 'string' || !name) continue;
+    let params: Array<{ name: string; value: string }> = [];
+    const args = t?.function?.arguments;
+    if (typeof args === 'string' && args.trim()) {
+      try {
+        const parsed = JSON.parse(args);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          params = Object.entries(parsed).map(([k, v]) => ({
+            name: k,
+            value: typeof v === 'string' ? v : JSON.stringify(v),
+          }));
+        } else {
+          params = [{ name: 'args', value: JSON.stringify(parsed) }];
+        }
+      } catch {
+        params = [{ name: 'args', value: args }];
+      }
+    } else if (args && typeof args === 'object') {
+      params = Object.entries(args as Record<string, unknown>).map(([k, v]) => ({
+        name: k,
+        value: typeof v === 'string' ? v : JSON.stringify(v),
+      }));
+    }
+    out.push({
+      toolName: name,
+      params,
+      rawBlock: JSON.stringify(t),
+      format: 'openai-json',
+    });
+  }
+  return out;
 }
 
 export interface OpenAICompatClient {
   listModels(): Promise<string[]>;
-  complete(prompt: string, opts?: CompleteOptions): Promise<string>;
+  /** 网关返回原生 tool_calls 时返回结构化对象（detectedFormat:'openai-json'），否则返回文本 */
+  complete(prompt: string, opts?: CompleteOptions): Promise<string | OpenAICompatOutput>;
   streamChat?(prompt: string, opts?: CompleteOptions): AsyncIterable<ModelStreamChunk>;
 }
 
@@ -61,6 +126,20 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+/** 把 doComplete 的结果转成 streamChat 回退 chunk 序列（toolCalls 对象不被吞掉） */
+function chunksFromCompleteOutput(out: string | OpenAICompatOutput): ModelStreamChunk[] {
+  if (typeof out === 'string') return [{ type: 'text', text: out }];
+  const chunks: ModelStreamChunk[] = [];
+  if (Array.isArray(out.toolCalls) && out.toolCalls.length > 0) {
+    chunks.push({ type: 'toolCalls', toolCalls: out.toolCalls });
+  }
+  if (typeof out.content === 'string' && out.content) {
+    chunks.push({ type: 'text', text: out.content });
+  }
+  if (chunks.length === 0) chunks.push({ type: 'text', text: '' });
+  return chunks;
+}
+
 export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAICompatClient {
   if (!config || !config.baseUrl || !config.apiKey) {
     throw new Error('OpenAICompatClient requires baseUrl and apiKey');
@@ -70,13 +149,18 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
   const apiKey = config.apiKey;
   const timeoutMs = config.timeoutMs ?? 120_000;
 
-  const authHeaders = {
+  const authHeaders: Record<string, string> = {
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
+  if (config.headers) {
+    for (const [k, v] of Object.entries(config.headers)) {
+      if (typeof k === 'string' && k && typeof v === 'string') authHeaders[k] = v;
+    }
+  }
 
   /** Shared non-streaming completion (used by complete() and as streamChat fallback). */
-  async function doComplete(prompt: string, opts: CompleteOptions = {}): Promise<string> {
+  async function doComplete(prompt: string, opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
     if (!prompt || typeof prompt !== 'string') {
       throw new Error('complete requires a non-empty prompt string');
     }
@@ -126,7 +210,25 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     }
 
     // Standard OpenAI response shape
-    const content = json?.choices?.[0]?.message?.content;
+    const message = json?.choices?.[0]?.message;
+    const content = message?.content;
+
+    // P1.1: 原生 function calling 通道——tool_calls 非空时返回结构化对象，
+    // 上层 VerifyCritiqueLoop.preParsedToolCalls 直接消费（绕过文本解析）。
+    if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
+      const toolCalls = convertOpenAIToolCalls(message.tool_calls);
+      if (toolCalls.length > 0) {
+        let rawStr: string;
+        try { rawStr = typeof bodyText === 'string' && bodyText ? bodyText : JSON.stringify(json); } catch { rawStr = ''; }
+        return {
+          content: typeof content === 'string' ? content : '',
+          raw: rawStr,
+          toolCalls,
+          detectedFormat: 'openai-json',
+        };
+      }
+    }
+
     if (typeof content === 'string') {
       return content;
     }
@@ -189,7 +291,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       return ids;
     },
 
-    async complete(prompt: string, opts: CompleteOptions = {}): Promise<string> {
+    async complete(prompt: string, opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
       return doComplete(prompt, opts);
     },
 
@@ -230,15 +332,13 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         }, timeoutMs);
       } catch (e) {
         // Transport-level failure → fall back to non-streaming so callers keep working
-        const text = await doComplete(prompt, opts);
-        yield { type: 'text', text } as ModelStreamChunk;
+        for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
         return;
       }
 
       if (!res.ok || !(res as any).body) {
         // Non-OK → fall back to complete() which surfaces a rich error
-        const text = await doComplete(prompt, opts);
-        yield { type: 'text', text } as ModelStreamChunk;
+        for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
         return;
       }
 
@@ -246,8 +346,10 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       const decoder = new TextDecoder();
       let buffer = '';
       let sawAny = false;
+      // P1.1: SSE delta.tool_calls 增量拼接（按 index 聚合 id/name/arguments 分片）
+      const toolCallAcc = new Map<number, { id?: string; name: string; args: string }>();
 
-      while (true) {
+      outer: while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -263,7 +365,8 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
           const dataStr = line.slice(5).trim();
           if (dataStr === '[DONE]') {
-            return;
+            // P1.1: 不能直接 return——必须先走循环后的 delta.tool_calls 拼装
+            break outer;
           }
 
           let json: any;
@@ -281,13 +384,40 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
             sawAny = true;
             yield { type: 'text', text: delta.content } as ModelStreamChunk;
           }
+
+          const tcDelta = delta.tool_calls;
+          if (Array.isArray(tcDelta)) {
+            for (const d of tcDelta) {
+              const i = typeof d?.index === 'number' ? d.index : 0;
+              let acc = toolCallAcc.get(i);
+              if (!acc) {
+                acc = { name: '', args: '' };
+                toolCallAcc.set(i, acc);
+              }
+              if (typeof d?.id === 'string' && d.id) acc.id = d.id;
+              if (typeof d?.function?.name === 'string') acc.name += d.function.name;
+              if (typeof d?.function?.arguments === 'string') acc.args += d.function.arguments;
+            }
+          }
+        }
+      }
+
+      // P1.1: 流式结束——拼好的 toolCalls 作为独立 chunk 交给上层
+      // （chaser wrapper 聚合后以结构化对象返回给 VerifyCritiqueLoop）
+      if (toolCallAcc.size > 0) {
+        const assembled = [...toolCallAcc.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([, v]) => ({ id: v.id, type: 'function', function: { name: v.name, arguments: v.args } }));
+        const toolCalls = convertOpenAIToolCalls(assembled);
+        if (toolCalls.length > 0) {
+          sawAny = true;
+          yield { type: 'toolCalls', toolCalls } as ModelStreamChunk;
         }
       }
 
       // Endpoint accepted stream:true but sent nothing parseable — fall back once.
       if (!sawAny) {
-        const text = await doComplete(prompt, opts);
-        yield { type: 'text', text } as ModelStreamChunk;
+        for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
       }
     },
   };

@@ -63,9 +63,9 @@
 
 | 文件 | 现状 | 处置 |
 |---|---|---|
-| `src/model/openai-compatible.ts` | 零依赖 OpenAI 兼容 client（listModels/complete/streamChat）；返回仅 `content`(丢弃原生 tool_calls) | **保留并增强**：返回结构化 `{content, raw, toolCalls, detectedFormat}`；为 openPangu 网关若用原生 OpenAI 工具调用做透传 |
-| `src/model/ProviderRegistry.ts` | 多 provider 通用路由(配置驱动，provider:model 均可)，但 import ScnetClient 实为通用 | **保留**；无脑支持 `openpangu` 作为另一 provider |
-| `src/model/ScnetClient.ts` / `UniversalMaoyulinClient.ts` / `maoyulin-client.cjs` | scnet 特化 factory；maoyulin 历史未接线 | Scnet 保留（作为既有网关）；maoyulin 建议标注 deprecated |
+| `src/model/openai-compatible.ts` | 零依赖 OpenAI 兼容 client（listModels/complete/streamChat） | ✅ **已完成（2026-09-04）**：complete 返回 `string \| {content, raw, toolCalls, detectedFormat:'openai-json'}`，SSE `delta.tool_calls` 增量拼装，支持自定义 headers |
+| `src/model/ProviderRegistry.ts` | 多 provider 通用路由(配置驱动，provider:model 均可) + apiKeyCmd/headers/密钥解析 | ✅ **已完成（2026-09-04）**：ScnetClient import 已删；apiKeyCmd（stdout 首行，借鉴 claude-code apiKeyHelper）+ 自定义 headers |
+| ~~`src/model/ScnetClient.ts` / `UniversalMaoyulinClient.ts` / `maoyulin-client.cjs`~~ | 死代码（0 调用方） | ✅ **已删除（2026-09-04）**，连同 probe-scnet-real.mjs（内含硬编码密钥，git 历史仍在，需服务侧轮换）与 probe-maoyulin-models.cjs；verify-scnet.mjs 改配置驱动任意 provider |
 | `src/cli/repl/ModelProvider.ts` | `PANSHA_MODEL` 注入、SCNET_API_KEY 硬编码、早期试点模型 magic shorthand（已泛化为 `_pickBestProviderModel`）、bare name→scnet 路由（已通用化） | **去模型独占化**：保留通用 `provider:model` 路由（`_pickBestProviderModel`）；新增 openPangu env/key 注入与示例 |
 | `src/cli/repl/commands/ModelCommand.ts` | `/model` 深层 scnet 特化(直读 scnet cfg/baseUrl/提示) | `/model list` 改 provider 无关读取(遍历 providers 各调 `/models`)；提示文案不再"只教你配 scnet" |
 | `src/adapter/*`（StrictStructuredToolAdapter / UniversalToolCallAdapter / XmlStructuredToolParser / ToolCallFormatDetector / universal-tool-parser.cjs；早期版本以旧类名存在，已完成重命名） | 结构化 `<>` 严格解析、OpenAI JSON tool_calls、松散文本三路解析 + 探测与容错 | **保留为自适应解析链**；这正是"多模型可移植"的关键——openPangu 若输出 JSON tool_calls 已被探测器(confidence .95)覆盖，若输出文本协议走 loose 容错；`<>` 严格路径仅"对支持该格式的高档位模型"开启 |
@@ -77,7 +77,7 @@
 ### 3.1 记忆"写入闭环"缺失（最高优先级）
 - `RefinedMemoryStore.refine(input)` 目前在**生产路径没有任何真实调用点**——仅 `tests/` 与 `compactService` 的 `refineCompactSignals()`（score≥85 补漏）。也就是说：每个真实完成的任务回合（REPL `executeTask` / `runAgentTask` / sseInteractive 回合落定）都不会把本次轨迹提炼成记忆卡并写盘。
 - 后果：`/memory list` 里除了 `/remember` 偏好与压缩补漏，几乎没有自动沉淀的教训/成功经验——"从经验中学习"停在进程内 FailureMemory 与文档承诺。
-- 修复点：任务结束时（拿到 `bestTrajectory`/得分/用户反馈）调 `refine({trajectory, taskStyle, applicableTiers, attemptCount, userFeedback})` → `save()`；配套 `markUsed()` 在卡片注入时刷新 `lastUsedAt`（现 `loadFiltered` 明确不做刷新，且无 `markUsed` 实现——读即用永不衰减问题已注释声明但方法未落地）。
+- 修复点：任务结束时（拿到 `bestTrajectory`/得分/用户反馈）调 `refine({trajectory, taskStyle, applicableTiers, attemptCount, userFeedback})` → `save()`；配套使用语义已落地为二态 `markInjected`（记账）/ `markVerified`（保鲜，2026-09-04 bf5f4a7），衰减锚已修为 max(lastSeen,lastUsedAt)；markVerified 的验证→cardIds 生产信号源仍待接线。
 
 ### 3.2 检索机制单一（无语义检索）
 - 仅 summary 子串 keyword(+1 cap 3) 与 `/memory search` 子串过滤；无 embedding / 向量库 / 语义召回。
@@ -119,17 +119,17 @@
   }
   ```
   运行 `panshalach` 后 `/model list` 或 `PANSHA_MODEL=openpangu:openPangu-7B`（见下文存储名迁移前兼容名）。
-- `ModelProvider`：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；去掉"bare name 必走 scnet"与试点模型 magic shorthand 的独占假设（保留为可选别名，不阻断通用 `provider:model`）。
+- ✅ **已完成（2026-09-04）** `ModelProvider`：env 三件套 `PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL`（SCNET_* 为 scnet 历史别名）；bare-name 路由泛化；magic shorthand 已删（17851f9）。
 - `ModelCommand`：`/model list` 改为遍历所有已配置 provider，逐个 `listProviderModelsWithContext`；缺省 fallback 优先非 scnet 的第一可用 provider。
-- `openai-compatible.complete`：解析 `message.tool_calls` 并返回 `ModelClientOutput`（Keep 试点模型文本格式探测作为后备）。`VerifyCritiqueLoop` 已能消费对象输出（`preParsedToolCalls`）。
+- ✅ **已完成（2026-09-04）** `openai-compatible.complete`：解析 `message.tool_calls` 返回结构化输出（detectedFormat:'openai-json'），SSE delta.tool_calls 拼装；文本协议三路解析保留为兜底。`VerifyCritiqueLoop` 消费通道（`preParsedToolCalls`）零改动。
 - 措辞泛化：`StructuredReasoner` 的工程纪律头（Read-Before-Write / Verify-Before-Claim / 标准格式 / 零幻觉不变）不绑定任何模型品牌；adapter 作为**严格 XML 解析器**由 tier + 模型能力联合决定（`strictStructured`）。
 
-### P2 — 记忆写入闭环 + markUsed（本次缺口修复核心）
+### P2 — 记忆写入闭环 + 使用语义（本次缺口修复核心）
 - 在任务落定点调用 `RefinedMemoryStore` 提炼写盘：
   - REPL `Repl.executeTask` 完成分支；`runAgentTask` 成功/失败后；sseInteractive 回合落定。
   - 输入：`{ trajectory: bestTrajectory, taskStyle, applicableTiers:[tier], attemptCount, userFeedback: 末轮/用户显式反馈 }`。
   - 落盘：`store.refine(...)` → `store.save(cards)` → `invalidateProjection()`。
-- 实现 `markUsed(cardId/ids)`：在 PromptBuilder/Chaser 注入命中的卡片上调 `lastUsedAt=now` 并写盘（注意频控：任务边界批量刷新，避免每步写盘）。
+- ✅ **已完成（2026-09-04 bf5f4a7）**：`markInjected`（纯记账，runAgentTask 已挂接）/ `markVerified`（原位刷新 lastUsedAt+count+1，直写持久化）+ 衰减锚 max(lastSeen,lastUsedAt) + archived 过滤。剩余：markVerified 信号源接线（随本节 refine 闭环一起）。
 - 验收：连续做 3 个同风格任务后 `/memory list` 自动出现教训/成功卡（无需 `/remember`）。
 
 ### P3 — 事件记忆 + 任务状态机 + 语义检索 v0

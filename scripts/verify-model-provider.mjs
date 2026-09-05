@@ -47,9 +47,9 @@ async function main() {
 
   // 3) Register a named client and isModelAvailable / create
   const p3 = createDefaultModelProvider();
-  p3.register('maoyulin', () => ({ async complete() { return 'MAO'; } }));
-  if (!p3.isModelAvailable('maoyulin')) { console.error('FAIL registered available'); process.exit(1); }
-  const c3 = p3.createClient('maoyulin');
+  p3.register('custom-provider', () => ({ async complete() { return 'MAO'; } }));
+  if (!p3.isModelAvailable('custom-provider')) { console.error('FAIL registered available'); process.exit(1); }
+  const c3 = p3.createClient('custom-provider');
   if (!c3) { console.error('FAIL create registered'); process.exit(1); }
   const r3 = await c3.complete('x');
   if (r3 !== 'MAO') { console.error('FAIL registered result'); process.exit(1); }

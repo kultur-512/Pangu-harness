@@ -5,8 +5,8 @@
 // Never throws on unavailable; returns null for createClient when not configured or fails.
 
 import type { ModelClient, CompleteOptions, ModelClientOutput, ProviderConfig } from '../cli/repl/types.js';
-import { createScnetClient } from './ScnetClient.js';
 import { createOpenAICompatClient, OpenAICompatClient } from './openai-compatible.js';
+import { execFileSync } from 'node:child_process';
 
 export interface ProviderRegistryConfig {
   providers?: Record<string, ProviderConfig>;
@@ -20,9 +20,44 @@ export interface ModelInfo {
 
 export class ProviderRegistry {
   private config: ProviderRegistryConfig;
+  /** apiKeyCmd 解析结果缓存（providerName → key）。成功才缓存；registry 重建时随之失效。 */
+  private _apiKeyCmdCache = new Map<string, string>();
 
   constructor(config: ProviderRegistryConfig = {}) {
     this.config = config || {};
+  }
+
+  /**
+   * 解析 provider 密钥。优先级：显式 apiKey > apiKeyCmd（stdout 首行，成功后缓存）。
+   * 借鉴 claude-code apiKeyHelper：密钥不落配置文件。
+   * 失败给明确报错（不静默回退空密钥），但 createClientSync 路径下表现为 null client。
+   */
+  private _resolveApiKey(prov: ProviderConfig, providerName: string): string {
+    if (prov.apiKey && String(prov.apiKey).trim()) return String(prov.apiKey).trim();
+    const cmd = prov.apiKeyCmd;
+    if (!cmd || typeof cmd !== 'string') return '';
+    const cached = this._apiKeyCmdCache.get(providerName);
+    if (cached) return cached;
+    try {
+      const out = execFileSync(cmd, {
+        shell: true,
+        encoding: 'utf-8',
+        timeout: 10_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      // 只取 stdout 首行（与 claude-code apiKeyHelper 语义一致：脚本只应输出密钥本身）
+      const key = String(out ?? '').split(/\r?\n/)[0]?.trim() || '';
+      if (!key) {
+        console.error(`[panshalach] apiKeyCmd for provider '${providerName}' produced empty output`);
+        return '';
+      }
+      this._apiKeyCmdCache.set(providerName, key);
+      return key;
+    } catch (e) {
+      console.error(`[panshalach] apiKeyCmd failed for provider '${providerName}': ${(e as Error).message}`);
+      return '';
+    }
   }
 
   listProviderNames(): string[] {
@@ -51,7 +86,7 @@ export class ProviderRegistry {
     }
 
     try {
-      const client = this._createRawCompatClient(prov);
+      const client = this._createRawCompatClient(prov, providerName);
       if (!client) return null;
       const ids = await client.listModels();
       return ids;
@@ -82,7 +117,7 @@ export class ProviderRegistry {
 
     // Try live fetch using a raw compat client that can give richer data
     try {
-      const fullModels = await this._fetchRawModels(prov);
+      const fullModels = await this._fetchRawModels(prov, providerName);
       if (!fullModels || fullModels.length === 0) {
         // fallback to plain ids if available
         const ids = await this.listModels(providerName);
@@ -127,7 +162,7 @@ export class ProviderRegistry {
     const prov = this._getProvider(providerName);
     if (!prov) return null;
 
-    const rawClient: OpenAICompatClient | null = this._createRawCompatClient(prov);
+    const rawClient: OpenAICompatClient | null = this._createRawCompatClient(prov, providerName);
     if (!rawClient) return null;
 
     let effectiveModel = modelName;
@@ -172,9 +207,9 @@ export class ProviderRegistry {
     return p;
   }
 
-  private _createRawCompatClient(prov: ProviderConfig): OpenAICompatClient | null {
+  private _createRawCompatClient(prov: ProviderConfig, providerName = ''): OpenAICompatClient | null {
     if (!prov || !prov.baseUrl) return null;
-    const apiKey = prov.apiKey || '';
+    const apiKey = this._resolveApiKey(prov, providerName);
     if (!apiKey) {
       // No key -> cannot create usable client
       return null;
@@ -183,6 +218,7 @@ export class ProviderRegistry {
       return createOpenAICompatClient({
         baseUrl: prov.baseUrl,
         apiKey,
+        headers: prov.headers,
         timeoutMs: 120_000,
       });
     } catch {
@@ -194,8 +230,10 @@ export class ProviderRegistry {
    * Fetch raw model objects from /models for context extraction.
    * We use a lightweight direct fetch here to get full objects.
    */
-  private async _fetchRawModels(prov: ProviderConfig): Promise<any[] | null> {
-    if (!prov || !prov.baseUrl || !prov.apiKey) return null;
+  private async _fetchRawModels(prov: ProviderConfig, providerName = ''): Promise<any[] | null> {
+    if (!prov || !prov.baseUrl) return null;
+    const apiKey = this._resolveApiKey(prov, providerName);
+    if (!apiKey) return null;
 
     const base = prov.baseUrl.replace(/\/+$/, '');
     const url = base + '/models';
@@ -204,7 +242,7 @@ export class ProviderRegistry {
       const res = await fetch(url, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${prov.apiKey}`,
+          'Authorization': `Bearer ${apiKey}`,
         },
       });
 

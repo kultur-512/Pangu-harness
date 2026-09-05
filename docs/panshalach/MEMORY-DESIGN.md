@@ -103,7 +103,7 @@ interface TaskState {
 
 ## 6. 维护策略（确定性）
 
-- **衰减**：加载时算 effective，不写回（读不刷新鲜）。四段：age<half/2 → 1.0；<half → .7；<2half → .4；else .1；且 <0.3 丢弃。分类半衰期：failure/general 90d、implementation/insight 180d、architecture 365d；count≥2 半衰期×count；preference 基 0.6（默认低于事实卡）；pin 冻结。
+- **衰减**：加载时算 effective，不写回（读不刷新鲜）。age 锚 = **max(lastSeen, lastUsedAt)**（接口契约 v3，2026-09-04 修复 `??` 短路——复发卡的 lastSeen 刷新此前对衰减不可见）。四段：age<half/2 → 1.0；<half → .7；<2half → .4；else .1；且 <0.3 丢弃。分类半衰期：failure/general 90d、implementation/insight 180d、architecture 365d；count≥2 半衰期×count；preference 基 0.6（默认低于事实卡）；pin 冻结。
 - **合并（M3.3a）**：active 且 effective≥0.5 的候选，2-gram 公共词元≥2 归组（组≤6）；合并 summary≤800、count=Σ、decayWeight 从 now 起算（防 Σcount 霸榜）；原卡 `status=archived` 软删（可回滚）。
 - **容量**：按 category 每类≤10（新者优先）→ 总≤200（按 weight×count 淘汰）。
 - **投影缓存**：多槽 LRU(≤8)，写操作 invalidate，跨衰减阶梯自动重建。
@@ -115,9 +115,10 @@ interface TaskState {
 - **现状**：`RefinedMemoryStore.refine()` 无生产调用点；任务结束了却不沉淀。
 - **修复**：在 `Repl.executeTask` 完成分支 / `runAgentTask` / sseInteractive 回合落定，调 `refine({trajectory: bestTrajectory, taskStyle, applicableTiers:[tier], attemptCount, userFeedback})` → `save()` → `invalidateProjection()`。attemptCount 语义：1 = 一次通过（触发 success 提炼信号）。
 
-### 7.2 无 markUsed（读即用永不衰减 bug 未正式修）
-- **现状**：`loadFiltered` 注释声明"使用刷新应由 markUsed 承担"，但无实现 → 卡永远按 lastUsedAt=lastSeen 衰减（一旦写入即只随时间降权，不因真实使用升鲜）。
-- **修复（P2）**：注入命中后按任务边界批量 `markUsed(cardIds)`：`lastUsedAt=now` + count 可选 +1，单次写盘 + invalidate。频控说明：任务边界批量，避免每步写盘；保留投影缓存一致性。
+### 7.2 使用语义二态化（✅ 已落地，接口契约 v3 · 2026-09-04）
+- **已修复**：`markUsed` 落地为二态（`RefinedMemoryStore.ts`）——`markInjected(cardIds)` 纯记账（仅内存账本，不写盘、不影响衰减/count，防"注入≠使用"自激励）；`markVerified(cardIds, now?)` 为唯一保鲜通道（lastUsedAt=now + count+1 + 直写持久化），判定来源由调用方确定性提供（任务内工具写入/验证文件集 ∩ 卡.referencedFiles）。衰减锚同步修复为 `max(lastSeen, lastUsedAt)`。
+- **推迟**：`markCited`（模型显式引用检测）——需 [M1] 卡号引用协议（注入已带编号，7B 引用实验 9/24 后做）。
+- **仍缺**：`markVerified` 的生产信号源接线（工具验证 → cardIds 回链），见 §7.1。
 
 ### 7.3 无语义检索（P3）
 - **v0 零依赖**：`memory/embed.ts` 字符 2-gram 词袋向量（对 summary 建索引，离线构建 O(n·k)），注入候选先召回 top-K，再与关键词相关性融合。

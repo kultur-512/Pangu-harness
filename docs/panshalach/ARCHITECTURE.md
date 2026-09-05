@@ -2,7 +2,7 @@
 
 > 华为命题：基于 openPangu 系列模型，构建具备长程上下文管理能力的记忆增强智能体。
 > 本文档对应命题交付要求：**最终系统架构 / 记忆模块设计 / 训练方案 / 推理流程 / 资源消耗 / 核心创新点**。
-> 状态：架构以现有可运行工程为基（62 组自动化测试通过），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。
+> 状态：架构以现有可运行工程为基（529 例自动化测试，`npm test` 实际值），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。
 
 ---
 
@@ -50,8 +50,9 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ├──────────────────────────────────────────────────────────────────┤
 │ 模型接入层                                                        │
 │   ProviderRegistry(openai-compatible) → openPangu                │
-│   streamChat / complete / /models；工具调用探测(JSON tool_calls    │
-│   · 文本协议 · <>严格) 三路自适应                                   │
+│   streamChat / complete / /models；原生 tool_calls 透传            │
+│   (detectedFormat:'openai-json'，SSE 增量拼装)为主路径，            │
+│   文本协议/<>严格 三路探测为兜底                                     │
 └──────────────────────────────────────────────────────────────────┘
           ▼ 推理底座
    openPangu-1B / 7B / 7B-VL
@@ -102,12 +103,12 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ### 2.4 已知差距与补齐路线（详见 MEMORY-DESIGN.md）
 | 缺口 | 补齐（里程碑） |
 |---|---|
-| 无回合写入闭环（refine 无生产调用点） | P2：任务落定调用 refine+save+markUsed |
+| 无回合写入闭环（refine 无生产调用点） | P2：任务落定调用 refine+save（markInjected/markVerified 已落地，见 bf5f4a7） |
 | 无语义检索（仅 keyword 子串） | P3：字符 2-gram 词袋余弦 v0 → 国产向量库/openPangu embedding 可插拔 |
 | 无业务事件层（rollout jsonl 是回合级） | P3：语义事件流（decision/constraint/requirement/verified/failure/progress） |
 | 无跨轮任务状态机 | P3：TaskState（原始需求长期锚/决策/未决/进度/已验证），防决策偏离原始需求 |
 | 一次性摘要（非多级滚动） | P3：粗粒度长期 + 结构化中期 + 逐字近期 |
-| loadFiltered 不刷新 lastUsedAt 且无 markUsed | P2：注入命中卡在任务边界批量刷新（读即用永不衰减 bug 的正式修复） |
+| ~~loadFiltered 不刷新 lastUsedAt 且无 markUsed~~ | ✅ 已修复（接口契约 v3）：二态 markInjected（记账）/markVerified（保鲜）+ 衰减锚 max(lastSeen,lastUsedAt) + archived 过滤 |
 
 ---
 
@@ -146,7 +147,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 - 基础模型：openPangu-1B / 7B / 7B-VL（预训练权重，OpenAI 兼容服务化）。
 - 无 SFT/LoRA（若后续做，记忆注入样本可微调 memory-usage 偏好；本期不引入以守住零依赖与可复现）。
-- "训练"体现为**记忆的归纳**：卡片提炼规则(失败→教训 / 一次通过→成功经验)、衰减与合并、压缩摘要策略——全部确定性、可审计、离线可复现（62 组测试覆盖）。
+- "训练"体现为**记忆的归纳**：卡片提炼规则(失败→教训 / 一次通过→成功经验)、衰减与合并、压缩摘要策略——全部确定性、可审计、离线可复现（529 例测试覆盖）。
 
 ---
 
@@ -167,7 +168,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ## 6. 核心创新点（相对常规长上下文方案）
 
-1. **记忆写入闭环 + 使用刷新**：回合结束自动提炼写盘 + `markUsed` 刷新注入即使用（修"读即用永不衰减"）——记忆会随真实任务生长，且不因读取而失效。
+1. **记忆写入闭环 + 使用语义二态**：回合结束自动提炼写盘 + `markInjected`（注入仅记账，不保鲜）/`markVerified`（机器判定的真实使用才刷新，修"读即用永不衰减"）——记忆会随真实任务生长，且不把"被看见"误当"被使用"。
 2. **分档记忆注入预算**：六档强度(quick→pangu)把记忆加载量、衰减、探索深度、并行度做成可量化行为契约；轻档省 token、高档全量。
 3. **参照文件交集过滤（P2-D）**：不是"什么都注入"，而是按"本任务实际触碰的文件"只载入相关记忆，命中为空自动回退——精准防上下文污染。
 4. **确定性记忆维护**：四段阶梯衰减 × 类别半衰期、同主题 2-gram 合并(原卡归档可回滚)、容量上限、投影缓存快照——离线可测，不依赖 LLM 判断记忆要不要留。
@@ -179,4 +180,4 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ## 7. 下一步（按 ROADMAP.md）
 
-P1 openPangu 泛化接入（provider/环境变量//model list 去模型特化）→ P2 记忆写闭环+markUsed → P3 事件记忆+任务状态机+语义检索 v0 → P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移 Panshalach 名。真机评估数据持续回填本文档与 EVALUATION.md。
+P1 openPangu 泛化接入（✅ env 三件套/tool_calls 透传已落地）→ P2 记忆写闭环（✅ 使用语义二态已落地，refine 调用点待接）→ P3 事件记忆+任务状态机（类型契约已落 types.ts）+语义检索 v0 → P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移收口。真机评估数据持续回填本文档与 EVALUATION.md。真机评估数据持续回填本文档与 EVALUATION.md。

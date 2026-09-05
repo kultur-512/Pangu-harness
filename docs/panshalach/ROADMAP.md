@@ -6,21 +6,21 @@
 - [x] REFACTOR-ASSESSMENT.md 重构评估报告
 - [x] 物理删除 docs/ 全部旧品牌（Panshalach / 早期模型试点）/30-rounds 规划复盘文档与 docs/agents、.agents
 - [x] docs/panshalach/ 命题文档集（README/ARCHITECTURE/MEMORY-DESIGN/EVALUATION/USER-GUIDE/ROADMAP）
-- [x] 可见层改名 Panshalach（package/bin、欢迎/身份串、server 文案、memory 标题、tier 描述、/init 文档指针）；62 组测试通过
+- [x] 可见层改名 Panshalach（package/bin、欢迎/身份串、server 文案、memory 标题、tier 描述、/init 文档指针）；测试通过（当时 62 组，现 529 例）
 
 ## P1 — openPangu 泛化接入（代码）
 - [x] `Glm53SweProChaser` 兼容层已删除
 - [x] ModelProvider 去模型 magic shorthand / `_pickBestProviderModel` 泛化（按 provider 取第一个可用模型）；`/model` 文案去品牌特化
-- [ ] `.panshalach.json` example 加 openpangu provider（本机/昇腾 OpenAI 兼容端点）
-- [ ] ModelProvider：新增 `PANG_OPENPANGU_BASE_URL / PANG_OPENPANGU_API_KEY / PANG_MODEL` env；bare-name 不再默认走 scnet
+- [x] `.panshalach.json` example 加 openpangu provider（本机/昇腾 OpenAI 兼容端点）
+- [x] ModelProvider：env 三件套泛化 `PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL`（SCNET_* 保留为 scnet 历史别名）；bare-name 路由泛化 + apiKeyCmd/headers（2026-09-04 df7a119）
 - [ ] `ModelCommand /model list` 改为遍历全部 provider 拉模型（去 scnet 独占文案）
-- [ ] `openai-compatible.complete` 透传并返回 `message.tool_calls`（ModelClientOutput）；VerifyCritiqueLoop 已支持
+- [x] `openai-compatible.complete` 透传并返回 `message.tool_calls`（detectedFormat:'openai-json'，SSE delta.tool_calls 拼装；VerifyCritiqueLoop 消费通道零改动）（2026-09-04 df7a119）
 - [ ] 模型措辞泛化为"工程纪律"（StructuredReasoner 铁律头 / 负向清单 / adapter 注释）
 - [ ] 验收：配置 openpangu 后可 `/model list` 看到 openPangu-1B/7B/7B-VL 并运行一次真任务
 
-## P2 — 记忆写入闭环 + markUsed（最高价值、最快见效）
-- [ ] 任务落定调用 `RefinedMemoryStore.refine({trajectory, taskStyle, applicableTiers, attemptCount, userFeedback})` → `save()`（REPL executeTask / runAgentTask / sseInteractive 回合落定）
-- [ ] `markUsed(cardIds)`：注入命中卡在任务边界批量刷新 lastUsedAt（修"读即用永不衰减"）
+## P2 — 记忆写入闭环 + 使用语义（最高价值、最快见效）
+- [ ] 任务落定调用 `RefinedMemoryStore.refine({trajectory, taskStyle, applicableTiers, attemptCount, userFeedback})` → `save()`（REPL executeTask / runAgentTask / sseInteractive 回合落定）——**仍缺，唯一剩余缺口**
+- [x] ~~`markUsed(cardIds)`~~ 已落地为二态 `markInjected`（记账）/ `markVerified`（保鲜，原位刷新）+ 衰减锚 max(lastSeen,lastUsedAt) + archived 过滤（2026-09-04 bf5f4a7）；markCited 推迟
 - [ ] 验收：连续 3 个同风格任务后 `/memory list` 自动出现教训/成功卡；新增单测
 
 ## P3 — 事件记忆 + 任务状态机 + 语义检索 v0（长程能力成型）

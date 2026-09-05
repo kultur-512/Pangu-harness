@@ -144,11 +144,100 @@ export interface InputReader {
   isMultiline?(): boolean;
 }
 
+// ==================== Interface Contract v2 (U1 · Leader) ====================
+// 长上下文/记忆系统的四层契约。原则：事件是事实源，断言/状态是控制面，
+// 记忆卡是从中派生的 prompt 投影（见 docs/agent/handover/feature-zhaiyuanhao-long-context-memory-review.md）。
+
+/** 来源锚点：事件/断言/记忆的 provenance，可精确到 commit 与符号 */
+export interface SourceRef {
+  path?: string;
+  commit?: string;
+  symbol?: string;
+  sessionId?: string;
+  turnId?: string;
+}
+
+/** 业务语义事件种类：事实层（append-only，不可变） */
+export type AgentEventKind =
+  | 'user_requirement'
+  | 'decision'
+  | 'constraint'
+  | 'requirement'
+  | 'verified'
+  | 'failure'
+  | 'progress'
+  | 'preference'
+  | 'memory_retrieved'
+  | 'memory_injected'
+  | 'memory_cited'
+  | 'memory_verified'
+  | 'context_compacted';
+
+/** AgentEvent：append-only 业务事件（事实源，可重放、可审计） */
+export interface AgentEvent {
+  id: string;
+  ts: number;
+  kind: AgentEventKind;
+  topic: string;
+  summary: string; // ≤120 字
+  detailPath?: string;
+  refs?: string[];
+  sessionId: string;
+  taskId?: string;
+}
+
+/** Assertion：带证据的可校验断言（事实层，可被修正/冲突，不随时间静默衰减） */
+export interface Assertion {
+  id: string;
+  subject: string;
+  predicate: string;
+  value: string;
+  scope: 'task' | 'workspace' | 'project' | 'global';
+  status: 'candidate' | 'verified' | 'superseded' | 'conflicted';
+  confidence: number; // 0..1，由证据决定，不由访问次数决定
+  validFrom: number;
+  validUntil?: number;
+  evidenceEventIds: string[];
+  provenance?: SourceRef[];
+}
+
+/** TaskState 子结构 */
+export interface TaskDecision { ts: number; what: string; why?: string; refs?: string[]; }
+export interface TaskOpenQuestion { ts: number; question: string; status: 'open' | 'answered' | 'abandoned'; }
+export interface TaskMilestone { ts: number; title: string; done: boolean; evidence?: string; }
+export interface TaskRisk { ts: number; risk: string; mitigation?: string; }
+export interface TaskVerifiedFact { ts: number; what: string; how?: string; command?: string; evidenceEventIds?: string[]; }
+
+/** TaskState：跨轮任务控制面（原始需求为长期锚，不因轮次多而漂移） */
+export interface TaskState {
+  taskId: string;
+  /** 首次回合锁定，永不漂移 */
+  originalRequirement: string;
+  currentGoal?: string;
+  decisions: TaskDecision[];
+  openQuestions: TaskOpenQuestion[];
+  milestones: TaskMilestone[];
+  verified: TaskVerifiedFact[];
+  risks: TaskRisk[];
+  nextStep?: string;
+  /** 乐观锁：后台/并发更新时检测覆盖 */
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ==================== Config ====================
 export interface ProviderConfig {
   type: 'openai-compatible';
   baseUrl: string;
   apiKey?: string;
+  /**
+   * 借鉴 claude-code apiKeyHelper：输出密钥的命令（stdout 首行作为密钥），
+   * 密钥不落配置文件。仅当 apiKey 为空时执行；结果按 provider 缓存。
+   */
+  apiKeyCmd?: string;
+  /** 附加请求头（对接 MindIE/vLLM 网关等需要额外头的场景），env PANSHA_<PROV>_HEADERS 可覆盖 */
+  headers?: Record<string, string>;
   /** Pre-cached or user-provided model list. If empty/missing, registry will try to fetch from /models */
   models?: string[];
   /** Per-model context window in tokens. If missing for a model, default to 256000 (256K) */
@@ -182,10 +271,11 @@ export interface StepCallback {
 }
 
 // ==================== ModelProvider abstraction (per ModelProvider blueprint) ====================
-/** 流式 chunk（P1.1）：reasoning 对应 reasoning_content 风格的思考增量 */
+/** 流式 chunk（P1.1）：reasoning 对应 reasoning_content 风格的思考增量；toolCalls 为原生 function calling 拼装结果 */
 export type ModelStreamChunk =
   | { type: 'text'; text: string }
-  | { type: 'thinking'; text: string };
+  | { type: 'thinking'; text: string }
+  | { type: 'toolCalls'; toolCalls: unknown[] };
 
 /** 最小可调用模型客户端接口，与 PanshalachChaser 兼容 */
 export interface ModelClient {

@@ -58,3 +58,18 @@ W1 起步：把仓库从"已完成改名+命题骨架"推到"4 主力可并行�
 - grep -ri glm src/ tests/ scripts/ examples/ = 0 命中
 
 **给其他分支的提示**：detectedFormat 值已从 glm-xml-strict/glm-loose-plain 改为 xml-strict/loose-plain；Glm53SweProChaser 类与 glm shorthand 已删除——若有分支引用需同步（详见 docs/agent/handover/）。
+
+## 23:30 模型接入层调查 + 配置驱动迭代方案（方案落库，未动代码）
+
+**想法/目的**：用户要求清理所有死调用逻辑、统一配置驱动，参考 claude-code 与 dsh 的调用思路，先出迭代方案等指令再开工。
+
+**动作内容**：
+- 逆向 claude-code cli.js：env 覆盖链（settings env 块 → process.env → 默认）、apiKeyHelper、provider 布尔选择器
+- 读 dsh preset.yml/agent.cordis.yml：声明式组合、宿主面/代理面分离
+- 调查本仓模型调用链：唯一网络路径 = openai-compatible.ts；定位死代码 5 文件与 ModelProvider scnet 特化 4 处
+- 发现 getModelContextLength 只查 scnet → openPangu-1B 的 4096 配置实际不生效
+- 发现 probe-scnet-real.mjs 硬编码真实 scnet 密钥（已进 git 历史，仅口头描述不落密钥本体）
+
+**结果**：方案落库 docs/agent/handover/feature-zhaiyuanhao1-model-provider-plan-2026-09-04.md（调查结论 + 参考思路 + 三步迭代 + 分支依赖 + 风险）。迭代 1（清理+env 泛化+apiKeyCmd）→ 迭代 2（tool_calls 透传）→ 迭代 3（env 块 + /model list 通用化）。
+
+**卡点 / 需要别人决定**：等用户开工指令；迭代 2 是王浩宇 ModelClientOutput 契约的前置，落定后需在 handover 追加声明。

@@ -10,8 +10,8 @@
 
 ## 工作内容（按 U1-U9 矩阵）
 
-- U1 `MemoryCard` 兼容 v2：保留 `RefinedMemoryCard` API，加 `provenance/sourceEventIds/sourceTurnIds/refs/evidence/status` 字段。
-- U1 `markUsed` 拆三态：`markInjected` / `markCited` / `markVerified(cardIds, evidenceEventIds)`——注入、引用、验证分开记账，杜绝自激励循环。
+- ~~U1 `MemoryCard` v2 字段~~ **裁决不做**（对抗评审：悬空伪 provenance；provenance 由 rollout `context` 事件承担，已落）。
+- ✅ U1 `markUsed` **二态已落地**（bf5f4a7，Leader 代做）：`markInjected`（记账）/ `markVerified(cardIds, now?)`（保鲜）；markCited 推迟。**你的剩余活**：`markVerified` 信号源接线（工具写入/验证文件集 ∩ 卡.referencedFiles）+ refine 生产调用点（§7.1 最紧要缺口）。
 - U2 5 维评分：`priority/confidence/validity/utility/freshness`；`weight × decay` 改 `priority × freshness`。
 - U3 `ContextCompiler`：统一预算装箱，替代 `PromptBuilder` 拼接逻辑；`ContextSnapshot` 每次模型调用产出。
 - U4 `scripts/eval/run-eval.mjs` 骨架：A/B/C/C1-C4 五档 + T1-T5 stub；U5 `smoke-eval.mjs` mock 模式。
