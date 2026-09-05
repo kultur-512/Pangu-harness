@@ -220,6 +220,8 @@ export interface TaskState {
   verified: TaskVerifiedFact[];
   risks: TaskRisk[];
   nextStep?: string;
+  /** 已折叠进本台账的事件 id（幂等记账；applyEvents 按此去重，R5） */
+  foldedEventIds?: string[];
   /** 乐观锁：后台/并发更新时检测覆盖 */
   version: number;
   createdAt: number;
