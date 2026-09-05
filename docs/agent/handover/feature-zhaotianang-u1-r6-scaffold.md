@@ -139,7 +139,57 @@ U3 王佐原计划把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 
 
 ---
 
-## 6. 给翟苑皓（W1 / Leader）—— 评审要点
+## 6. U2 `/task` CLI + U4 runner 实现注意（王佐 R5 review 沉淀，2026-09-05）
+
+### 6.1 必须处理的 4 项注意（不阻塞王佐 R5，U2/U4 落地时改）
+
+| # | 问题 | 来源 | U2/U4 落地要求 |
+|---|---|---|---|
+| 1 | `taskId` 命名空间冲突 | 王佐 create() taskId 冲突即抛 | **评测用前缀**：`eval-${taskFamily}-${ablation.toLowerCase()}-${seed}`（如 `eval-T1-a-42`），避免污染用户 taskId |
+| 2 | 路径污染 | 王佐默认 `.panshalach-task-state.json` 写 workspace 根 | **U4 runner 必传** `customFilename: '.panshalach-task-state.eval.json'`（或放在 `.tmp/` 已 gitignored 下）|
+| 3 | `nextStep` 选填 | 王佐 nextStep?: string | **runner 选填**：成功跑完可写 `TaskState.nextStep = 'verification done'`；失败/异常不写（避免误导） |
+| 4 | `memory_injected` 不折叠 | 王佐 STATE_KINDS 故意不含 memory_injected | **R6 schema 注释明确**：TaskState 是任务控制面，记忆注入是 prompt 层瞬时指标，两者语义分离（与王浩宇警告"verifiedCardIds ≠ injectedCardIds"同源原则）|
+
+### 6.2 TaskState 与 R6 schema 字段对应（并存，可叠加）
+
+| R6 schema 字段 | TaskState 字段 | 关系 |
+|---|---|---|
+| `verification.{signal,exitCode,commands}`（本次）| `TaskState.verified[]`（历史累积）| 维度不同，**并存**：U4 runner 写 R6 后调 `applyEvents` 折叠本次 verified |
+| `failureTaxonomy`（本次 enum）| `TaskState.risks[]`（历史累积）| 同上：失败时写 R6 + applyEvents 折叠 failure 事件 |
+| `memory.injectedCardIds` | （不在 TaskState）| **设计正确分离**：注入层 vs 控制面 |
+| `memory.verifiedCardIds` | （不在 TaskState）| 同上（落定层不进 TaskState，因为卡本身在 RefinedMemoryStore） |
+| `attemptCount` | （不在 TaskState）| 评测元数据，与任务控制无关 |
+
+### 6.3 与王浩宇警告呼应（同源原则）
+
+王浩宇警告 `verifiedCardIds ≠ injectedCardIds`（注入层 vs 落定层）。
+王佐 `STATE_KINDS` 不含 `memory_injected`（控制面 vs 注入面）。
+**两条警告实为同一条原则的实例**：TaskState 是任务控制面，与 prompt 注入层、记忆卡落定层**三者语义分离**。这是项目的一致设计。
+
+### 6.4 U2 `/task` CLI 子命令草案
+
+待 U2 开工细化（按王佐 TaskState 接口）：
+
+| 子命令 | 行为 | R6 影响 |
+|---|---|---|
+| `/task status [taskId]` | 显示 TaskState 结构 | 无 |
+| `/task risks [taskId]` | 显示 risks[] | 可选同步写 `result.tags.push('risk-shown')` |
+| `/task next [taskId]` | 显示 nextStep | 无 |
+| `/task decide X` | 调 `TaskState.update(taskId, s => ({...s, decisions: [...s.decisions, {ts, what: X}]}))` | 写 `result.tags.push('user-decision')` |
+| `/task orig X` | 调 `TaskState.create(taskId, X)`（首次）| 写 `result.tags.push('original-set')` |
+
+### 6.5 R6 评测 × TaskState 集成检查清单（U4 王浩宇实现 runOne 时必查）
+
+- [ ] U4 runner 调 `solveIssue` 前 `TaskStateStore.get(taskId)`（不存在则 `create`）
+- [ ] runner 用 `customFilename` 隔离路径
+- [ ] runner 用 `eval-` 前缀 taskId
+- [ ] runner 跑完后调 `applyEvents` 折叠 verified/failure/progress
+- [ ] runner 显式传 `attemptCount`（A 档不传，B/C/C4 显式 1）
+- [ ] runner 接 `AbortSignal.timeout(ms)` 透传 `config.signal`
+
+---
+
+## 7. 给翟苑皓（W1 / Leader）—— 评审要点
 
 | 决策点 | 我的选择 | 备选 | 状态 |
 |---|---|---|---|
@@ -153,15 +203,15 @@ U3 王佐原计划把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 
 
 ---
 
-## 7. 待对齐项
+## 8. 待对齐项
 
-- [ ] **王浩宇** U2 启动前：确认 `runOne()` 的 in-process vs 子进程选择
+- [ ] **王浩宇** U2 启动前：确认 `runOne()` 的 in-process vs 子进程选择（§4.4）
 - [ ] **王佐** U3 启动前：TaskState 注入后 `injectedCardIds` 反映方式
 - [ ] **Leader** U4 周日 9/14 接口契约评审：本文件 §2 接口签名全员对齐
 
 ---
 
-## 8. 测试状态（U1 已跑通）
+## 9. 测试状态（U1 已跑通）
 
 | 检查 | 结果 |
 |---|---|
@@ -173,7 +223,7 @@ U3 王佐原计划把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 
 
 ---
 
-## 9. 风险与降级
+## 10. 风险与降级
 
 | 风险 | 触发 | 降级 |
 |---|---|---|
@@ -185,7 +235,7 @@ U3 王佐原计划把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 
 
 ---
 
-## 10. 9/14 评审目标（U1 R6 这块的 3 个接口对齐）
+## 11. 9/14 评审目标（U1 R6 这块的 3 个接口对齐）
 
 - [ ] `schema.mjs` 导出签名（`validateResult` / `newResult` / `RESULT_SCHEMA`）
 - [ ] `run-eval.mjs` CLI 行为表（本文件 §2.3）
@@ -193,7 +243,7 @@ U3 王佐原计划把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 
 
 ---
 
-## 11. 我的下一步
+## 12. 我的下一步
 
 - [x] 9/5 周六：v0.6.4 推送后落地 R6 骨架（commit e362de4 + 53c1d02）
 - [x] 9/5 周六：handover 落库（commit 688f8ae）
