@@ -2,7 +2,7 @@
 
 agent: zhaotianang / <待填写>
 date:  2026-09-05
-last_updated: 12:00
+last_updated: 13:30 (PR #1 创建后追加)
 
 ## 想做什么（目的）
 周六前置日：把 v0 的 `EmbeddingProvider` 接口 + LocalNGramHashProvider 搬进项目 + 提 PR 给 Leader 评审，赶在 9/14 接口契约 gate 前把签名对齐。
@@ -22,7 +22,10 @@ last_updated: 12:00
   - runAgentTask 新增 memory_injected 事件 → U6 集成要走
 - 写 src/memory/embed.ts（原样搬，独立无依赖）
 - 写 docs/agent/handover/feature-zhaotianang-handover.md（加 §3 v3 兼容性影响）
-- (将) commit + push + 提 PR-1（目标 develop）
+- commit 3f0d40b（3 文件，464 行）→ push origin/zhaotianang1
+- 解决 SSH key 缺失：ed25519 生成 + ssh-agent + 加公钥到 gitee soney101
+- 解决账号安全评级低：绑定第三方账号（用微信）
+- **PR #1 创建成功**：https://gitee.com/Kultur/pangu-harness/pulls/1（源 zhaotianang1 → 目标 develop）
 
 ## 卡点 / 需要别人决定（接口争议）
 - 王浩宇（Doer）wanghaoyu1 仍 0 commit → U2 markInjected 二态化与 embedCache 策略待对齐
@@ -37,10 +40,11 @@ last_updated: 12:00
 - [ ] npm test 相关子集（待 U1 写测试时跑）
 
 ## TODO（明天 / 下一轮）
-- [ ] 9/7 周一 U1 D1 上午：git fetch origin develop + cat handover/* + 写第一篇工作日志（写在本文件后追加）
+- [ ] 9/6 周日（今天后）：等 Leader 评审 PR #1；可能要求改命名/补 doc/调整签名
+- [ ] 9/7 周一 U1 D1 上午：git fetch origin develop + cat handover/* + 看 PR 评论
 - [ ] 9/7 周一 D1 下午：写 tests/memory/embed.test.ts + tests/memory/cosine.test.ts
 - [ ] 9/7 周一 D1 晚：npx tsc --noEmit + npm test 子集 + verify-panshalach-cleanup.mjs
-- [ ] 9/8 周二 D2 上午：commit 测试 + push + 提 PR-1（追加测试）
+- [ ] 9/8 周二 D2 上午：commit 测试 + push + 提 PR-2（追加测试 + 关闭 PR #1 时合并或关联）
 
 ## 开工前必查
 - [x] git fetch origin master develop（周六上午已做）

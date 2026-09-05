@@ -223,7 +223,8 @@ private lastInjectedCardIds: string[];
 
 - [x] 9/4 周五：起草本 handover + embed.ts 骨架
 - [x] 9/5 周六：发现 memory v3 兼容性，更新 handover §3
-- [ ] 9/5 周六：搬 embed.ts 到 src/memory/ + commit + push + 提 PR（目标 develop）
-- [ ] 9/7 周一 U1 D1 上午：`git fetch origin develop` + `cat handover/*` + 写第一份工作日志
+- [x] 9/5 周六：搬 embed.ts 到 src/memory/ + commit `3f0d40b` + push + 提 **PR #1** https://gitee.com/Kultur/pangu-harness/pulls/1（源 zhaotianang1 → 目标 develop）
+- [ ] 9/6~7 周末/周一：等 Leader 评审 PR #1；按意见调整
+- [ ] 9/7 周一 U1 D1 上午：`git fetch origin develop` + `cat handover/*` + 看 PR 评论
 - [ ] 9/7 周一 D1 下午：完成 embed.ts 的单元测试 + 自查（`npx tsc --noEmit` + `npm test`）
-- [ ] 9/8 周二 D2：commit 测试 + push + 提 PR-1 + 完善 handover §4-6
+- [ ] 9/8 周二 D2：commit 测试 + push + 提 PR-2（追加测试）+ 完善 handover §4-6
