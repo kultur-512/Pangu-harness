@@ -196,8 +196,21 @@ export class RefinedMemoryStore {
       cards: capped,
     };
 
+    // C1（ROADMAP-NEXT §3.2）：MAX_FILE_SIZE_BYTES 声明执行 —— 序列化后超限
+    // 直接 reject（throw，与 writeFileSync 的既有错误风格一致），拒绝写半截大文件。
+    const serialized = JSON.stringify(file, null, 2);
+    if (Buffer.byteLength(serialized, 'utf-8') > MEMORY_LIMITS.MAX_FILE_SIZE_BYTES) {
+      const sizeKiB = (Buffer.byteLength(serialized, 'utf-8') / 1024).toFixed(1);
+      const capKiB = Math.round(MEMORY_LIMITS.MAX_FILE_SIZE_BYTES / 1024);
+      throw new Error(
+        `✗ 记忆文件写入被拒绝：序列化后 ${sizeKiB}KiB 超过上限 ${capKiB}KiB` +
+        `（MEMORY_LIMITS.MAX_FILE_SIZE_BYTES）。本次 save 未写盘；` +
+        `请先用 /memory clear 或等待衰减清理旧卡后重试。`
+      );
+    }
+
     // 写入
-    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+    writeFileSync(this.filePath, serialized, 'utf-8');
     this.cache = file;
     this.invalidateProjection(); // save() 写入 → 重建
 

@@ -229,14 +229,27 @@ describe('Positive Memory (M1.1)', () => {
     assert.equal(cards.filter(c => c.kind === 'success').length, 0, '闲聊/纯问答不喂成功卡');
   });
 
+  it('0.7：answered 轨迹走完整 refine→save 落盘链路后，文件里也没有 success 卡（持久化层）', () => {
+    // F4：refine 返回值层断言之外，补"调用方照常 save 落盘"后的最终状态——
+    // answered 轮即使成功回复（success=true）也不得写盘 success 卡。
+    const ws = makeTempWorkspace();
+    const store = new RefinedMemoryStore(ws);
+    const traj = { ...fakeTraj(true), stopReason: 'answered' as const };
+    const cards = store.refine({ trajectory: traj, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    store.save(cards);
+    const persisted = store.list().filter(c => c.kind === 'success');
+    assert.equal(persisted.length, 0, 'answered 轮不得在 .panshalach-memory.json 里留下 success 卡');
+  });
+
   it('POSITIVE_FEEDBACK_RE matches the listed words', () => {
     for (const w of ['完美', '可以', '很好', '不错', 'OK', '好的', '没问题']) {
       assert.ok(POSITIVE_FEEDBACK_RE.test(`结果${w}`), `${w} should match`);
     }
   });
 
-  // POSITIVE_SCORE_THRESHOLD 用例已随 score 移除（2026-09-05）：
-  // 正向信号 = 用户正向反馈 OR trajectory.success（见上方用例）
+  // POSITIVE_SCORE_THRESHOLD 用例已随 score 移除（2026-09-05）。
+  // 0.7 收紧后正向信号 = 用户正向反馈 OR stopReason==='completed'
+  // （trajectory.success=true 不再是喂卡信号，answered 也不喂——见上方用例）
 });
 
 // ==================== M1.2: /remember + /forget ====================

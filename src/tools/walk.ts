@@ -1,8 +1,13 @@
 // src/tools/walk.ts (internal helper shared by glob/grep)
 // Directory walk mirroring RepoExplorer's ignoreDirs set (same list, mirrored
 // per M1 instruction since RepoExplorer doesn't export it).
+//
+// C4（ROADMAP-NEXT §3.2）：不跟随符号链接。受信工作区假设下，链接通常无害；
+// 但 glob/grep 的遍历必须防御两类风险——(1) 指向祖先目录的链接造成无限循环，
+// (2) 链接逃逸出工作区边界（pathGuard 只校验了基路径，管不住遍历中的链接）。
+// 因此 dirent.isSymbolicLink() 一律跳过（junction/symlink 都算）。
 
-import { readdirSync, statSync } from 'fs';
+import { readdirSync } from 'fs';
 import path from 'path';
 
 export const IGNORE_DIRS = new Set([
@@ -29,26 +34,23 @@ export function walkFiles(
       if (files.length >= maxFiles) truncated = true;
       return;
     }
-    let entries: string[];
+    let entries: import('fs').Dirent[];
     try {
-      entries = readdirSync(dir);
+      // withFileTypes: dirent 类型不跟随链接，避免逐项 statSync（lstat 语义）
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       return; // unreadable dir — skip silently
     }
-    for (const name of entries) {
+    for (const ent of entries) {
       if (files.length >= maxFiles) { truncated = true; return; }
-      const abs = path.join(dir, name);
-      const rel = relBase ? relBase + '/' + name : name;
-      let st;
-      try {
-        st = statSync(abs);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) {
-        if (IGNORE_DIRS.has(name) || name.startsWith('.git')) continue;
+      // C4: symlink 防御 —— 不跟随符号链接/联接（防循环 + 防逃逸出工作区）
+      if (ent.isSymbolicLink()) continue;
+      const abs = path.join(dir, ent.name);
+      const rel = relBase ? relBase + '/' + ent.name : ent.name;
+      if (ent.isDirectory()) {
+        if (IGNORE_DIRS.has(ent.name) || ent.name.startsWith('.git')) continue;
         visit(abs, rel, depth + 1);
-      } else if (st.isFile()) {
+      } else if (ent.isFile()) {
         files.push({ abs, rel });
       }
     }

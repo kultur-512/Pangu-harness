@@ -44,6 +44,11 @@ export type RolloutEvent =
   | { type: 'compact'; ts: number; syntheticTurn: Turn; coveredTurnIds: string[]; beforeTokens?: number; afterTokens?: number }
   | { type: 'context'; ts: number; snapshot: ContextSnapshotPayload };
 
+// C5（ROADMAP-NEXT §3.2）：审计状态戳。同会话此前发生过 append 写失败时，其后
+// 成功落盘的事件会携带 auditStatus: 'write-failed:N'（N=累计失败次数），使
+// "零事件"与"没注入/写失败"可区分。老文件无此字段 → 读路径照常解析（向后兼容）。
+export type AuditedRolloutEvent = RolloutEvent & { auditStatus?: string };
+
 function rolloutsDir(): string {
   return path.join(os.homedir(), '.panshalach', 'rollouts');
 }
@@ -56,13 +61,40 @@ function ensureDir(): void {
   fs.mkdirSync(rolloutsDir(), { recursive: true });
 }
 
-/** Append one event (creates the file lazily). Never throws. */
-export function appendEvent(sessionId: string, event: RolloutEvent): void {
+// ==================== C5：append 审计状态（会话级内存标志） ====================
+// appendEvent 从前完全吞异常 → rollout 里"零事件"无法区分"没发生"还是"发生了
+// 但写失败"。现在失败会计入会话级计数（'write-failed:N'），并可通过
+// auditStatusOf() 查询；此后的成功写入会在事件上落 auditStatus 字段。
+const auditWriteFailures = new Map<string, number>();
+
+/** 会话级 append 审计状态：'ok' | 'write-failed:N'（N=累计写失败次数）。 */
+export function auditStatusOf(sessionId: string): string {
+  const n = auditWriteFailures.get(sessionId) ?? 0;
+  return n === 0 ? 'ok' : `write-failed:${n}`;
+}
+
+/** 重置会话审计状态（测试 / id 复用时用）。 */
+export function resetAuditStatus(sessionId: string): void {
+  auditWriteFailures.delete(sessionId);
+}
+
+/** Append one event (creates the file lazily). Never throws; returns whether
+ *  the event actually reached the disk. C2 依赖该返回值做"先写盘后改内存"。 */
+export function appendEvent(sessionId: string, event: RolloutEvent): boolean {
   try {
+    const failures = auditWriteFailures.get(sessionId) ?? 0;
+    // C5：此前发生过写失败 → 本条成功落盘的事件带上审计戳
+    const payload: AuditedRolloutEvent = failures > 0
+      ? { ...event, auditStatus: `write-failed:${failures}` }
+      : event;
     ensureDir();
-    fs.appendFileSync(fileFor(sessionId), JSON.stringify(event) + '\n', 'utf-8');
+    fs.appendFileSync(fileFor(sessionId), JSON.stringify(payload) + '\n', 'utf-8');
+    return true;
   } catch {
-    // best-effort audit trail; never break the interactive flow
+    auditWriteFailures.set(sessionId, (auditWriteFailures.get(sessionId) ?? 0) + 1);
+    // best-effort audit trail; never break the interactive flow —
+    // 但失败不再完全不可见：auditStatusOf() 可查询（C5）。
+    return false;
   }
 }
 
@@ -92,15 +124,16 @@ export function appendAgentEvent(sessionId: string, event: AgentEvent): void {
   appendEvent(sessionId, { type: 'agent', ts: Date.now(), event });
 }
 
-/** 接口契约 v3：压缩标记——内嵌完整 synthetic turn，replayInto 消费后 resume 无需模型即可重建压缩态。 */
+/** 接口契约 v3：压缩标记——内嵌完整 synthetic turn，replayInto 消费后 resume 无需模型即可重建压缩态。
+ *  C2：返回是否真实写盘成功——compactService 先写盘后改内存依赖它。 */
 export function appendCompactMarker(
   sessionId: string,
   syntheticTurn: Turn,
   coveredTurnIds: string[],
   beforeTokens?: number,
   afterTokens?: number
-): void {
-  appendEvent(sessionId, {
+): boolean {
+  return appendEvent(sessionId, {
     type: 'compact', ts: Date.now(),
     syntheticTurn, coveredTurnIds: [...coveredTurnIds],
     beforeTokens, afterTokens,

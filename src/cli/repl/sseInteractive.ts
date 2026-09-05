@@ -13,6 +13,7 @@
 // - Non-TTY silently downgrades to the classic REPL (smoke tests stay green).
 
 import readline from 'readline';
+import { readFileSync } from 'node:fs';
 import { createOutputRenderer } from './OutputRenderer.js';
 import { createCliApprovalBridge, isApprovalActive, cancelActiveApproval, setApprovalActivityListener } from '../../tools/approval.js';
 import { Session } from './Session.js';
@@ -20,7 +21,9 @@ import * as rollout from './rolloutStore.js';
 import { InputQueue, classifyRunningInput, formatSteerInjection } from './InputQueue.js';
 import { ModeRing } from './ModeRing.js';
 import { AgentTree } from './AgentTree.js';
-import { stringWidth } from './stringWidth.js';
+import { stringWidth, padByWidth } from './stringWidth.js';
+import { fuzzyFilter, fuzzyScore } from './FuzzyMatcher.js';
+import { buildHelpView } from './commands/HelpCommand.js';
 import type { ModelProvider } from './types.js';
 
 // ---- P1（批次 A）：line 模式渲染纯助手（模块级，便于测试） ----
@@ -199,6 +202,188 @@ export function nextStepHint(stopReason?: string): string {
   return '模型未完成验证 · 可补充要求重试 · /undo 回退变更';
 }
 
+// ==================== 批次 B（P2 引导级 + P3 质感级）纯助手 ====================
+// 模块级、无 IO、无 timer — 便于单测；line 段只做接线。
+
+let cachedPkgVersion: string | null = null;
+/** package.json version（运行时读，dist 与 src 距项目根都是两层；读不到兜底 0.7.0）。 */
+export function pkgVersion(): string {
+  if (cachedPkgVersion) return cachedPkgVersion;
+  try {
+    const parsed = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8'));
+    cachedPkgVersion = String(parsed?.version || '0.7.0');
+  } catch {
+    cachedPkgVersion = '0.7.0';
+  }
+  return cachedPkgVersion;
+}
+
+/** P2-1：模型名剥掉 `provider:` 前缀（`openpangu:xxx` → `xxx`；无前缀原样）。 */
+export function stripModelProviderPrefix(model: string): string {
+  const s = String(model || '').trim();
+  const i = s.indexOf(':');
+  return i === -1 ? s : s.slice(i + 1);
+}
+
+/** P2-1 启动横幅 v2：粗体名 + dim 元信息两行（颜色由调用方套，这里只管内容与截断）。 */
+export function buildBanner(opts: {
+  model: string;
+  tier: string;
+  mode: string;
+  workspace: string;
+  version?: string;
+  width?: number;
+}): string[] {
+  const width = Math.max(20, Number(opts.width) || 80);
+  const metaBase = `  模型 ${stripModelProviderPrefix(opts.model)} · 档位 ${opts.tier} · 模式 ${opts.mode} · `;
+  const cwdBudget = Math.max(1, width - stringWidth(metaBase));
+  const cwd = truncateByWidth(String(opts.workspace || ''), cwdBudget);
+  return [
+    `烛龙 Zhulong v${opts.version ?? pkgVersion()}`,
+    metaBase + cwd,
+    '  ? 快捷帮助 · /help 全部命令 · Ctrl+C 中断任务/二次退出',
+  ];
+}
+
+/** line 模式实际支持的命令（Tab 补全 + 未知命令建议的数据源；顺序 = 常用度）。 */
+export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> = [
+  { name: 'help', aliases: ['?', 'h'] },
+  { name: 'mode' },
+  { name: 'model' },
+  { name: 'memory' },
+  { name: 'usage' },
+  { name: 'undo' },
+  { name: 'compact' },
+  { name: 'resume' },
+  { name: 'status' },
+  { name: 'tier' },
+  { name: 'edit', aliases: ['e'] },
+  { name: 'clear' },
+  { name: 'verbose' },
+  { name: 'approvals' },
+  { name: 'agents' },
+  { name: 'tree' },
+  { name: 'feature' },
+  { name: 'init' },
+  { name: 'rewind' },
+  { name: 'exit', aliases: ['quit', 'q'] },
+];
+
+/**
+ * P2-2：line 模式 readline completer（同步适配：只补全 `/` 开头的命令名，
+ * 精确前缀优先，模糊兜底走 FuzzyMatcher；顺序即 LINE_COMMANDS 常用度）。
+ */
+export function completeLineCommand(line: string): [string[], string] {
+  const raw = String(line ?? '');
+  if (!raw.startsWith('/') || /\s/.test(raw.slice(1))) return [[], raw];
+  const prefix = raw.slice(1).toLowerCase();
+  const exact = LINE_COMMANDS.filter(
+    (c) => c.name.startsWith(prefix) || (c.aliases || []).some((a) => a.startsWith(prefix))
+  ).map((c) => '/' + c.name);
+  if (exact.length > 0) return [[...new Set(exact)], raw];
+  const fuzzy = fuzzyFilter(prefix, LINE_COMMANDS.map((c) => ({ name: c.name, aliases: c.aliases as string[] })));
+  if (fuzzy.length > 0) return [fuzzy.map((f) => '/' + f.name), raw];
+  return [[], raw];
+}
+
+/** P2-2：未知命令 → 最近命令建议（含别名得分；低于子序列档 0.35 视为无建议）。 */
+export function suggestCommand(input: string): string | null {
+  const q = String(input || '').replace(/^\//, '').toLowerCase().trim();
+  if (!q) return null;
+  let best: string | null = null;
+  let bestScore = 0;
+  for (const c of LINE_COMMANDS) {
+    const names = [c.name, ...(c.aliases || [])];
+    let s = 0;
+    for (let i = 0; i < names.length; i++) {
+      const sc = fuzzyScore(q, names[i]) * (i > 0 ? 0.95 : 1);
+      if (sc > s) s = sc;
+    }
+    if (s > bestScore) {
+      bestScore = s;
+      best = c.name;
+    }
+  }
+  return bestScore >= 0.35 ? best : null;
+}
+
+/** P2-2：`?` 快捷帮助面板（常用 8 条 + dim 尾行指向 /help；颜色由调用方套）。 */
+export function buildQuickHelpLines(totalCommands: number): string[] {
+  const entry = (label: string, desc: string) => `  ${padByWidth(label, 10)}  ${desc}`;
+  return [
+    '快捷帮助',
+    entry('直接输入', '任务描述即开始，如：修复 README 里的错别字'),
+    entry('/mode', '切换 plan/default/auto-accept（shift+tab 同效）'),
+    entry('/model', '查看或切换模型'),
+    entry('/memory', '查看沉淀的记忆'),
+    entry('/usage', '本会话 token 用量'),
+    entry('/undo', '撤销最近一次写盘'),
+    entry('/compact', '立即压缩上下文'),
+    entry('/resume', '列出可恢复的会话'),
+    entry('/exit', '退出（Ctrl+C 执行中=中断 · 空闲连按两次=退出）'),
+    `/help 查看全部 ${totalCommands} 条命令`,
+  ];
+}
+
+/** P2-4：模式徽标行（dim 由调用方套；full 同 auto-accept 的 ⏵⏵ 符号）。 */
+export function modeBadgeLine(mode: string): string {
+  const m = String(mode || '');
+  const glyph = m === 'plan' ? '⏸' : m === 'default' ? '⏵' : '⏵⏵';
+  return `${glyph} ${m} · shift+tab 切换`;
+}
+
+/** P2-4：/mode 切换回执的一句后果说明。 */
+export const MODE_CONSEQUENCE: Record<string, string> = {
+  plan: '只读计划模式，写操作与 bash 会被拒绝',
+  default: '写操作需确认',
+  'auto-accept': '写操作自动接受（危险操作仍标红）',
+  full: '全部放行（危险操作仍标红）',
+};
+
+/** P2-4：切换回执整行。 */
+export function modeSwitchReceipt(mode: string): string {
+  return `已切换: ${mode} · ${MODE_CONSEQUENCE[String(mode)] || ''}`.replace(/ · $/, '');
+}
+
+/** P3-2：phase 值本地化（渲染层映射，不改事件值；未知值原样透传）。 */
+export function localizePhase(phase: string): string {
+  const map: Record<string, string> = { explore: '侦察', rollout: '执行', judge: '评判', done: '收尾' };
+  return map[String(phase || '')] || String(phase || '');
+}
+
+/** P3-2：rollout 状态本地化（/agents 展示用）。 */
+export function localizeRolloutStatus(status: string): string {
+  const map: Record<string, string> = { running: '进行中', done: '完成', failed: '失败', pending: '等待' };
+  return map[String(status || '')] || String(status || '');
+}
+
+/**
+ * P3-3：情境 tip 节流 — 每类触发点一次性（key 去重）+ 每会话全局上限（默认 2 条）。
+ */
+export function createTipGate(max = 2) {
+  let shown = 0;
+  const seen = new Set<string>();
+  return {
+    canShow(key: string): boolean {
+      return shown < max && !seen.has(key);
+    },
+    markShown(key: string): void {
+      if (!seen.has(key)) {
+        seen.add(key);
+        if (shown < max) shown += 1;
+      }
+    },
+    get shownCount(): number {
+      return shown;
+    },
+  };
+}
+
+/** P3-3：启动 tip 条件 — 新会话（无历史轮、非 resume）且掷中 50% 概率。 */
+export function shouldShowStartupTip(turns: number, resumed: boolean, rand: number): boolean {
+  return turns === 0 && !resumed && rand < 0.5;
+}
+
 export interface SseInteractiveOptions {
   provider?: ModelProvider;
   defaultTier?: string;
@@ -349,6 +534,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   let lineRl: readline.Interface | null = null;
   let lineSetPrompt: () => void = () => {};
 
+  // 批次 B（P2/P3）：待定命令建议 / 模式徽标待打印 / 情境 tip 节流。
+  // pendingSuggestion 只在 line 空闲态由「未知命令」分支置位；回车确认执行，
+  // Esc / 任何其他输入取消。
+  let pendingSuggestion: string | null = null;
+  let modeBadgePending = true; // 启动时输出一次（P2-4），此后仅模式变化后再输出
+  const sessionTipGate = createTipGate(2);
+
   // For /edit (P1 high-value): remember last meaningful surfaced content (result text, big markdown/thought)
   // so user can pull it back into the input area to edit/resubmit or refine.
   let lastOutput = '';
@@ -381,6 +573,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   // P4-4.7: mode ring — shift+tab cycles; plan floors approval to readonly,
   // leaving plan restores the ring-mapped approval mode.
+  // P2-4（批次 B）：切换回执升级为 `已切换: <模式> · <后果>`；徽标行置 pending，
+  // 下一次空闲提示符上方输出一次（避免刷屏）。
   const modeRing = new ModeRing('default', (m) => {
     if (m === 'plan') {
       session.setPlanMode(true);
@@ -389,18 +583,24 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       session.approvalMode = m === 'auto-accept' ? 'full' : m === 'full' ? 'full' : 'default';
     }
     try { rollout.appendApprovalChange(session); } catch {}
-    emitFeed(`模式: ${m}${m === 'plan' ? '（只读+方案；写/bash 拒绝）' : m === 'auto-accept' ? '（写免确认，danger 仍红标）' : m === 'full' ? '（全放行，danger 仍红标）' : ''}`, 'info');
+    modeBadgePending = true;
+    emitFeed(modeSwitchReceipt(m), 'info');
   });
-  function cycleMode(): string {
-    const m = modeRing.cycle();
+  function pushRichModeBadge(m: string) {
     if (typeof (bridgeRef as any).current?.setTop === 'function') {
       try { bridgeRef.current.setTop({ modeBadge: m === 'plan' ? 'PLAN' : m === 'auto-accept' ? 'AUTO' : m === 'full' ? 'FULL' : '' }); } catch {}
     }
+  }
+  function cycleMode(): string {
+    const m = modeRing.cycle();
+    pushRichModeBadge(m);
     return m;
   }
   function setMode(m: any) {
+    // fix（批次 B）：旧实现 set(m) 后又 cycleMode() —— cycle 会把模式再推进一格，
+    // `/mode plan` 实际落在 default。set 只需同步 rich 徽标，不再 cycle。
     modeRing.set(m);
-    cycleMode(); // sync badge (no-op if unchanged? set+badge sync is harmless)
+    pushRichModeBadge(String(m));
   }
   function emitFeed(text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
     if (typeof (bridgeRef as any).current?.pushFeed === 'function') {
@@ -466,6 +666,46 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       emitFeed(`queued ×${queue.taskCount}：${routed.payload}`, 'info');
     }
     updateQueueCount();
+  }
+
+  // P2-3（批次 B）：与 classic（Repl.ts）完全同序的 26 命令注册表 —
+  // /help 的分组渲染、/resume 的委托执行都以它为数据源，三处输出一致。
+  let sharedRegistry: any = null;
+  async function getSharedRegistry(): Promise<any> {
+    if (sharedRegistry) return sharedRegistry;
+    const { CommandRegistry } = await import('./CommandRegistry.js');
+    const reg = new CommandRegistry();
+    const mods = await Promise.all([
+      import('./commands/HelpCommand.js'),
+      import('./commands/ExitCommand.js'),
+      import('./commands/ClearCommand.js'),
+      import('./commands/StatusCommand.js'),
+      import('./commands/TierCommand.js'),
+      import('./commands/WorkspaceCommand.js'),
+      import('./commands/ModelCommand.js'),
+      import('./commands/HistoryCommand.js'),
+      import('./commands/RunCommand.js'),
+      import('./commands/SimulateCommand.js'),
+      import('./commands/ReviewCommand.js'),
+      import('./commands/MemoryCommand.js'),
+      import('./commands/TraceCommand.js'),
+      import('./commands/ConfigCommand.js'),
+      import('./commands/SessionCommand.js'),
+      import('./commands/InitCommand.js'),
+      import('./commands/ServeCommand.js'),
+      import('./commands/ApprovalsCommand.js'),
+      import('./commands/UndoCommand.js'),
+      import('./commands/CompactCommand.js'),
+      import('./commands/UsageCommand.js'),
+      import('./commands/ResumeCommand.js'),
+      import('./commands/RewindCommand.js'),
+      import('./commands/AgentsCommand.js'),
+      import('./commands/FeatureCommand.js'),
+      import('./commands/TreeCommand.js'),
+    ]);
+    for (const m of mods) reg.register((m as any).default);
+    sharedRegistry = reg;
+    return reg;
   }
 
   async function runTaskViaSse(task: string, bridge?: any) {
@@ -534,7 +774,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         if (arg) {
           const n = agentTree.get(arg.trim());
           if (!n) { feedOrLine(`未找到 rollout: ${arg}`); return; }
-          feedOrLine(`rollout ${n.id}（${n.status}）`, 'bold');
+          feedOrLine(`rollout ${n.id}（${localizeRolloutStatus(n.status)}）`, 'bold');
           feedOrLine(`  步数: ${n.stepCount} · 耗时: ${(n.durationMs / 1000).toFixed(1)}s · 最近阶段: ${n.lastPhase ?? '-'}`);
           return;
         }
@@ -544,11 +784,12 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         const failed = nodes.filter((n) => n.status === 'failed').length;
         const pending = nodes.filter((n) => n.status === 'pending').length;
         const totalMs = nodes.reduce((a, n) => a + n.durationMs, 0);
-        feedOrLine(`${nodes.length} rollouts · ${done} done · ${running} running · ${pending} pending · ${failed} failed · 总耗时 ${(totalMs / 1000).toFixed(1)}s`, 'bold');
+        // P3-2（批次 B）：统计行中文化
+        feedOrLine(`共 ${nodes.length} rollouts · 完成 ${done} · 进行中 ${running} · 等待 ${pending} · 失败 ${failed} · 总耗时 ${(totalMs / 1000).toFixed(1)}s`, 'bold');
         for (const n of nodes) {
           const glyph = n.status === 'running' ? '▶' : n.status === 'done' ? '✓' : n.status === 'failed' ? '✗' : '·';
           const dur = n.durationMs >= 1000 ? `${(n.durationMs / 1000).toFixed(1)}s` : `${n.durationMs}ms`;
-          feedOrLine(`  ${glyph} ${n.id} · ${n.status} · ${n.stepCount} 步 · ${dur}${n.lastPhase ? ` · ${n.lastPhase}` : ''}`);
+          feedOrLine(`  ${glyph} ${n.id} · ${localizeRolloutStatus(n.status)} · ${n.stepCount} 步 · ${dur}${n.lastPhase ? ` · ${n.lastPhase}` : ''}`);
         }
         // graph edges (dep/rollback/approval) annotated
         try {
@@ -567,7 +808,10 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       if (cmd === '/rewind') {
         // P3-3.6: turn-level rewind lives in the classic command set
         // (registered RewindCommand); rich-mode panel wiring is deferred.
-        return false;
+        // 评审 P3：line 模式不静默 no-op——提示真实可用路径并按已处理返回
+        //（false 会把命令当任务发给引擎）。
+        emit('rewind 目前在经典模式可用：先 /classic 进入，或使用 /undo 回退最近变更', 'info');
+        return true;
       }
 
       if (cmd === '/mode') {
@@ -671,8 +915,39 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       // locally — /help /status /clear /tier and any unknown slash command are
       // handled here; a slash-prefixed line is NEVER submitted to the engine
       // as a coding task (iron rule).
-      if (cmd === '/help') {
-        emit('命令: /help /status /clear /tier /model /edit /undo /approvals /usage /compact /verbose /rewind /agents /mode /resume | 斜杠命令均本地执行，不进引擎', 'info');
+      if (cmd === '/help' || cmd === '/h') {
+        // P2-3（批次 B）：三处（classic/line/派发器）统一走 HelpCommand 分组渲染
+        const reg = await getSharedRegistry();
+        const view = buildHelpView(reg.list(), arg ? [arg.split(/\s+/)[0]] : []);
+        for (const l of view.lines) emit(useRich ? l.text : (l.style ? renderer.color(l.text, l.style) : l.text), 'info');
+        if (view.message) emit(view.message, 'warn');
+        return;
+      }
+      if (cmd === '/memory') {
+        // P2-2（批次 B）：快捷帮助收录了 /memory — line 模式给非交互直通
+        //（默认 list；无参数时 classic 的交互子菜单依赖 ctx.input，line 没有）
+        const { runMemoryCommand } = await import('../MemoryCommand.js');
+        try {
+          const result = await runMemoryCommand(arg ? arg.split(/\s+/) : ['list'], session.workspace || process.cwd());
+          emit(result || '(无输出)', 'info');
+        } catch (e: any) {
+          emit('Memory 命令失败: ' + (e?.message || e), 'error');
+        }
+        return;
+      }
+      if (cmd === '/resume') {
+        // P2-2（批次 B）：委托注册表里的 ResumeCommand（只依赖 renderer）
+        const reg = await getSharedRegistry();
+        const rctx: any = {
+          session,
+          registry: reg,
+          renderer: useRich ? { writeLine: (t: string) => emit(t, 'info'), color: (t: string) => t, warn: (t: string) => emit(t, 'warn'), error: (t: string) => emit(t, 'error'), success: (t: string) => emit(t, 'success'), info: (t: string) => emit(t, 'info') } : renderer,
+          input: null,
+          repl: null,
+          provider: (session as any).provider,
+        };
+        const res = await reg.execute(rctx, 'resume', arg ? arg.split(/\s+/) : []);
+        if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
         return;
       }
       if (cmd === '/clear') {
@@ -773,8 +1048,24 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         return;
       }
 
-      // iron rule: unknown slash commands never reach the engine
-      emit(`未知命令: ${cmd}（输入 /help 查看可用命令；斜杠命令均本地执行）`, 'warn');
+      // iron rule: unknown slash commands never reach the engine.
+      // P2-2（批次 B）：加模糊建议 — line 空闲态置待定命令（回车确认执行，
+      // Esc/其他输入取消）；rich / 运行中只提示建议。
+      // 评审 P2：建议不能指向命令本身（自指：确认后又落"未知命令"无限循环），
+      // 且待定命令确认路径会先过 handleLocalCommand（/exit /clear 只在那注册）。
+      {
+        const sug = suggestCommand(cmd);
+        if (sug && ('/' + sug) !== cmd) {
+          if (!useRich && !isRunning()) {
+            pendingSuggestion = '/' + sug;
+            emit(`未知命令 ${cmd} · 你是不是想要 /${sug}？（回车确认执行，Esc/其他输入取消）`, 'warn');
+          } else {
+            emit(`未知命令 ${cmd} · 你是不是想要 /${sug}？（输入 /help 查看全部命令）`, 'warn');
+          }
+        } else {
+          emit(`未知命令: ${cmd}（输入 /help 查看可用命令；斜杠命令均本地执行）`, 'warn');
+        }
+      }
       return;
     }
 
@@ -796,8 +1087,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             const applied = cs.applyCompactResult(session, res);
             ctxUsedChars = cs.estimateSessionTokens(session) * 4;
             const msg = `${applied.message}`;
-            if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'info' });
-            else renderer.info(msg);
+            // 评审 P3：拒绝/失败以 warn 呈现（盘故障不该与普通回执同级）
+            if (!applied.ok) {
+              if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'warn' });
+              else renderer.warn(msg);
+            } else {
+              if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'info' });
+              else renderer.info(msg);
+            }
             if (useRich && typeof bridge.setTop === 'function') {
               const nr = Math.min(1, (ctxUsedChars / 4) / CTX_WINDOW_TOKENS);
               try { bridge.setTop({ ctxRatio: nr }); } catch {}
@@ -892,6 +1189,12 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             // 评审 P2：thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
             if (isApprovalActive() || lineUi.messageStreaming || lineUi.inlineLine === 'thinking') return;
             try {
+              // P3-3.2（批次 B）：任务运行超 30s → 一次性等待 tip（受全局 ≤2 节流）
+              if (Date.now() - gStart > 30000 && sessionTipGate.canShow('wait')) {
+                sessionTipGate.markShown('wait');
+                clearInlineLine();
+                process.stdout.write(`${ANSI_DIM}Tip: 长时间无进展可 Ctrl+C 中断，补充上下文后再试${ANSI_RESET}\n`);
+              }
               clearInlineLine();
               let label: string;
               const pt = lineUi.pendingTool;
@@ -1062,6 +1365,15 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       // P0-1.2：幽灵 ^C 窗口 — 任务刚结束的 1.5s 内缓冲的 Ctrl+C 只忽略一次
       lineUi.taskEndedAt = Date.now();
       lineUi.ghostIgnored = false;
+      // P3-3.3（批次 B）：上下文占用 >75% → 一次性 tip（启发式 chars/4 估算，
+      // 与 auto-compact 的 ratioNow 同源；受全局 ≤2 节流）
+      if (!useRich) {
+        const ratio = (ctxUsedChars / 4) / CTX_WINDOW_TOKENS;
+        if (ratio > 0.75 && sessionTipGate.canShow('ctx')) {
+          sessionTipGate.markShown('ctx');
+          try { renderer.writeLine(renderer.color(`Tip: 上下文占用约 ${Math.round(ratio * 100)}% · /compact 可立即压缩`, 'gray')); } catch {}
+        }
+      }
       if (useRich && typeof bridge.setRunning === 'function') {
         try { bridge.setRunning(false); } catch {}
       } else {
@@ -1096,7 +1408,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return;
     }
     if (t === 'phase' || event === 'phase') {
-      const ph = data.phase || data;
+      const ph = localizePhase(data.phase || data);
       if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'phase', phase: ph });
       if (typeof b.setTop === 'function') b.setTop({ phase: ph });
       return;
@@ -1298,7 +1610,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         r.writeLine(r.color(`开始执行: ${data.task || ''}`, 'cyan'));
         break;
       case 'phase':
-        r.writeLine(r.color(`── ${data.phase || data} ──`, 'gray'));
+        // P3-2（批次 B）：phase 值本地化（渲染层映射，不改事件值）
+        r.writeLine(r.color(`── ${localizePhase(String(data.phase || data))} ──`, 'gray'));
         break;
       case 'step': {
         // 流式段收尾：thinking 折叠为统计行、正文流补换行
@@ -1340,7 +1653,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       }
       case 'critique':
-        r.writeLine(r.color('Critique: ' + (data.critique || data), 'yellow'));
+        // P3-2（批次 B）：删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
+        r.writeLine(r.color(String(data.critique || data), 'yellow'));
         break;
       case 'tool':
         r.writeLine(r.color(`⚙ ${data.tool || ''} ${data.target || ''} [${data.status || ''}]`, 'cyan'));
@@ -1484,33 +1798,56 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // === Line streaming terminal (same in-process events, structured colored lines) ===
   // "通道升级" when rich UI (ink) is not available or TTY caps insufficient.
   renderer.clearScreen();
-  renderer.writeLine(renderer.color('烛龙（Zhulong）', 'bold'));
-  renderer.writeLine(renderer.color('流式终端（进程内事件直连）。输入任务后实时输出思考、工具调用与验证过程。', 'gray'));
-  renderer.writeLine(renderer.color('命令: /help /exit /status /tier /clear /edit /undo /approvals /verbose   |  Ctrl+C 执行中=中断 · 空闲连按两次=退出\n', 'gray'));
+  // P2-1（批次 B）：启动横幅 v2 — 粗体名 + dim 元信息（cwd 按显示宽度截断）
+  {
+    const banner = buildBanner({
+      model: session.model,
+      tier: String(session.tier),
+      mode: modeRing.current,
+      workspace: session.workspace || process.cwd(),
+      width: termWidth(),
+    });
+    renderer.writeLine(renderer.color(banner[0], 'bold'));
+    renderer.writeLine(renderer.color(banner[1], 'gray'));
+    renderer.writeLine(renderer.color(banner[2], 'gray'));
+  }
   if (resumedInfo) {
     renderer.info(`已恢复会话 ${resumedInfo.from}（${resumedInfo.turns} 轮上下文，模式 ${session.approvalMode}）——/status 查看，/undo 撤销最近写盘`);
+  } else if (shouldShowStartupTip(session.turns.length, false, Math.random()) && sessionTipGate.canShow('startup')) {
+    // P3-3.1（批次 B）：新会话 50% 概率出一条启动 tip
+    sessionTipGate.markShown('startup');
+    renderer.writeLine(renderer.color('Tip: 直接输入任务描述即可开始，如 "修复 README 里的错别字"', 'gray'));
   }
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: renderer.color('▸ ', 'cyan'),
+    // P2-2（批次 B）：Tab 补全 `/` 命令名（精确前缀优先 + 模糊兜底，常用命令在前）
+    completer: (line: string): [string[], string] => completeLineCommand(line),
   });
 
   // Wire holders so the unified SSE runner (defined earlier) can restore the prompt
   // after consuming the SSE stream in the line-mode fallback.
   lineRl = rl;
-  lineSetPrompt = () => { rl.setPrompt(renderer.color('▸ ', 'cyan')); };
 
-
-  function setPrompt() {
-    rl.setPrompt(renderer.color('▸ ', 'cyan'));
+  // P2-4（批次 B）：空闲提示符上方的模式徽标行 — 只在启动与模式变化后输出一次。
+  function printModeBadgeIfPending() {
+    if (!modeBadgePending) return;
+    modeBadgePending = false;
+    try { renderer.writeLine(renderer.color(modeBadgeLine(modeRing.current), 'gray')); } catch { modeBadgePending = true; }
   }
 
-  function restoreLinePrompt() {
-    setPrompt();
+  /** 空闲态出提示符（徽标行置前；统一入口，防漏防刷）。 */
+  function linePromptIdle() {
+    printModeBadgeIfPending();
     try { rl.prompt(); } catch {}
   }
+
+  lineSetPrompt = () => {
+    rl.setPrompt(renderer.color('▸ ', 'cyan'));
+    printModeBadgeIfPending(); // runTaskViaSse finally 恢复提示符前也补徽标（若模式刚变过）
+  };
 
   rl.on('close', () => {
     renderer.writeLine('\n再见。');
@@ -1567,6 +1904,26 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   rl.on('SIGINT', () => handleSigint());
   process.on('SIGINT', () => handleSigint());
 
+  // P2-4/P2-2（批次 B）：shift+tab 循环模式环；Esc 取消待定命令建议。
+  // 审批挂起期间（stdin 所有权在审批桥）与任务运行中（提示符不在屏，
+  // 输出会被流式内容污染）一律忽略。
+  try {
+    process.stdin.on('keypress', (_str: string, key: any) => {
+      if (!key) return;
+      if (key.shift && key.name === 'tab') {
+        if (isApprovalActive() || isRunning()) return;
+        cycleMode();
+        linePromptIdle(); // 回执已由 onChange 打印；徽标行 + 提示符在此补上
+        return;
+      }
+      if (key.name === 'escape' && pendingSuggestion) {
+        pendingSuggestion = null;
+        renderer.writeLine(renderer.color('（已取消命令建议）', 'gray'));
+        linePromptIdle();
+      }
+    });
+  } catch {}
+
   // Simple command handling (local for now, can be proxied later)
   async function handleLocalCommand(line: string): Promise<boolean> {
     const trimmed = line.trim();
@@ -1577,18 +1934,22 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return true;
     }
 
-    if (trimmed === '/help' || trimmed === '?') {
-      renderer.writeLine(`
-可用命令:
-  /help, /exit, /status, /tier <name>, /model <name>, /clear, /edit
-直接输入文字 = 作为任务提交（进程内事件流实时输出）
-`);
+    if (trimmed === '?') {
+      // P2-2（批次 B）：快捷帮助面板 — 常用条目 + dim 尾行指向 /help 全部命令
+      const reg = await getSharedRegistry();
+      const ql = buildQuickHelpLines(reg.list().length);
+      ql.forEach((l, i) => {
+        renderer.writeLine(i === 0 ? renderer.color(l, 'bold') : i === ql.length - 1 ? renderer.color(l, 'gray') : l);
+      });
       return true;
     }
 
-    if (trimmed.startsWith('/tier ')) {
-      const t = trimmed.slice(6).trim();
-      renderer.info(`(本地提示) 下次任务将使用 tier: ${t}`);
+    if (trimmed === '/help' || trimmed === '/h') {
+      // P2-3（批次 B）：与派发器 / classic 完全一致的分组帮助（HelpCommand 渲染）
+      const reg = await getSharedRegistry();
+      const view = buildHelpView(reg.list());
+      for (const l of view.lines) renderer.writeLine(l.style ? renderer.color(l.text, l.style) : l.text);
+      if (view.message) renderer.warn(view.message);
       return true;
     }
 
@@ -1639,7 +2000,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   // Main input loop (line mode over SSE transport)
   let pendingPaste: string | null = null; // P4-4.4 folded paste awaiting Enter
-  rl.prompt();
+  linePromptIdle();
 
   rl.on('line', async (line) => {
     // 评审 Bug#2（P1）：审批挂起期间主 readline 虽被暂停仍会消费同一 stdin——
@@ -1648,9 +2009,34 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     const trimmed = line.trim();
     if (!trimmed) {
       // P0-1：任务运行中（readline 已恢复消费输入）不打印提示符，避免污染流式输出
-      if (!isRunning()) rl.prompt();
+      if (isRunning()) return;
+      if (pendingPaste !== null) {
+        // 折叠粘贴的第二次回车 = 提交
+        const submit = pendingPaste;
+        pendingPaste = null;
+        linePromptIdle();
+        await handleUserLine(submit, undefined);
+        return;
+      }
+      if (pendingSuggestion) {
+        // P2-2：回车确认执行建议命令。
+        // 评审 P2：先过本地命令注册（/exit /clear 等只在 handleLocalCommand），
+        // 否则建议 /exit 确认后又落 runTaskViaSse 的"未知命令"分支自指循环。
+        const sug = pendingSuggestion;
+        pendingSuggestion = null;
+        renderer.writeLine(renderer.color(`→ ${sug}`, 'gray'));
+        if (!(await handleLocalCommand(sug))) {
+          await runTaskViaSse(sug);
+        }
+        if (!isRunning()) linePromptIdle();
+        return;
+      }
+      // P2-1（批次 B）：空输入回车给灰字引导（原来是静默重出提示符）
+      renderer.writeLine(renderer.color('输入任务描述，或 ? 看快捷帮助', 'gray'));
+      linePromptIdle();
       return;
     }
+    if (pendingSuggestion) pendingSuggestion = null; // 其他输入 = 取消建议，按原样处理
 
     // Use the unified runner (no bridge → line renderer path).
     // while a task is running, submissions are queued/steered instead.
@@ -1667,24 +2053,25 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     if (pasteInfo.isPaste && pendingPaste === null) {
       pendingPaste = line;
       renderer.writeLine(renderer.color(`[粘贴 ${pasteInfo.lines} 行，已折叠；回车提交，Esc/输入其它内容取消]`, 'yellow'));
-      rl.prompt();
+      linePromptIdle();
       return;
     }
     if (pendingPaste !== null) {
-      if (trimmed === '') {
-        const submit = pendingPaste;
-        pendingPaste = null;
-        rl.prompt();
-        await handleUserLine(submit, undefined);
-        return;
-      }
       // Any other input cancels the pending paste and is processed normally
       pendingPaste = null;
     }
 
     const isLocal = await handleLocalCommand(trimmed);
     if (isLocal) {
-      rl.prompt();
+      linePromptIdle();
+      return;
+    }
+
+    if (trimmed.startsWith('/')) {
+      // 派发器本地命令（/mode /model /usage /tier …）多为早退分支、不经过
+      // runTaskViaSse 的 finally — 这里统一恢复提示符。
+      await runTaskViaSse(trimmed);
+      if (!isRunning()) linePromptIdle();
       return;
     }
 

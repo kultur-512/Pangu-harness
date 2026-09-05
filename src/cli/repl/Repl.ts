@@ -435,7 +435,8 @@ export class Repl {
           this.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
         }
         if (event.type === 'critique') {
-          this.renderer.writeLine(this.renderer.color('Critique: ' + event.critique, 'yellow'));
+          // P3-2（批次 B）：删除死前缀 `Critique: `（critique 机制已休眠）
+          this.renderer.writeLine(this.renderer.color(event.critique, 'yellow'));
         }
         if (event.type === 'softLimit' || event.type === 'budget') {
           const ratio = typeof event.usedRatio === 'number' ? event.usedRatio : 0;

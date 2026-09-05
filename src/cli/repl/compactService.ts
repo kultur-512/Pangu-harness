@@ -150,12 +150,29 @@ export async function compactSession(
     result: { success: true, summary },
   };
 
-  session.turns = [synthetic, ...kept];
-  const afterTokens = estimateSessionTokens(session);
+  // C2（ROADMAP-NEXT §3.2）：marker 先写盘成功、后改内存 —— rollout 是 turn 的
+  // 唯一权威源，旧顺序（先改内存后写盘）在写失败时会产生双源分歧（resume 回放
+  // 旧轮次）。afterTokens 用一次性快照视图估算，不触碰活体 session。
+  const estView = { turns: [synthetic, ...kept] } as Session;
+  const afterTokens = estimateSessionTokens(estView);
+  const markerWritten = appendCompactMarker(session.id, synthetic, coveredIds, beforeTokens, afterTokens);
+  if (!markerWritten) {
+    // 写盘失败 → 拒绝压缩：内存与 rollout 必须同进同退，否则 resume 端双源分歧。
+    return {
+      ok: false,
+      removed: removed.length,
+      kept: kept.length,
+      summary,
+      beforeTokens,
+      afterTokens,
+      generation,
+      coveredTurnIds: coveredIds,
+      summarySource,
+      message: '✗ 压缩中止：rollout 压缩标记写盘失败（resume 权威源不可写）。会话未修改，防双源分歧；请检查磁盘/权限后重试。',
+    };
+  }
 
-  // 接口契约 v3：压缩标记事件——rollout 是 turn 的唯一权威源，resume 端
-  // replayInto 消费本标记即可无模型重建压缩后状态。
-  appendCompactMarker(session.id, synthetic, coveredIds, beforeTokens, afterTokens);
+  session.turns = [synthetic, ...kept];
 
   return {
     ok: true,
@@ -367,11 +384,22 @@ export function applyCompactResult(session: Session, res: CompactResult): Compac
     tier: session.tier,
     result: { success: true, summary: res.summary },
   };
-  session.turns = [synthetic, ...remaining];
-  const afterTokens = estimateSessionTokens(session);
+  // C2：与 compactSession 同一纪律 —— marker 先写盘成功再改内存（防双源分歧）。
+  // afterTokens 用一次性快照视图估算（不触碰活体 session）。
+  const estView = { turns: [synthetic, ...remaining] } as Session;
+  const afterTokens = estimateSessionTokens(estView);
+  const markerWritten = appendCompactMarker(session.id, synthetic, [...covered], res.beforeTokens, afterTokens);
+  if (!markerWritten) {
+    return {
+      ...res,
+      ok: false,
+      afterTokens,
+      syntheticTurn: undefined,
+      message: '✗ 已拒绝应用压缩：rollout 压缩标记写盘失败（resume 权威源不可写）。会话未修改，防双源分歧；请检查磁盘/权限后重试。',
+    };
+  }
 
-  // rollout 是 turn 的唯一权威源：压缩必须留下可 replay 的标记
-  appendCompactMarker(session.id, synthetic, [...covered], res.beforeTokens, afterTokens);
+  session.turns = [synthetic, ...remaining];
 
   // 代际漂移检测：快照后新增了轮（before > generation.turnCount）或实际移除数
   // 与账本不符（rewind 等场景）→ 提示已按覆盖账本安全合并

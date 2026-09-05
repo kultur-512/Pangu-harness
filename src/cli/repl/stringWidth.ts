@@ -41,3 +41,10 @@ export function stringWidth(text: string): number {
   }
   return width;
 }
+
+/** P3-1（批次 B）：按显示宽度右侧补空格到 w 列（超宽原样返回，不截断）。 */
+export function padByWidth(text: string, w: number): string {
+  const s = String(text ?? '');
+  const pad = w - stringWidth(s);
+  return pad <= 0 ? s : s + ' '.repeat(pad);
+}

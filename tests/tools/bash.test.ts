@@ -199,6 +199,60 @@ describe('bash tool', () => {
   });
 });
 
+// ==================== C7/C8: abort signal 监听 + tree-kill 跨平台一致 ====================
+describe('C7/C8: bash abort signal + unified tree-kill', () => {
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-bash-c7-'));
+    ctx = { workspaceRoot: root, approvalMode: 'full' };
+  });
+  afterEach(async () => {
+    // Process-tree teardown can hold the dir briefly on Windows; retry rm.
+    for (let i = 0; i < 8; i++) {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+  });
+
+  const sleeper = process.platform === 'win32'
+    ? 'node -e "setTimeout(()=>{}, 20000)"'
+    : 'sleep 20';
+
+  it('C7: abort while running → tree killed, resolves ABORTED promptly', { timeout: 20000 }, async () => {
+    const bash = createBashTool({ timeoutMs: 30000 });
+    const ac = new AbortController();
+    const p = bash({ command: sleeper }, { ...ctx, signal: ac.signal });
+    setTimeout(() => ac.abort(), 500);
+    const t0 = Date.now();
+    const r = await p;
+    const dt = Date.now() - t0;
+    assert.equal(r.error, 'ABORTED');
+    assert.equal(r.ok, false);
+    assert.ok(dt < 8000, `abort must kill the tree promptly, took ${dt}ms`);
+  });
+
+  it('C7: pre-aborted signal resolves ABORTED immediately (no hang, no runaway child)', { timeout: 15000 }, async () => {
+    const bash = createBashTool({ timeoutMs: 30000 });
+    const ac = new AbortController();
+    ac.abort();
+    const t0 = Date.now();
+    const r = await bash({ command: 'echo should-be-killed' }, { ...ctx, signal: ac.signal });
+    assert.equal(r.error, 'ABORTED');
+    assert.ok(Date.now() - t0 < 3000, `pre-aborted must settle immediately, took ${Date.now() - t0}ms`);
+  });
+
+  it('C8: timeout path still tree-kills via the same killTree (control)', { timeout: 20000 }, async () => {
+    const bash = createBashTool({ timeoutMs: 1200 });
+    const t0 = Date.now();
+    const r = await bash({ command: sleeper }, { ...ctx, signal: new AbortController().signal });
+    assert.equal(r.error, 'TIMEOUT');
+    assert.ok(Date.now() - t0 < 8000, `timeout kill must stay prompt, took ${Date.now() - t0}ms`);
+  });
+});
+
 describe('engineAdapter bash integration (readonly day-one rule)', () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-bash-ad-'));
