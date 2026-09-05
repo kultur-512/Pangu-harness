@@ -21,6 +21,10 @@
 
 - 协议与适配器去品牌（`StrictStructuredToolAdapter` / `XmlStructuredToolParser`，commit 17851f9）。
 - Provider 层 glm shorthand 删除、`_pickBestProviderModel` 泛化（commit 17851f9）。
+- 接口契约 v2：types.ts `AgentEvent/Assertion/TaskState` + rolloutStore `agent` schema（df7a119）。
+- tool_calls 透传：openai-compatible 结构化返回 + SSE delta 拼装 + chaser 聚合（df7a119）。
+- env 三件套 `PANSHA_<PROV>_*` + apiKeyCmd + headers + getModelContextLength 跨 provider + 死代码 5 文件删除（df7a119）。
+- 记忆 v3：markInjected/markVerified 二态、衰减锚 max 修复、archived 过滤、[M1] 卡号、compact generation/coveredTurnIds + rollout compact/context 事件 + replay 消费（bf5f4a7，含王浩宇的 markUsed 二态部分——他只需做信号源接线）。
 
 ## 备注
 

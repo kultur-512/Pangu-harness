@@ -12,7 +12,7 @@
 ## 长程上下文能力
 
 - **记忆卡（结构化记忆）**：失败教训 / 成功经验 / 用户偏好；类别分档可见性 + 参照文件过滤 + 四段阶梯衰减 + 同主题合并 + 容量控制（`/memory`）
-- **会话资产**：追加式 rollout jsonl（turn/approval/rewind）+ `--resume`/`--branch`/`/tree` 续接与分支
+- **会话资产**：追加式 rollout jsonl（turn/approval/rewind + 业务事件/压缩标记/注入审计）+ `--resume`/`--branch`/`/tree` 续接与分支
 - **上下文压缩**：模型摘要旧轮 + 保留最近 6 轮；压缩同时补漏提炼成功卡
 - **任务状态跟踪**：active feature + 下一步 + 完成证据（`/feature`）
 - **注入工程**：L0 硬约束(≤3) / L1 记忆注入(分档 3/6/8/10) / 档位契约 / 注入去重 / token 预算
@@ -23,7 +23,7 @@
 ```bash
 npm install          # devDependencies（tsx/typescript）
 npm run build        # → dist/
-npm install -g .     # 提供 panshalach bin（保留旧别名 pangu）
+npm install -g .     # 提供 panshalach / zhulong bin（保留旧别名 zorge）
 ```
 
 ## 快速开始
@@ -56,7 +56,7 @@ workspace / feature / tree / clear / help / exit
 ## 测试与验证
 
 ```bash
-npm test            # node --test + tsx，62 组用例
+npm test            # node --test + tsx，529 例
 npx tsc --noEmit    # 类型检查
 ```
 

@@ -30,7 +30,7 @@ ContextSnapshot           ← 每次模型调用的强制审计产物
 Model Run
 ```
 
-- **AgentEvent**：append-only，关联 sessionId + taskId，类型 `user_requirement / decision_made / tool_executed / verification_passed / verification_failed / task_progressed / memory_retrieved / memory_injected / memory_cited / context_compacted`
+- **AgentEvent**：append-only，关联 sessionId + taskId，类型（已定稿 `src/cli/repl/types.ts` AgentEventKind）`user_requirement / decision / constraint / requirement / verified / failure / progress / preference / memory_retrieved / memory_injected / memory_cited / memory_verified / context_compacted`——rollout `agent` 事件与 `appendAgentEvent`/`readAgentEvents` 已落（2026-09-04）
 - **Assertion**：scope / confidence / validFrom / validUntil / status / evidenceEventIds / provenance
 - **TaskState**：原始需求 / 决策 / 未决 / 里程碑 / 已验证 / 风险 / next step
 - **MemoryProjection**：由 AgentEvent + Assertion 派生出的 prompt 卡片（**RefinedMemoryCard 仅作为兼容 API 保留**）
@@ -40,14 +40,14 @@ Model Run
 
 | ID | 主题 | 关键交付 | 估时 |
 |---|---|---|---|
-| **P0** | 事实源与持久化分层 | rolloutStore 扩展 AgentEvent + TaskState/Assertion 独立 + markUsed 拆三态 | 1 周 |
+| **P0** | 事实源与持久化分层 | rolloutStore 扩展 AgentEvent ✅ + TaskState/Assertion 独立 + markUsed 二态 ✅（markInjected/markVerified 已落，markCited 推迟） | 1 周 |
 | **P1** | openPangu 接入泛化 | `tool_calls` 透传 + env 注入 + 跨 provider 上下文 | 1 周 |
 | **P2** | 记忆投影 + 检索 v0 | MemoryCard 加 provenance/sourceEventIds/evidence/status；n-gram hash + 余弦；provider 抽象 | 1 周 |
 | **P3** | 滚动多级摘要 + ContextCompiler | 三级摘要 + 统一预算装箱 + ContextSnapshot | 1 周 |
 | **P4** | 真实 openPangu 评测套件 | `scripts/eval/` + A/B/C 消融 + 真 openPangu 跑 | 1.5 周 |
 | **P5** | 国产软硬件亲和 + 提交物定稿 | DEPLOY-CN.md + EVALUATION.md 实数据 + 项目书 SUBMISSION.md | 1 周 |
 
-> 完成条件：`npx tsc --noEmit` EXIT=0；525+ 用例全绿；`verify-panshalach-cleanup.mjs` PASS；`scripts/eval/run-eval.mjs` 一键跑出 A/B/C 对比 CSV。
+> 完成条件：`npx tsc --noEmit` EXIT=0；529+ 用例全绿（`npm test` 实际值，2026-09-04 起）；`verify-panshalach-cleanup.mjs` PASS；`scripts/eval/run-eval.mjs` 一键跑出 A/B/C 对比 CSV。
 
 ## 2. 五件套 + 五层落点（与代码模块映射）
 
@@ -80,10 +80,10 @@ Model Run
 - 字段：scope / confidence / validFrom / validUntil / status / evidenceEventIds / provenance。
 - 任务完成才升级 `candidate → verified`。
 
-### P0.4 markUsed → markInjected/cited/verified 拆三态
-- `RefinedMemoryStore` 暴露三方法：`markInjected(cardIds)` / `markCited(cardIds)` / `markVerified(cardIds, evidenceEventIds)`。
-- `PromptBuilder.appendMemoryCardsDedup` 注入前 `markInjected`；commit/checkpoint 时 `markCited`/`markVerified`。
-- **不再用 `markUsed` 等同于模型使用**——杜绝自激励循环。
+### P0.4 markUsed → 二态（✅ 已落地 2026-09-04 bf5f4a7，markCited 推迟）
+- `RefinedMemoryStore` 已暴露：`markInjected(cardIds)`（纯记账，内存账本，不影响衰减/count）/ `markVerified(cardIds, now?)`（原位刷新 lastUsedAt+count+1，直写持久化）。**markCited 推迟**——依赖 [M1] 卡号引用协议（注入已带编号，7B 引用实验 9/24 后）。
+- `runAgentTask` 任务边界已调 `markInjected` + 发 `memory_injected` 事件；`markVerified` 信号源（工具写入/验证文件集 ∩ 卡.referencedFiles）待接线。
+- **不再用"注入"等同于"使用"**——杜绝自激励循环（已实现）。
 
 ### P0.5 原子写 + schema version
 - `SessionStore` / `memory store` / `TaskState` 写盘先写 `<file>.tmp.<ts>` 再 `rename`，避免半截写崩。
@@ -98,7 +98,7 @@ Model Run
 ## 4. P1 — openPangu 接入泛化
 
 ### P1.1 `openai-compatible.ts` 透传 `tool_calls`
-- `complete` 返回 `Promise<string | ModelClientOutput>`，类型在 `src/cli/repl/types.ts:209`。
+- ✅ **已落地（2026-09-04 df7a119）**：complete 返回 `Promise<string | OpenAICompatOutput>`（detectedFormat:'openai-json'），SSE delta.tool_calls 增量拼装；`ModelClientOutput` 联合类型在 `src/cli/repl/types.ts`（ModelClient 抽象处）。
 - `doComplete` 把 `message.tool_calls` / `delta.tool_calls` 抽出成 `{ content, raw, toolCalls, detectedFormat }`。
 - `ProviderRegistry.createClientSync` wrapper 把对象透传给 `VerifyCritiqueLoop.preParsedToolCalls` 通道。
 
@@ -127,7 +127,7 @@ Model Run
 ### P2.1 MemoryCard v2（兼容 API + 新字段）
 - 在 `RefinedMemoryCard` 加字段：`provenance / sourceEventIds / sourceTurnIds / refs / evidence / status (candidate | verified | active | superseded | conflicted) / priority / confidence / validity / utility / freshness`。
 - `weight × decay × count` 改 `priority × freshness`（cf. 翟苑皓审查 §4.2）。
-- `markUsed` 改 `markInjected / markCited / markVerified`。
+- `markUsed` 已二态化（见 P0.4）；MemoryCard 的 provenance/status 扩展字段按对抗评审裁决**不做**（悬空伪 provenance + status 联合冲突），provenance 由 rollout `context` 事件承担。
 
 ### P2.2 EmbeddingProvider（`src/memory/embed.ts`）
 - `LocalNGramHashProvider`：字符 2-gram 词袋向量、4096 哈希桶、L2 归一化、零依赖。

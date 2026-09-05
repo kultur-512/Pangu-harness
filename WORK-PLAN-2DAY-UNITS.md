@@ -20,7 +20,7 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 
 **4 主力对应人**（按注册卡）：
 - 翟苑皓（zhaiyuanhao）— Leader / W1 / P0 重构 + P1 openPangu 接入
-- 王浩宇（wanghaoyu）— Doer / W2 / P0 markUsed 拆解 + ContextCompiler + P6 runner
+- 王浩宇（wanghaoyu）— Doer / W2 / P0 markUsed 二态收尾（已落大半）+ ContextCompiler + P6 runner
 - 王佐（wangzuo）— Main-A / W3 / P0 AgentEvent + TaskState + 状态机
 - 赵天昂（zhaotianang）— Main-B / W4 / P0 ContextSnapshot + MemoryProjection 增强
 
@@ -30,15 +30,15 @@ U1      | U2      | U3      | U4      | U5      | U6      | U7      | U8      | 
 
 | 单位 | 翟苑皓（Leader / P0 重构 + P1） | 王浩宇（Doer / W2 / P0 拆解 + P6 runner） | 王佐（Main-A / W3 / P0 事件+状态） | 赵天昂（Main-B / W4 / P0 投影+快照） |
 |---|---|---|---|---|
-| **U1 9/7-8** | 接口契约 v2：扩展 rolloutStore 为 `AgentEvent`（types.ts 增 `AgentEvent`/`Assertion`/`TaskState` 字段），落 `memory/events.ts`、`memory/taskState.ts`、弃用 `markUsed` 改 `markInjected/cited/verified` | `MemoryCard` 兼容 v2：保留 `RefinedMemoryCard` API，加 `provenance/sourceEventIds/sourceTurnIds/refs/evidence/status` 字段；`markUsed` 拆三态 | `MemoryEventStore` 在现有 rolloutStore JSONL 之上扩展 schema（追加 `taskId / kind / refs`） | `TaskState` 持久化：`tasks/agents/<pinyin>/task_state.json`；`/task status/risk/decide` CLI |
-| **U2 9/9-10** | `openai-compatible` 透传 `message.tool_calls` / `delta.tool_calls`；返回 `ModelClientOutput` | `MemoryProjection`：`RefinedMemoryStore` 加 5 维评分 `priority/confidence/validity/utility/freshness`；`weight × decay` 改 `priority × freshness`；`markInjected` 取代 `markUsed` | `EventExtractor`：trajectory → 增量 `AgentEvent`，保留原始轨迹不删除 | `Assertion` schema（scope/confidence/validFrom/validUntil/evidenceEventIds/provenance） |
+| **U1 9/7-8** | 接口契约 v2（✅ types.ts/rolloutStore schema/tool_calls 透传已提前落地 2026-09-04，见 df7a119）；`memory/events.ts`、`memory/taskState.ts` 落地 | MemoryCard v2 字段按对抗评审裁决**不做**（伪 provenance），provenance 走 rollout `context` 事件（✅ 已落）；~~markUsed 拆三态~~ ✅ 二态已落（bf5f4a7） | `MemoryEventStore` 在现有 rolloutStore JSONL 之上扩展 schema（追加 `taskId / kind / refs`） | `TaskState` 持久化：`tasks/agents/<pinyin>/task_state.json`；`/task status/risk/decide` CLI |
+| **U2 9/9-10** | ✅ 透传已提前落地（df7a119）；转 U3 剩余项 | `MemoryProjection`：5 维评分**按对抗评审裁决推迟**（量纲不同构/utility 无信号源）；保留 `0.7w+0.3rel`；`markVerified` 信号源接线 | `EventExtractor`：trajectory → 增量 `AgentEvent`，保留原始轨迹不删除 | `Assertion` schema（scope/confidence/validFrom/validUntil/evidenceEventIds/provenance） |
 | **U3 9/11-12** | ModelProvider env 注入泛化（`PANSHA_<PROV>_*`）+ `getModelContextLength` 跨 provider | `ContextCompiler`：统一预算装箱，替代 `PromptBuilder` 拼接逻辑；`ContextSnapshot` 每次模型调用产出 | TaskState 注入 PromptBuilder L1：`[原始需求] → [记忆卡] → [事件摘要] → [当前任务]`；CLI `/task` 子命令 | `MemoryProjection` 加载：`RefinedMemoryStore.loadFiltered` 改读 Projection 卡片，保留兼容 API |
 | **U4 9/13-14** | 评审 W2/W3/W4 接口契约 v2；`npx tsc --noEmit` EXIT=0；分支对齐 stand-up | `scripts/eval/run-eval.mjs` 骨架：A/B/C/C1-C4 五档 + T1-T5 stub | `/task` CLI 集成 + `EventStore` 落盘验证 | `compactService` 三级摘要（以事件 + 状态为投影源，不再仅摘要原始轨迹） |
 | **U5 9/15-16** | 远端 hook + CI gate 验证；本批 README/CHANGELOG 加 v0.6.0 入口；`docs/agent/` 骨架修订 | `smoke-eval.mjs` mock 模式跑通 | `tests/memory/EventStore.test.ts` + `tests/repl/TaskState.test.ts` 绿 | `tests/memory/Projection.test.ts` + `tests/repl/ContextSnapshot.test.ts` 绿 |
 | **U6 9/17-18** | 合并所有分支到 develop；架构文档 ARCHITECTURE.md 改成"AgentEvent 事实源 + TaskState 控制 + MemoryProjection 投影 + ContextCompiler 管理"五层图 | 真 openPangu 端点跑 A/B/C/C1-C4 出 `scripts/eval/results/<date>.json` | M3 集成：trajectory → AgentEvent → Projection 落盘 + TaskState 注入 | M4 集成：ContextCompiler + ContextSnapshot 落盘 |
 | **U7 9/19-20** | 端到端评审 + 修复 + 收口 | 5 任务族端到端验证（T1 约束 / T2 跨文件 / T3 长文档 / T4 resume / T5 compact） | 事件流图人工验收 + 任务状态演示 | 注入预算 + ContextSnapshot 资源消耗实测 + ARCHITECTURE.md §5 填表 |
 | **U8 9/21-22** | `docs/panshalach/SUBMISSION.md`（项目书 ≤1000 字概述 + 完整解决方案 + 创新点 + 部署 + 评测 + 总结）+ `EVALUATION.md` §4 填真实数据 + `DEPLOY-CN.md` 终版 | 评测 CSV + runner 报告 + 用例统计 | 事件/状态演示数据 + 截图 | 投影/快照演示数据 + 多级摘要资源数据 |
-| **U9 9/23-24** | kultur 在国创赛系统提报；终轮 test 全绿；`npx tsc --noEmit` EXIT=0；525+ 用例全绿；`verify-panshalach-cleanup.mjs` PASS；CHANGELOG 加 0.6.0 条目；项目复盘 | 525+ 用例全绿 + verify-panshalach-cleanup PASS + ARCHITECTURE.md 五层图完成 | 事件/状态测试全绿 + EVALUATION.md 完整 | 投影/快照测试全绿 + DEPLOY-CN.md 完整 + SUBMISSION.md 项目书完成 |
+| **U9 9/23-24** | kultur 在国创赛系统提报；终轮 test 全绿；`npx tsc --noEmit` EXIT=0；529+ 用例全绿；`verify-panshalach-cleanup.mjs` PASS；CHANGELOG 条目齐；项目复盘 | 529+ 用例全绿 + verify-panshalach-cleanup PASS + ARCHITECTURE.md 五层图完成 | 事件/状态测试全绿 + EVALUATION.md 完整 | 投影/快照测试全绿 + DEPLOY-CN.md 完整 + SUBMISSION.md 项目书完成 |
 
 ---
 
@@ -83,7 +83,7 @@ ContextSnapshot           ← 每次模型调用的强制审计产物
 Model Run
 ```
 
-- **AgentEvent**：append-only，关联 sessionId + taskId，类型 `user_requirement / decision_made / tool_executed / verification_passed / verification_failed / task_progressed / memory_retrieved / memory_injected / memory_cited / context_compacted`
+- **AgentEvent**：append-only，关联 sessionId + taskId，类型已定稿 `src/cli/repl/types.ts`（AgentEventKind）：`user_requirement / decision / constraint / requirement / verified / failure / progress / preference / memory_retrieved / memory_injected / memory_cited / memory_verified / context_compacted`
 - **Assertion**：scope/confidence/validFrom/validUntil/status/evidenceEventIds/provenance
 - **TaskState**：原始需求/决策/未决/里程碑/已验证/风险/next step
 - **MemoryProjection**：由 AgentEvent + Assertion 派生出的 prompt 卡片
