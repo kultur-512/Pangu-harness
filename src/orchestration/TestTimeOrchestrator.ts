@@ -22,7 +22,8 @@ export interface Trajectory {
   id: string;
   steps: TrajectoryStep[];
   finalPatch?: string;
-  score: number;
+  /** 成败由验证信号判定（loop：存在 PASS/ALL_TESTS_PASSED 步）——score 已移除（2026-09-05） */
+  success?: boolean;
   /** 是否高纪律/验证密集目标 */
   isStrongTarget?: boolean;
   benchmarkType?: string;
@@ -34,7 +35,7 @@ export class TrajectoryRecorder {
   private trajectories = new Map<string, Trajectory>();
 
   create(id: string, isStrongTarget = false, benchmarkType?: string, taskStyle?: string): Trajectory {
-    const t: Trajectory = { id, steps: [], score: 0, isStrongTarget, benchmarkType, taskStyle: taskStyle ?? benchmarkType };
+    const t: Trajectory = { id, steps: [], isStrongTarget, benchmarkType, taskStyle: taskStyle ?? benchmarkType };
     this.trajectories.set(id, t);
     return t;
   }
@@ -48,9 +49,9 @@ export class TrajectoryRecorder {
     if (t) t.steps.push(step);
   }
 
-  setScore(id: string, score: number) {
+  setSuccess(id: string, success: boolean) {
     const t = this.trajectories.get(id);
-    if (t) t.score = score;
+    if (t) t.success = success;
   }
 
   getAll(): Trajectory[] {
@@ -81,10 +82,9 @@ export class TestTimeOrchestrator {
         traj.isStrongTarget = isStrongTarget;
         traj.benchmarkType = taskStyle;
         traj.taskStyle = taskStyle;
-        // 打分器已归档（archive/2026-09-05-scoring/）：调用方（Chaser）必须给出
-        // 验证锚定的 score（成功=100/未成功=0）；缺分兜底为 0（不猜）。
-        if (traj.score === undefined || traj.score === null) {
-          traj.score = 0;
+        // score 已移除：成败由调用方（Chaser）以验证信号标注（traj.success）
+        if (traj.success === undefined) {
+          traj.success = false;
         }
         return traj;
       } catch {
@@ -106,7 +106,7 @@ export class TestTimeOrchestrator {
       if (budget.maxTokens && results.length > 1) {
         const totalTokens = results.reduce((a, t) => a + (t.estimatedUsedTokens ?? 0), 0);
         if (totalTokens > budget.maxTokens) {
-          results.sort((a, b) => b.score - a.score);
+          results.sort((a, b) => Number(b.success ?? false) - Number(a.success ?? false));
           let acc = 0;
           let keep = results.length;
           for (let i = 0; i < results.length; i++) {
@@ -117,7 +117,7 @@ export class TestTimeOrchestrator {
         }
       }
 
-      results.sort((a, b) => b.score - a.score);
+      results.sort((a, b) => Number(b.success ?? false) - Number(a.success ?? false));
       return results[0];
     }
 
@@ -126,10 +126,10 @@ export class TestTimeOrchestrator {
       const traj = await run(i);
       if (!traj) continue;
       results.push(traj);
-      if (traj.score >= 92) break;
+      if (traj.success) break;
     }
 
-    results.sort((a, b) => b.score - a.score);
+    results.sort((a, b) => Number(b.success ?? false) - Number(a.success ?? false));
     return results[0];
   }
 }

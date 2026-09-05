@@ -181,22 +181,22 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
 });
 
 // ==================== M1.1: Positive Memory（触发收紧：写盘≠成功） ====================
-import { POSITIVE_FEEDBACK_RE, POSITIVE_SCORE_THRESHOLD } from '../../src/memory/RefinedMemoryStore.js';
+import { POSITIVE_FEEDBACK_RE } from '../../src/memory/RefinedMemoryStore.js';
 
-function fakeTraj(score: number): any {
-  return { id: 't', steps: [], score };
+function fakeTraj(success: boolean): any {
+  return { id: 't', steps: [], success };
 }
 
 describe('Positive Memory (M1.1)', () => {
   it('write-success-but-retry (attemptCount>1) + positive feedback → NO refine', () => {
     const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(90), taskStyle: 'swe', attemptCount: 2, userFeedback: '很好' });
+    const cards = store.refine({ trajectory: fakeTraj(true), taskStyle: 'swe', attemptCount: 2, userFeedback: '很好' });
     assert.equal(cards.filter(c => c.kind === 'success').length, 0);
   });
 
   it('attemptCount===1 + positive feedback → success card', () => {
     const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(80), taskStyle: 'swe', attemptCount: 1, userFeedback: '很不错，一次通过' });
+    const cards = store.refine({ trajectory: fakeTraj(false), taskStyle: 'swe', attemptCount: 1, userFeedback: '很不错，一次通过' });
     const success = cards.filter(c => c.kind === 'success');
     assert.equal(success.length, 1);
     assert.equal(success[0].memoryCategory, 'implementation');
@@ -205,25 +205,19 @@ describe('Positive Memory (M1.1)', () => {
 
   it('attemptCount===1 + negative feedback → NO refine', () => {
     const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(80), taskStyle: 'swe', attemptCount: 1, userFeedback: '不行，重做' });
+    const cards = store.refine({ trajectory: fakeTraj(false), taskStyle: 'swe', attemptCount: 1, userFeedback: '不行，重做' });
     assert.equal(cards.filter(c => c.kind === 'success').length, 0);
   });
 
-  it('attemptCount===1 + no feedback + score 84 → NO refine (below threshold)', () => {
+  it('attemptCount===1 + no feedback + 未验证成功 → NO refine', () => {
     const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(84), taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    const cards = store.refine({ trajectory: fakeTraj(false), taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
     assert.equal(cards.filter(c => c.kind === 'success').length, 0);
   });
 
-  it('score 85 → refine (threshold inclusive)', () => {
+  it('attemptCount===1 + no feedback + 验证成功（trajectory.success）→ refine', () => {
     const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(85), taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
-    assert.equal(cards.filter(c => c.kind === 'success').length, 1);
-  });
-
-  it('score 86 → refine', () => {
-    const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(86), taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    const cards = store.refine({ trajectory: fakeTraj(true), taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
     assert.equal(cards.filter(c => c.kind === 'success').length, 1);
   });
 
@@ -233,9 +227,8 @@ describe('Positive Memory (M1.1)', () => {
     }
   });
 
-  it('POSITIVE_SCORE_THRESHOLD is 85 (red line: 写盘≠成功)', () => {
-    assert.equal(POSITIVE_SCORE_THRESHOLD, 85);
-  });
+  // POSITIVE_SCORE_THRESHOLD 用例已随 score 移除（2026-09-05）：
+  // 正向信号 = 用户正向反馈 OR trajectory.success（见上方用例）
 });
 
 // ==================== M1.2: /remember + /forget ====================

@@ -63,8 +63,8 @@ interface TaskState {
 | 源 | 时机 | 产出 | 状态 |
 |---|---|---|---|
 | 循环实时信号 | 每步违规/失败 | FailureMemory（会话内） | 已实现 |
-| **回合提炼** | 任务落定（拿到 bestTrajectory + score + attemptCount + 反馈） | refine→卡→save | **规划(P2)**（当前无生产调用点，是最紧要缺口） |
-| 压缩补漏 | compact 移除轮次中 score≥85 | success 卡（hash 去重） | 已实现 |
+| **回合提炼** | 任务落定（拿到 bestTrajectory + 验证成败 + attemptCount + 反馈） | refine→卡→save | **规划(P2)**（当前无生产调用点，是最紧要缺口） |
+| 压缩补漏 | compact 移除轮次中验证成功（result.success） | success 卡（evidence=任务摘要，hash 去重） | 已实现 |
 | 用户 | /memory remember [--pin] / forget / import | preference/删除/批量 | 已实现 |
 | 合并 | /memory merge 或后台 | 2-gram 同主题合并（原卡 archived） | 已实现 |
 | 事件/状态 | P2/P3 各落定点 | events/TaskState | 规划 |
@@ -96,7 +96,7 @@ interface TaskState {
 ```
 【相关记忆】
   - [失败教训] 重要教训：写入前应先完整读取目标文件…
-  - [成功经验] 已验证可行的做法：score=92 …
+  - [成功经验] 已验证可行的做法：修复 alpha 模块登录 bug …
   - [用户偏好] 项目优先用 pnpm
 （另有 3 张相关记忆未注入，/memory 查看）
 ```

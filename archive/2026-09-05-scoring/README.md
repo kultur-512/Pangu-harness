@@ -35,3 +35,12 @@
 - critique 自我批判（每 N 步一次**额外模型调用**，token 成本）；
 - 多 rollout best-of-N（`maxRollouts`，token 成本最大户）；
 - `BenchmarkProfiles`（swe/terminal/automation 任务风格头注入）。
+
+## 追记（2026-09-05 晚）：score 字段整体移除
+
+两值化（100/0）只是过渡——产品主随后裁决 **score 概念彻底退出**：
+- `Trajectory.score` → `Trajectory.success?`；orchestrator 排序/早停/预算裁剪按 success；
+- `solveIssue`/`RunResult`/result 事件/SSE done 事件/全部 UI 显示移除 score；
+- 记忆正向信号：`trajectory.success`（验证通过）或正向反馈；`POSITIVE_SCORE_THRESHOLD` 删除；
+- compact 补漏信号源 = `result.success`，success 卡 evidence = 该轮任务摘要（零信息量卡与高分 hash 撞卡问题一并消除）。
+本文档的"两值化"描述仅作历史记录；当前语义以 CHANGELOG 0.6.3 为准。

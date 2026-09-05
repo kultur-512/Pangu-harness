@@ -84,7 +84,6 @@ export class PanshalachChaser {
   async solveIssue(issueDescription: string, workspaceRoot: string, config: ChaserConfig & { onStep?: (event: any) => void } = {}): Promise<{
     success: boolean;
     bestTrajectory?: Trajectory;
-    score: number;
     totalRollouts: number;
     budgetReport?: BudgetReport;
     tierConfig?: TierConfig;
@@ -108,7 +107,6 @@ export class PanshalachChaser {
     if (!this.modelClient || typeof (this.modelClient as any).complete !== 'function') {
       return {
         success: false,
-        score: 0,
         totalRollouts: 0,
         tierConfig,
         error: 'NO_MODEL_CLIENT',
@@ -144,7 +142,7 @@ export class PanshalachChaser {
       const result = await waitForUserConfirmation();
       if (!result.confirmed) {
         console.log('\n✗ 用户取消，任务未执行。');
-        return { success: false, score: 0, totalRollouts: 0, tierConfig };
+        return { success: false, totalRollouts: 0, tierConfig };
       }
     }
 
@@ -157,7 +155,7 @@ export class PanshalachChaser {
       console.log(`Max Steps   : ${maxStepsPerRollout}`);
       console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel}`);
       console.log(`Memory      : ${tierConfig.memoryLoadLevel}`);
-      return { success: false, score: 0, totalRollouts: 0, tierConfig };
+      return { success: false, totalRollouts: 0, tierConfig };
     }
 
     // #3/#5/#6（2026-09-05）：任务前仓库扫描/锚点注入、任务风格提示头、
@@ -371,17 +369,13 @@ export class PanshalachChaser {
             terminalNoCheck: s.terminalNoCheck,
             automationNoEffectCheck: s.automationNoEffectCheck,
           })),
-          score: 0,
           isStrongTarget: isHighRigor,
           benchmarkType: taskStyle,
           taskStyle,
         };
 
-        // 打分器已归档（archive/2026-09-05-scoring/）：不再做过程纪律评分
-        // （88/35+2N/格式加分/早过加分）。score 收敛为验证锚定两值：
-        // 成功=100 / 未成功=0。下游不变式：success 闸门（>=80）与记忆
-        // success 卡阈值（>=85）行为与旧 88 分制完全一致（100>=85、0<85）。
-        traj.score = result.success ? 100 : 0;
+        // score 已移除（2026-09-05）：成败由验证信号标注在轨迹上
+        traj.success = result.success;
         return traj;
       },
       maxRollouts,
@@ -394,7 +388,7 @@ export class PanshalachChaser {
       }
     );
 
-    const success = best.score >= 80;
+    const success = !!best.success;
     // 任务边界 → 投影重建（下一任务反映最新衰减与记忆）
     try { this.memStoreForInvalidate?.invalidateProjection?.(); } catch {}
     const budgetReport: BudgetReport = {
@@ -408,6 +402,6 @@ export class PanshalachChaser {
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, score: best.score, totalRollouts: maxRollouts, budgetReport, tierConfig };
+    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig };
   }
 }

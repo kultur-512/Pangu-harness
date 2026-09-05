@@ -88,8 +88,8 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ### 2.2 记忆写入（提炼 → 保存）
 - **信号源 A（循环实时）**：VerifyCritiqueLoop 每步把 RBW/未验证/命令失败/状态不符/自动化未验证等信号喂给进程内 FailureMemory（会话内即时纠偏）。
-- **信号源 B（回合闭环，规划落地 P2）**：任务落定后把 `bestTrajectory` + `attemptCount` + 得分/用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；一次通过且 score≥85 或正向反馈 → success 卡），`save()` 合并去重写盘。→ 修复"现在没有任何生产路径调用 refine 的缺口"。
-- **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中 score≥85 的成功信号确定性补提为 success 卡（hash 去重，防双重计数）。
+- **信号源 B（回合闭环，规划落地 P2）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；一次通过且**验证通过（trajectory.success）**或正向反馈 → success 卡），`save()` 合并去重写盘。→ 修复"现在没有任何生产路径调用 refine 的缺口"。（score 已移除，2026-09-05）
+- **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中**验证成功（result.success）**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。（score 已移除，2026-09-05）
 - **用户显式（已实现）**：`/memory remember [--pin]` / forget / import / export / clear / merge。
 
 ### 2.3 记忆读取与注入（loadFiltered，已实现）
@@ -130,7 +130,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
         （critique/FailureMemory 轨道已摘除 archive/2026-09-05-removals/）
         直到 PASS/真实验证 / 失败上限 / 步数预算
     budget 软限降级 / early-stop（过程纪律打分器已归档
-    archive/2026-09-05-scoring/；score=验证锚定两值 成功100/未成功0）
+    archive/2026-09-05-scoring/；score 已整体移除——成败由验证信号（trajectory.success）判定）
   │
   ▼ 任务落定（回合写闭环 · P2 规划）
     refine(trajectory+attemptCount+反馈) → save → invalidateProjection

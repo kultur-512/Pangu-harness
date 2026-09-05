@@ -44,8 +44,8 @@ describe('M2.2: L1 相关记忆', () => {
   it('kind filter loads failure + success + preference together', () => {
     const store = makeStore();
     const now = Date.now();
-    store.save(store.refine({ trajectory: { id: 't', steps: [], score: 90 }, taskStyle: 'swe', attemptCount: 1, userFeedback: '', now })); // success
-    store.save(store.refine({ trajectory: { id: 't2', steps: [{ stepNumber: 1, readBeforeWriteViolation: true } as any], score: 50 }, taskStyle: 'swe', now })); // failure
+    store.save(store.refine({ trajectory: { id: 't', steps: [], success: true }, taskStyle: 'swe', attemptCount: 1, userFeedback: '', now })); // success
+    store.save(store.refine({ trajectory: { id: 't2', steps: [{ stepNumber: 1, readBeforeWriteViolation: true } as any], success: false }, taskStyle: 'swe', now })); // failure
     store.remember('用 TS 写', false, now);
     const cards = store.loadFiltered({});
     const kinds = new Set(cards.map((c) => c.kind));

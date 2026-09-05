@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.3 (score 字段整体移除：成败唯一由验证信号判定)
+
+承接 0.6.1/0.6.2 的打分器归档，`score` 概念彻底退出：
+- `Trajectory.score` → `Trajectory.success?`（验证信号标注）；orchestrator 排序/早停/预算裁剪改按 success；`setScore`→`setSuccess`
+- `solveIssue` 返回值移除 `score`（REFACTOR-ASSESSMENT §4 禁区二次申报）；`RunResult`/result 事件/SSE `done` 事件/CLI 与 SSE 显示全部去 score
+- `Turn.result.summary` 从 `score=NN` 改为验证结果短文本（"已通过验证"/"未通过验证"）
+- 记忆正向信号：`refine()` 由 `score≥85` 改为 **trajectory.success（验证通过）或正向反馈**；`POSITIVE_SCORE_THRESHOLD` 删除
+- compact 补漏：信号源从"summary 正则抽 score≥85"改为 **result.success**；success 卡 evidence 改为该轮任务摘要（修复零信息量卡 + 高分 hash 撞卡问题）
+- 前端 demo 得分显示改验证状态；测试随语义更新（525 例全绿）
+
 ## 0.6.2 (性能叙事装置摘除：单 rollout、去 critique/静态分析/锚点/风格头/FailureMemory 轨道)
 
 产品主裁决（2026-09-05，探测报告 7 项）落地，全部归档至 `archive/2026-09-05-removals/`：

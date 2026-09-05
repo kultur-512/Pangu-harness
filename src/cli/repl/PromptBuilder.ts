@@ -605,7 +605,7 @@ export class PromptBuilder {
       .map((t, i) => {
         const input = t.userInput.length > 80 ? t.userInput.slice(0, 77) + '...' : t.userInput;
         const ok = t.result?.success ? '✓' : (t.result ? '✗' : '?');
-        const score = t.result ? (t.result.summary || '?') : ''; // 修复：summary 本身已是 "score=NN"，勿再加前缀
+        const score = t.result ? (t.result.summary || '?') : ''; // summary 现为验证结果短文本（如"已通过验证"）
         return `Turn ${i + 1} [${t.tier}] ${ok} ${input} ${score}`.trim();
       })
       .join('\n');

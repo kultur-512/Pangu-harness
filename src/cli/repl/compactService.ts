@@ -113,20 +113,19 @@ export async function compactSession(
   };
   const coveredIds = removed.map(t => t.id);
 
-  // compact 补漏提炼 — 被移除轮次若有成功信号（result.summary 含 score≥85）
-  // 且同内容 hash 尚未存在（回合结束已提炼则跳过 → 防双重计数）。turn 级无
-  // attemptCount 信息（申报：compact 补漏以 score≥85 为唯一信号）。
+  // compact 补漏提炼 — 被移除轮次若验证成功（result.success === true）则提炼
+  // success 卡；evidence 用该轮 userInput 摘要（score 时代是零信息量的
+  // "score=90"，且所有高分任务 hash 撞进同一张卡——此处一并修复）。
+  // 同内容 hash 去重仍在（回合结束已提炼则跳过 → 防双重计数）。
   try {
-    const { RefinedMemoryStore, POSITIVE_SCORE_THRESHOLD } = await import('../../memory/RefinedMemoryStore.js');
+    const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
     const store = new RefinedMemoryStore(session.workspace);
     const signals = removed
+      .filter((t) => t.result?.success === true)
       .map((t) => {
-        const m = /score=(\d+)/.exec(t.result?.summary || '');
-        const score = m ? parseInt(m[1], 10) : NaN;
-        return { score, turn: t };
-      })
-      .filter((x) => x.score >= POSITIVE_SCORE_THRESHOLD)
-      .map((x) => ({ summary: `已验证可行的做法：score=${x.score}`, evidence: `score=${x.score}`, taskStyle: 'all', now: Date.now() }));
+        const brief = (t.userInput || '').replace(/\s+/g, ' ').trim().slice(0, 80) || '（无输入摘要）';
+        return { summary: `已验证可行的做法：${brief}`, evidence: brief, taskStyle: 'all', now: Date.now() };
+      });
     if (signals.length > 0) store.refineCompactSignals(signals);
   } catch {
     // memory is best-effort during compaction

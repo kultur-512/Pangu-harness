@@ -730,13 +730,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           durationMs: r?.durationMs ?? (Date.now() - startedAt),
           result: {
             success: !!r?.success,
-            summary: `score=${r?.score ?? '-'}`,
+            summary: r?.success ? "已通过验证" : "未通过验证",
             budgetReport: r?.budgetReport as any,
           },
         };
         try { session.addTurn(turn); } catch {}
         try { rollout.appendTurn(session.id, turn as any); } catch {}
-        recordOutput(`完成 (得分 ${r?.score ?? '-'})`);
+        recordOutput(r?.success ? "完成（已通过验证）" : "任务未通过验证");
       }
     } catch (err: any) {
       const msg = '任务执行失败: ' + (err?.message || err);
@@ -849,7 +849,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
     if (t === 'result' || event === 'result') {
       if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `完成 (得分 ${data.score ?? '-'})`, level: 'success' });
+      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: data.success ? '完成（已通过验证）' : '任务未通过验证', level: data.success ? 'success' : 'warn' });
       if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
         if (typeof b.pushBudget === 'function') b.pushBudget(data.budgetReport.usageRatio);
       }
@@ -944,7 +944,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       case 'result':
         {
-          const msg = `完成 (得分 ${data.score ?? '-'})`;
+          const msg = data.success ? '完成（已通过验证）' : '任务未通过验证';
           r.success(msg);
           recordOutput(msg);
           if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
