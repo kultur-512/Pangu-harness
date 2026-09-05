@@ -16,6 +16,7 @@
 - U3 ~~ContextCompiler~~ **按裁决推迟**（PromptBuilder 保持拼接器 + 统一账本；ContextSnapshot 逐任务事件已由 Leader 落地 bf5f4a7）——转 R6 eval runner。
 - U4 `scripts/eval/run-eval.mjs` 骨架：A/B/C + C4 消融 + T1-T5 stub；U5 `smoke-eval.mjs` mock 模式。
 - U6-U7 真 openPangu 端点跑评测出 `scripts/eval/results/<date>.json`；U8 评测 CSV + 报告。
+- R1 批次顺带：`runAgentTask` 把 `ctx.signal` 传入 `solveIssue` 配置（当前请求取消不停止底层执行，方案书草案发现）。
 
 ## 接口协调
 

@@ -93,3 +93,17 @@ last_updated: $(date +%H:%M)
 
 ### 卡点 / 需要别人决定（接口争议）
 - 无。分发现在与 ROADMAP-NEXT §3 R1-R9 一一对应
+
+## 夜间批次 3（方案书草案处置：部分采纳 + git 不追踪）
+
+### 想做什么（目的）
+- 产品主裁决：继续打造特化记忆机制 agent；solution 十份草案只采纳部分思路；文档本身不入 git。
+
+### 实际干了什么（事实）
+- .gitignore 增 `docs/panshalach/solution/`（本地保留研读稿，git 不追踪，已验证忽略生效）
+- ROADMAP-NEXT 新增 §3.1 采纳合同（R1 单一 finalizeTask/五路径/save 分离记录/幂等去重；R2 provenFiles 公式与无 refs 卡限制；R5 UNKNOWN 态；R6 结果 schema/A 档真溢出/B 零注入=防线失败/Wilson 区间；评审四问；promptChars 口径纪律）+ §3.2 七项新缺陷表（三项并入任务，五项遗留）
+- wanghaoyu 卡：R1 批次并入 AbortSignal 透传；WORK-PLAN 硬约束增"验收四问"
+- 未采纳（记录在案）：hash-chain、持久化幂等键、auditStatus 完整机制、SummaryNode 全量血缘、四段功能开关——9/24 后按需立项
+
+### 卡点 / 需要别人决定（接口争议）
+- 无。git 追踪核验：solution 目录已忽略；tsc/cleanup 不受影响（纯文档+gitignore）
