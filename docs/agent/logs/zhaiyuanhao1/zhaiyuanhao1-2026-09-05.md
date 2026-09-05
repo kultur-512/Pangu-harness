@@ -24,3 +24,24 @@ last_updated: $(date +%H:%M)
 
 ## TODO（明天 / 下一轮）
 - [ ] 等产品主对探测报告逐项裁决去留
+
+## 午后批次（性能叙事装置摘除 #1-#7，产品主逐项裁决）
+
+### 想做什么（目的）
+- 打分器归档后按探测报告裁决执行：#1 全单次、#2 critique 摘除、#3 仓库扫描/锚点摘除、#4 静态分析预跑摘除、#5 风格头/scoringHints 摘除、#6 FailureMemory 轨道摘除、#7 解析恒走三路。
+
+### 实际干了什么（事实）
+- TierConfig：maxRollouts/parallelRollouts 六档收敛 1；critiqueFrequency 字段删除
+- VerifyCritiqueLoop：critique 运行期生成/decideShouldCritique/critique 事件移除（buildCritiquePrompt 休眠保留）；useUniversal 恒真三路解析；FailureMemory 注入/记录全摘；benchHeader/verificationHint 摘除
+- PanshalachChaser：Phase 探索/锚点/锚点注入/静态分析预跑/styleHeader 全摘；basePrompt 只留任务；adapter/profile 死引用清理
+- engineAdapter：failureMemory 选项与 UNKNOWN_TOOL 记录移除（引导文案保留）
+- 删除 src/context/RepoExplorer.ts + ContextManager.ts → archive/2026-09-05-removals/（含 README 恢复说明）
+- 测试：CritiqueContext 2 用例随机制归档；executor UNKNOWN_TOOL 用例改写（引导在、不记录）
+- 文档：ARCHITECTURE 链路图、CHANGELOG 0.6.2、package.json 0.6.2、测试数口径改动态
+- 门槛：tsc EXIT=0；npm test 527 例（526 pass + 1 skip + 0 fail）；cleanup PASS
+
+### 卡点 / 需要别人决定（接口争议）
+- 无。单任务 token 成本约为原 max/ex/pangu 档 1/3~1/5；恢复路径全留档
+
+### TODO（明天 / 下一轮）
+- [ ] refine 生产调用点接线（王浩宇）——FailureMemory 轨道摘除后这是失败信号唯一归口，优先级升高

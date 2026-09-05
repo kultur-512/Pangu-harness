@@ -8,22 +8,13 @@
 //
 // 客户端不做限流（按用户要求）。
 
-import { StrictStructuredToolAdapter } from './adapter/StrictStructuredToolAdapter.js';
-import { UniversalToolCallAdapter } from './adapter/UniversalToolCallAdapter.js';
 import { StructuredReasoner } from './reasoning/StructuredReasoner.js';
-import { RepoExplorer, AnchorMemory } from './context/RepoExplorer.js';
 import { VerifyCritiqueLoop, VerifyCritiqueLoopOptions } from './loop/VerifyCritiqueLoop.js';
 import { TestTimeOrchestrator, Trajectory } from './orchestration/TestTimeOrchestrator.js';
-import { FailureMemory } from './memory/FailureMemory.js';
-import { ContextManager } from './context/ContextManager.js';
-import { BenchmarkProfiles } from './benchmarks/BenchmarkProfiles.js';
 import { Tier, TierConfig, TierRegistry, DEFAULT_TIER } from './tiers/TierConfig.js';
-import { existsSync, readFileSync, statSync } from 'fs';
-import { join } from 'path';
 import type { StepEvent, ModelClientOutput } from './cli/repl/types.js';
 import { ToolCallFormatDetector } from './adapter/ToolCallFormatDetector.js';
 import { createEngineAdapter } from './tools/engineAdapter.js';
-import { redactAnchorLines } from './utils/redact.js';
 
 /**
  * 任务风格：strong=高纪律验证密集 / practical=务实 / universal=通用
@@ -84,10 +75,6 @@ export interface ChaserConfig {
 export class PanshalachChaser {
   // 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
   private memStoreForInvalidate: any = null;
-  private extremeAdapter = new StrictStructuredToolAdapter();
-  private universalAdapter = new UniversalToolCallAdapter();
-  private failureMemory = new FailureMemory();
-  private contextManager = new ContextManager();
 
   constructor(
     private modelClient: any,
@@ -143,7 +130,6 @@ export class PanshalachChaser {
     const isHighRigor = tierConfig.isStrongMode;
 
     const taskStyle = config.taskStyle ?? (config as any).benchmarkType;
-    const profile = BenchmarkProfiles.get(taskStyle);
 
     // 用户确认（max/ex/pangu）
     if (tierConfig.userConfirmationRequired && !config.yes && !config.dryRun) {
@@ -174,112 +160,22 @@ export class PanshalachChaser {
       return { success: false, score: 0, totalRollouts: 0, tierConfig };
     }
 
-    // Phase 1: 探索
-    config.onStep?.({ version: 1, type: 'phase', phase: 'explore' });
-
-    const exploration = await RepoExplorer.explore(workspaceRoot, {
-      anchorBias: isHighRigor,
-      maxDepth: tierConfig.explorationDepth,
-      tier: tierConfig.tier,
-      taskStyle,
-    });
-
-    const anchorMemory = new AnchorMemory();
-    let anchors = [...exploration.recommendedAnchors];
-    if (['high','max','ex','pangu'].includes(tierConfig.tier)) {
-      const must = ['package.json', 'tsconfig.json', 'src', 'README.md'];
-      for (const m of must) {
-        if (!anchors.includes(m) && existsSync(join(workspaceRoot, m))) anchors.push(m);
-      }
-    }
-    anchors = anchors.slice(0, tierConfig.anchorMax);
-
-    const ANCHOR_MAX_LINES = 80;
-    for (const anchor of anchors) {
-      const anchorPath = join(workspaceRoot, anchor);
-      let anchorContent = '';
-      try {
-        if (existsSync(anchorPath)) {
-          const stat = statSync(anchorPath);
-          if (stat.isFile()) {
-            const raw = readFileSync(anchorPath, 'utf-8');
-            // S3: redact sk- prefixed keys, Bearer tokens and apiKey/secret/
-            // password/token pairs (quoted or bare) BEFORE the content ever
-            // reaches the model context.
-            anchorContent = redactAnchorLines(raw, ANCHOR_MAX_LINES);
-          }
-        }
-      } catch {
-        anchorContent = `// [ANCHOR] ${anchor} (读取失败，使用占位符)`;
-      }
-      if (!anchorContent) anchorContent = `// [ANCHOR] ${anchor} (空文件或目录)`;
-      anchorMemory.add(anchor, anchorContent, isHighRigor ? 'strong' : 'normal', isHighRigor ? 135 : 100);
-      this.contextManager.registerAnchor(anchor, anchorContent, isHighRigor ? 145 : 100);
-    }
-
-    // 初始 prompt
-    const usePracticalPrompt = !isHighRigor;
+    // #3/#5/#6（2026-09-05）：任务前仓库扫描/锚点注入、任务风格提示头、
+    // FailureMemory 轨道均已摘除（archive/2026-09-05-removals/）。
+    // 记忆注入（RefinedMemoryStore）保留——这是主线。
     let basePrompt = StructuredReasoner.buildReasoningPrompt(
-      `Issue: ${issueDescription}\n\nExploration:\n${JSON.stringify(exploration.repoMap.slice(0, 40), null, 2)}`,
-      this.failureMemory.getRelevant(issueDescription),
+      `Issue: ${issueDescription}`,
+      [],
       {
-        practicalMode: usePracticalPrompt,
+        practicalMode: !isHighRigor,
         taskStyle,
         benchmarkType: taskStyle,
         isStrongMode: isHighRigor
       }
     );
 
-    // 注入顺序（由 tierConfig 驱动）
-    const styleHeader = BenchmarkProfiles.getPromptHeader(profile, isHighRigor && profile.defaultStrictIronLaws);
-    if (!basePrompt.includes('当前任务风格') && !basePrompt.includes('任务风格') && !basePrompt.includes('当前 Benchmark')) {
-      basePrompt = styleHeader + '\n' + basePrompt;
-    }
-
-    if (tierConfig.tier !== 'quick' && this.contextManager.getAnchorCount() > 0) {
-      const anchorMaxChars = tierConfig.tier === 'standard' ? 10000 : 25000;
-      const anchorContext = this.contextManager.toPromptContext(anchorMaxChars);
-      if (anchorContext) basePrompt += `\n\n${anchorContext}`;
-    }
-
-    if (tierConfig.memoryLoadLevel !== 'none' && !config.memoryPreInjected) {
-      try {
-        const { RefinedMemoryStore } = await import('./memory/RefinedMemoryStore.js');
-        const memStore = new RefinedMemoryStore(workspaceRoot);
-        // 走投影缓存（任务内快照冻结；任务边界 invalidateProjection 重建）
-        const memoryCards = memStore.loadFilteredCached({
-          taskStyle,
-          tier: tierConfig.tier,
-          maxCards: tierConfig.memoryLoadLevel === 'light' ? 3 :
-                    tierConfig.memoryLoadLevel === 'medium' ? 6 :
-                    tierConfig.memoryLoadLevel === 'high' ? 8 : 10,
-        });
-        if (memoryCards.length > 0) {
-          const memBlock = `\n【提炼后的教训（来自历史项目记忆）】\n${memoryCards.map(c => `  - [${c.category}] ${c.summary}`).join('\n')}\n`;
-          basePrompt += memBlock;
-        }
-        // 任务边界 → 重建（下一任务反映最新衰减）
-        this.memStoreForInvalidate = memStore;
-      } catch {}
-    }
-
-    // 纪律规则/格式提示按 ironLawInjectionLevel 注入
     if (tierConfig.ironLawInjectionLevel !== 'none') {
       basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
-    }
-
-    // 一次性收集静态分析结果（仅本次 solveIssue 执行一次）
-    // 由 Reviewer 完成语言探测 + 白名单命令执行（tsc / eslint），失败不影响主流程。
-    // 结果将透传给 VerifyCritiqueLoop，在 critique 阶段以 <static_analysis_result> 块形式注入，
-    // 让模型在自我复盘时能“看见”编译/类型/ lint 错误（根治“灯下黑”）。
-    let staticAnalysisResults: any[] = [];
-    try {
-      const { Reviewer } = await import('./review/Reviewer.js');
-      const reviewer = new Reviewer(null, tierConfig.tier);
-      staticAnalysisResults = await reviewer.collectStaticAnalysis(workspaceRoot);
-    } catch {
-      // 静态分析失败绝不影响主流程
-      staticAnalysisResults = [];
     }
 
     // Phase 2: Test-Time Compute
@@ -295,20 +191,16 @@ export class PanshalachChaser {
     const budgetNotes: string[] = [];
 
     const loopOptions: VerifyCritiqueLoopOptions = {
-      useUniversalAdapter: !isHighRigor,
+      // #7：解析恒走三路（loop 内部强制 useUniversal），不再传 useUniversalAdapter
       strictStructured: isHighRigor,
       maxSteps: maxStepsPerRollout,
       maxConsecutiveFailures: tierConfig.maxConsecutiveFailures,
-      failureMemory: this.failureMemory,
-      verifyFirstBias: tierConfig.verifyFirstBias || profile.verifyFirstBias,
+      verifyFirstBias: tierConfig.verifyFirstBias,
       practicalMode: !isHighRigor,
       isStrongMode: isHighRigor,
       taskStyle,
       benchmarkType: taskStyle,
-      critiqueFrequency: tierConfig.critiqueFrequency,
       ironLawInjectionLevel: tierConfig.ironLawInjectionLevel,
-      // 把静态分析结果传给 Loop，供 critique 阶段注入
-      staticAnalysis: staticAnalysisResults,
     };
 
     const best = await orchestrator.runMultiple(
@@ -316,13 +208,6 @@ export class PanshalachChaser {
         const dynamicOptions: VerifyCritiqueLoopOptions = { ...loopOptions };
         if (triggeredDegradation) {
           dynamicOptions.maxSteps = Math.max(5, Math.floor(maxStepsPerRollout * 0.5));
-          if (dynamicOptions.critiqueFrequency) {
-            dynamicOptions.critiqueFrequency = {
-              ...dynamicOptions.critiqueFrequency,
-              periodicEvery: dynamicOptions.critiqueFrequency.periodicEvery > 0 ? dynamicOptions.critiqueFrequency.periodicEvery * 2 : 0,
-              skipFirstN: dynamicOptions.critiqueFrequency.skipFirstN + 1,
-            };
-          }
           if (dynamicOptions.ironLawInjectionLevel === 'highest') dynamicOptions.ironLawInjectionLevel = 'high';
           else if (dynamicOptions.ironLawInjectionLevel === 'high') dynamicOptions.ironLawInjectionLevel = 'medium';
           else if (dynamicOptions.ironLawInjectionLevel === 'medium_high') dynamicOptions.ironLawInjectionLevel = 'medium';
@@ -414,7 +299,6 @@ export class PanshalachChaser {
         const engineAdapter = createEngineAdapter({
           workspaceRoot,
           tierConfig,
-          failureMemory: this.failureMemory,
           approvalMode: config.approvalMode ?? 'readonly',
           sessionAllowlist: config.sessionAllowlist,
           approvalBridge: config.approvalBridge as any,
@@ -449,16 +333,7 @@ export class PanshalachChaser {
           result: lastStep?.verificationResult,
         });
 
-        // Emit critique if present
-        if (lastStep?.critique) {
-          config.onStep?.({
-            version: 1,
-            type: 'critique',
-            rolloutId,
-            stepNumber: result.steps.length,
-            critique: lastStep.critique,
-          });
-        }
+        // #2：critique 事件已随机制摘除
 
         const rolloutTokens = result.steps.reduce((sum, s) => {
           const reasoningLen = (s.reasoning?.thinking?.length || 0) + (s.reasoning?.plan?.length || 0);
@@ -515,10 +390,7 @@ export class PanshalachChaser {
         isStrongTarget: isHighRigor,
         benchmarkType: taskStyle,
         taskStyle,
-        // high+ 档位 rollout 并发执行（Promise.allSettled,
-        // write-mutex for shared workspace, budget aggregation); quick/standard
-        // stay serial (cost-sensitive).
-        parallel: ['high', 'max', 'ex', 'pangu'].includes(tierConfig.tier),
+        // #1（2026-09-05）：maxRollouts 全档收敛为 1，并行 rollout 机制失去意义
       }
     );
 

@@ -179,25 +179,25 @@ describe('engineAdapter safety gate', () => {
     assert.ok(r.output.includes('iron_law_check'));
   });
 
-  it('adapter records UNKNOWN_TOOL to failureMemory + adds intent guidance (fix-#9-②)', async () => {
+  it('UNKNOWN_TOOL adds intent guidance; failureMemory 轨道已摘除不记录 (fix-#9-② 调整)', async () => {
     setStdoutTty(true); // real path (UNKNOWN_TOOL only reachable outside mock)
     delete process.env.PANSHA_SMOKE;
     const records: string[] = [];
     const mockFM = {
       record(cat: string, desc: string) { records.push(`${cat}:${desc}`); },
     } as any;
+    // #6（2026-09-05）：engineAdapter 不再接收/透传 failureMemory；
+    // 传入的 mockFM 必须被忽略（不写），而 intent→tool 引导保留。
     const adapter = createEngineAdapter({
       workspaceRoot: root,
       tierConfig: fakeTierConfig(),
       failureMemory: mockFM,
-    });
+    } as any);
     const out = await adapter.execute([
       { toolName: 'iron_law_check', params: [], rawBlock: '' } as any,
     ]);
     assert.ok(out.includes('请用 read_file'), 'must add intent→tool guidance');
-    assert.equal(records.length, 1, 'must record to failureMemory');
-    assert.ok(records[0].startsWith('TOOL_FORMAT_ERROR:'), `category must be TOOL_FORMAT_ERROR, got ${records[0]}`);
-    assert.ok(records[0].includes('iron_law_check'));
+    assert.equal(records.length, 0, 'failureMemory track removed — must NOT record');
   });
 
   it('3 consecutive UNKNOWN_TOOL → hard guidance to stop guessing (fix-#9-②)', async () => {

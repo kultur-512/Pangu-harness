@@ -53,8 +53,6 @@ export interface TierConfig {
   maxRollouts: number;
   /** 默认 maxStepsPerRollout */
   maxStepsPerRollout: number;
-  /** critique 频率配置 */
-  critiqueFrequency: CritiqueFrequencySpec;
   /** 纪律规则注入强度 */
   ironLawInjectionLevel: IronLawInjectionLevel;
   /** maxConsecutiveFailures */
@@ -83,7 +81,6 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
     typicalUseCase: '热修复、临时检查',
     maxRollouts: 1,
     maxStepsPerRollout: 10,
-    critiqueFrequency: { periodicEvery: 0, onProblem: true, longNoVerifyThreshold: 0, skipFirstN: 2 },
     ironLawInjectionLevel: 'none',
     maxConsecutiveFailures: 2,
     verifyFirstBias: false,
@@ -100,7 +97,6 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
     typicalUseCase: '常规小修改',
     maxRollouts: 1,
     maxStepsPerRollout: 15,
-    critiqueFrequency: { periodicEvery: 4, onProblem: true, longNoVerifyThreshold: 4, skipFirstN: 2 },
     ironLawInjectionLevel: 'low',
     maxConsecutiveFailures: 3,
     verifyFirstBias: false,
@@ -117,7 +113,6 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
     typicalUseCase: '日常主力（推荐）',
     maxRollouts: 1,
     maxStepsPerRollout: 20,
-    critiqueFrequency: { periodicEvery: 5, onProblem: true, longNoVerifyThreshold: 4, skipFirstN: 3 },
     ironLawInjectionLevel: 'low',
     maxConsecutiveFailures: 3,
     verifyFirstBias: false,
@@ -132,16 +127,15 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   max: {
     tier: 'max',
     typicalUseCase: '重要/高风险任务',
-    maxRollouts: 3,
+    maxRollouts: 1,
     maxStepsPerRollout: 25,
-    critiqueFrequency: { periodicEvery: 2, onProblem: true, longNoVerifyThreshold: 2, skipFirstN: 1 },
     ironLawInjectionLevel: 'high',
     maxConsecutiveFailures: 4,
     verifyFirstBias: true,
     explorationDepth: 6,
     memoryLoadLevel: 'high',
     budgetBehavior: 'soft_limit_with_warning',
-    parallelRollouts: 2,
+    parallelRollouts: 1,
     userConfirmationRequired: true, // 必须
     isStrongMode: true,
     anchorMax: 10,
@@ -149,16 +143,15 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   ex: {
     tier: 'ex',
     typicalUseCase: '极难任务、核心模块',
-    maxRollouts: 4,
+    maxRollouts: 1,
     maxStepsPerRollout: 30,
-    critiqueFrequency: { periodicEvery: 2, onProblem: true, longNoVerifyThreshold: 2, skipFirstN: 1 },
     ironLawInjectionLevel: 'highest',
     maxConsecutiveFailures: 5,
     verifyFirstBias: true,
     explorationDepth: 7,
     memoryLoadLevel: 'high',
     budgetBehavior: 'soft_limit_with_warning',
-    parallelRollouts: 3,
+    parallelRollouts: 1,
     userConfirmationRequired: true, // 必须
     isStrongMode: true,
     anchorMax: 12,
@@ -166,16 +159,15 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   pangu: {
     tier: 'pangu',
     typicalUseCase: '极致追求（终极长程记忆模式）',
-    maxRollouts: 5,
+    maxRollouts: 1,
     maxStepsPerRollout: 40,
-    critiqueFrequency: { periodicEvery: 2, onProblem: true, longNoVerifyThreshold: 2, skipFirstN: 1 },
     ironLawInjectionLevel: 'highest',
     maxConsecutiveFailures: 6,
     verifyFirstBias: true,
     explorationDepth: 8,
     memoryLoadLevel: 'full',
     budgetBehavior: 'soft_limit_with_warning',
-    parallelRollouts: 4,
+    parallelRollouts: 1,
     userConfirmationRequired: true, // 必须 + 预算确认
     isStrongMode: true,
     anchorMax: 15,

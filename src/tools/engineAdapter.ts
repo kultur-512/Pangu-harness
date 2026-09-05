@@ -12,7 +12,6 @@
 
 import type { ToolCall } from '../types/toolCall.js';
 import type { TierConfig } from '../tiers/TierConfig.js';
-import type { FailureMemory } from '../memory/FailureMemory.js';
 import { createToolExecutor, type ToolExecutor } from './executor.js';
 import { createBashTool, bashTimeoutForTier } from './bash.js';
 import { isReadonlyAllowed, READONLY_DENY_MESSAGE } from './readonlyAllowlist.js';
@@ -41,7 +40,6 @@ export function withWriteLock<T>(fn: () => Promise<T> | T): Promise<T> {
 export interface EngineAdapterOptions {
   workspaceRoot: string;
   tierConfig: TierConfig;
-  failureMemory?: FailureMemory;
   /** 2.4 injects the session's approval mode here (default: readonly). */
   approvalMode?: 'readonly' | 'default' | 'full';
   /** 2.4 injects an approval bridge (rich ConfirmBar / readline / headless). */
@@ -139,8 +137,8 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   const writeTools: Record<string, ToolImpl> =
     (tier === 'high' || tier === 'max' || tier === 'ex' || tier === 'pangu')
       ? {
-          write_file: createWriteFileTool({ readFiles, failureMemory: opts.failureMemory }),
-          edit_file: createEditFileTool({ readFiles, failureMemory: opts.failureMemory }),
+          write_file: createWriteFileTool({ readFiles }),
+          edit_file: createEditFileTool({ readFiles }),
         }
       : {};
 
@@ -433,12 +431,6 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         if (res.error === 'UNKNOWN_TOOL') {
           unknownToolStreak++;
           const toolName = String(call.toolName || '').trim();
-          try {
-            opts.failureMemory?.record(
-              'TOOL_FORMAT_ERROR',
-              `模型调用了不存在的工具 ${toolName}（可用: ${[...executor.availableTools()].sort().join(', ')}）`
-            );
-          } catch {}
           const tools = [...executor.availableTools()].sort().join(', ');
           parts.push(
             describeResult(call, params, res) +

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.2 (性能叙事装置摘除：单 rollout、去 critique/静态分析/锚点/风格头/FailureMemory 轨道)
+
+产品主裁决（2026-09-05，探测报告 7 项）落地，全部归档至 `archive/2026-09-05-removals/`：
+- **#1 全单次**：`maxRollouts` 六档收敛为 1（max 3→1、ex 4→1、pangu 5→1），`parallelRollouts` 显示口径同步 1；chaser 移除显式并行
+- **#2 critique 摘除**：VerifyCritiqueLoop 不再发起自我批判模型调用（打分器归档后其打分激励已消失）；`LoopStep.critique` 恒 undefined；`decideShouldCritique` 移除；`buildCritiquePrompt`/上下文装配保留为休眠代码；critique 事件不再发射；TierConfig 删除 `critiqueFrequency`
+- **#3 任务前仓库扫描+锚点注入摘除**：RepoExplorer.explore / AnchorMemory / ContextManager 从 chaser 移除并归档（`RepoExplorer.archived.ts`/`ContextManager.archived.ts`）——"仓库我知道什么"由记忆注入承担
+- **#4 静态分析预跑摘除**：chaser 不再起跑即执行 tsc/eslint（`/review` 命令与 Reviewer 本体保留）
+- **#5 任务风格头摘除**：`getPromptHeader`/`getVerificationHint` 删除，`scoringHints` 死配置删除（BenchmarkProfiles 保留 get/verifyFirstBias 供档位判断）；StructuredReasoner/PromptBuilder 档位契约去 Critique 行
+- **#6 FailureMemory 轨道摘除**：chaser/loop/engineAdapter 全链不再注入/记录；FailureMemory.ts 保留（UserConfirmation/MemoryCommand 兼容）；失败信号唯一归口 = RefinedMemoryStore.refine 任务落定提炼
+- **#7 解析恒走三路**：`useUniversal` 恒真，OpenAI JSON/文本/`<>` XML 容错探测统一；strictStructured 仅影响 XML 探测深度；`StrictStructuredToolAdapter` 独占路径退场（类与测试保留）
+- 测试：删除 2 个 critique 装配用例（随机制归档）、改写 UNKNOWN_TOOL 用例（引导保留、不记录）；527 例全绿
+
 ## 0.6.1 (打分器摘除归档：记忆主线去性能叙事残留)
 
 - **归档** `TrajectoryScorer` 七因子过程纪律打分器 + Chaser 内联启发式评分（88/35+2N/格式/早过加分）→ `archive/2026-09-05-scoring/`（含恢复说明）

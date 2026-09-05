@@ -2,7 +2,7 @@
 
 > 华为命题：基于 openPangu 系列模型，构建具备长程上下文管理能力的记忆增强智能体。
 > 本文档对应命题交付要求：**最终系统架构 / 记忆模块设计 / 训练方案 / 推理流程 / 资源消耗 / 核心创新点**。
-> 状态：架构以现有可运行工程为基（529 例自动化测试，`npm test` 实际值），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。
+> 状态：架构以现有可运行工程为基（自动化测试以 `npm test` 实际输出为准），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。
 
 ---
 
@@ -29,7 +29,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ├──────────────────────────────────────────────────────────────────┤
 │ 提示工程层 (PromptBuilder)                                         │
 │   身份 → L0硬约束(≤3) → tier契约 → 铁律/负向工具清单 → 项目验证块    │
-│   → L1记忆注入 → 锚点/环境增量 → 最近上下文 → 当前任务 → 压缩         │
+│   → L1记忆注入 → 环境增量 → 最近上下文 → 当前任务 → 压缩            │
 │   （注入去重 / token 预算 / 档位差异化 / 参照文件过滤）               │
 ├──────────────────────────────────────────────────────────────────┤
 │ 记忆增强层                                                        │
@@ -41,7 +41,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 │ 执行循环层 (VerifyCritiqueLoop · TestTimeOrchestrator)             │
 │   思维链阶梯 → 工具调用 → 验证信号(PASS/FAIL) → critique 复盘        │
 │   铁律: Read-Before-Write / Verify-Before-Claim / 可回滚           │
-│   parallel rollout / budget 软限 / 每步轨迹采集                    │
+│   单 rollout / budget 软限 / 每步轨迹采集                          │
 ├──────────────────────────────────────────────────────────────────┤
 │ 工具引擎层                                                        │
 │   read_file glob grep bash write_file edit_file diff             │
@@ -122,14 +122,14 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
   L1 记忆卡注入(参照文件/关键词/tier 过滤 + 预算) · skills · 当前特性
   最近上下文(3轮) · 当前任务 → 一条"带记忆"的初始 prompt
   │
-  ▼ PanshalachChaser.solveIssue（按 tier 决定 rollout 数 / 并行度 / 预算）
-    Phase 探索：RepoExplorer 扫仓库 → 选锚点文件(读≤80行+脱敏) → 注入锚点上下文
-    Phase rollout（high+ 档并行）：VerifyCritiqueLoop 迭代
-        思维链(think/plan/verify/critique) → 工具调用(探测格式)
+  ▼ PanshalachChaser.solveIssue（单 rollout + 预算；#1 2026-09-05）
+    （Phase 探索/锚点注入已摘除——记忆注入承担"仓库我知道什么"）
+    Phase rollout：VerifyCritiqueLoop 迭代
+        思维链(think/plan/verify) → 工具调用(三路自适应解析)
         → 真实执行+审批 → 验证信号(PASS/FAIL/…)
-        → critique 复盘（每步信号喂 FailureMemory）
+        （critique/FailureMemory 轨道已摘除 archive/2026-09-05-removals/）
         直到 PASS/真实验证 / 失败上限 / 步数预算
-    best-of-N / budget 软限降级 / early-stop（过程纪律打分器已归档
+    budget 软限降级 / early-stop（过程纪律打分器已归档
     archive/2026-09-05-scoring/；score=验证锚定两值 成功100/未成功0）
   │
   ▼ 任务落定（回合写闭环 · P2 规划）
@@ -148,7 +148,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 - 基础模型：openPangu-1B / 7B / 7B-VL（预训练权重，OpenAI 兼容服务化）。
 - 无 SFT/LoRA（若后续做，记忆注入样本可微调 memory-usage 偏好；本期不引入以守住零依赖与可复现）。
-- "训练"体现为**记忆的归纳**：卡片提炼规则(失败→教训 / 一次通过→成功经验)、衰减与合并、压缩摘要策略——全部确定性、可审计、离线可复现（529 例测试覆盖）。
+- "训练"体现为**记忆的归纳**：卡片提炼规则(失败→教训 / 一次通过→成功经验)、衰减与合并、压缩摘要策略——全部确定性、可审计、离线可复现（自动化测试覆盖）。
 
 ---
 

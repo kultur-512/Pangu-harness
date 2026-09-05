@@ -101,4 +101,4 @@
 ## 6. 附录
 - 任务集与脚本：`scripts/eval/`（规划 P2/P3 一并落地）
 - 运行日志归档目录
-- 测试覆盖（记忆单元行为由自动化测试保障，如 `tests/memory/*`；口径以 `npm test` 实际输出为准，当前 529 例——2026-09-04 起 `ContextMemoryV3`/`MemoryMark`/`ModelProviderEnv` 等契约 v3 测试纳入）
+- 测试覆盖（记忆单元行为由自动化测试保障，如 `tests/memory/*`；口径以 `npm test` 实际输出为准——2026-09-04 起 `ContextMemoryV3`/`MemoryMark`/`ModelProviderEnv` 等契约 v3 测试纳入）

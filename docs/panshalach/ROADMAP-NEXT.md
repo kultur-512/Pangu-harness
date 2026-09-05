@@ -47,7 +47,7 @@ Model Run
 | **P4** | 真实 openPangu 评测套件 | `scripts/eval/` + A/B/C 消融 + 真 openPangu 跑 | 1.5 周 |
 | **P5** | 国产软硬件亲和 + 提交物定稿 | DEPLOY-CN.md + EVALUATION.md 实数据 + 项目书 SUBMISSION.md | 1 周 |
 
-> 完成条件：`npx tsc --noEmit` EXIT=0；529+ 用例全绿（`npm test` 实际值，2026-09-04 起）；`verify-panshalach-cleanup.mjs` PASS；`scripts/eval/run-eval.mjs` 一键跑出 A/B/C 对比 CSV。
+> 完成条件：`npx tsc --noEmit` EXIT=0；用例全绿（以 `npm test` 实际输出为准）；`verify-panshalach-cleanup.mjs` PASS；`scripts/eval/run-eval.mjs` 一键跑出 A/B/C 对比 CSV。
 
 ## 2. 五件套 + 五层落点（与代码模块映射）
 
