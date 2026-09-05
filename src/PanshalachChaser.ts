@@ -10,6 +10,7 @@
 
 import { StructuredReasoner } from './reasoning/StructuredReasoner.js';
 import { VerifyCritiqueLoop, VerifyCritiqueLoopOptions } from './loop/VerifyCritiqueLoop.js';
+import { runWithVerificationJudge } from './loop/continuationJudge.js';
 import { TestTimeOrchestrator, Trajectory } from './orchestration/TestTimeOrchestrator.js';
 import { Tier, TierConfig, TierRegistry, DEFAULT_TIER } from './tiers/TierConfig.js';
 import type { StepEvent, ModelClientOutput } from './cli/repl/types.js';
@@ -316,7 +317,20 @@ export class PanshalachChaser {
           ? `\n\n【高强度模式格式纪律】请使用标准 <> 工具调用格式。这是高质量工程工作的基本要求。`
           : '';
 
-        const result = await loop.run(basePrompt + `\n\n[Rollout: ${rolloutId}]${extraFormat}`);
+        // 接口契约 v3.1（双层终止）：PASS 只是 evidence；end_turn 才自然停；
+        // 未验证完成且有工具活动时由判官有界续跑（<=2 次）。
+        const judged = await runWithVerificationJudge(loop, basePrompt, {
+          tag: `[Rollout: ${rolloutId}]${extraFormat}`,
+          maxContinuations: 2,
+        });
+
+        const result = {
+          success: judged.success,
+          steps: judged.steps,
+          stopReason: judged.stopReason as any,
+        };
+
+
 
         // Emit per-step event
         const lastStep = result.steps[result.steps.length - 1];
@@ -331,27 +345,8 @@ export class PanshalachChaser {
           result: lastStep?.verificationResult,
         });
 
-        // #2：critique 事件已随机制摘除
-
-        const rolloutTokens = result.steps.reduce((sum, s) => {
-          const reasoningLen = (s.reasoning?.thinking?.length || 0) + (s.reasoning?.plan?.length || 0);
-          const resultLen = (s.verificationResult?.length || 0);
-          const critiqueLen = (s.critique?.length || 0);
-          return sum + Math.ceil((reasoningLen + resultLen + critiqueLen) / 4);
-        }, 0);
-        estimatedUsedTokens += rolloutTokens;
-        stepsExecuted += result.steps.length;
-        rolloutsExecuted++;
-
-        if (estimatedUsedTokens >= budgetTokens * 0.7 && !triggeredSoftLimit) {
-          triggeredSoftLimit = true;
-          budgetNotes.push(`软限制触发：已使用约 ${estimatedUsedTokens} token（预算的 ${Math.round((estimatedUsedTokens / budgetTokens) * 100)}%）`);
-          config.onStep?.({ version: 1, type: 'softLimit', usedRatio: estimatedUsedTokens / budgetTokens });
-        }
-        if (estimatedUsedTokens >= budgetTokens * 0.9 && !triggeredDegradation) {
-          triggeredDegradation = true;
-          budgetNotes.push(`行为降级触发：已使用约 ${estimatedUsedTokens} token。maxSteps 缩短，critique 周期翻倍，纪律规则强度降级`);
-          config.onStep?.({ version: 1, type: 'degradation', reason: 'soft-limit-90%' });
+        if (judged.continueCount > 0) {
+          config.onStep?.({ version: 1, type: 'degradation', reason: `verification-continue x${judged.continueCount}` });
         }
 
         const traj: Trajectory = {
@@ -376,6 +371,8 @@ export class PanshalachChaser {
 
         // score 已移除（2026-09-05）：成败由验证信号标注在轨迹上
         traj.success = result.success;
+        traj.stopReason = result.success ? 'completed' : (result.stopReason ?? 'no-verification');
+        traj.continueCount = judged.continueCount;
         return traj;
       },
       maxRollouts,
@@ -391,6 +388,10 @@ export class PanshalachChaser {
     const success = !!best.success;
     // 任务边界 → 投影重建（下一任务反映最新衰减与记忆）
     try { this.memStoreForInvalidate?.invalidateProjection?.(); } catch {}
+    // 对抗清单 #1：全部 rollout 失败时透出 lastError（不再静默 TypeError/吞错）
+    if (!success && best.lastError) {
+      budgetNotes.push(`rollout 失败原因：${best.lastError}`);
+    }
     const budgetReport: BudgetReport = {
       budgetTokens,
       estimatedUsedTokens,
@@ -402,6 +403,6 @@ export class PanshalachChaser {
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig };
+    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, message: !success ? best.lastError : undefined };
   }
 }

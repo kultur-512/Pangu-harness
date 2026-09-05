@@ -107,3 +107,31 @@ last_updated: $(date +%H:%M)
 
 ### 卡点 / 需要别人决定（接口争议）
 - 无。git 追踪核验：solution 目录已忽略；tsc/cleanup 不受影响（纯文档+gitignore）
+
+## 深夜批次 4（R0：双层终止 + 三先决，产品主批准落地）
+
+### 实际干了什么（事实）
+- §1 契约：types.ts 增 TurnStopReason（completed/verification-failed-continue/max-steps/consecutive-failures/aborted/no-verification）；Trajectory 增 stopReason/continueCount/lastError
+- 改动包 A：createOrUpdateCard/addRemember 改脱离缓存克隆（count 预解析），createPositiveCard 同 id 预解析，mergeAndCap 同 id 整卡替换——count 翻倍修复（count==2 断言）
+- 改动包 B：openai-compatible withRetry（429/5xx/网络，Retry-After 头优先，±25% jitter，EMPTY_RESPONSE 可重试耗尽返回空）；orchestrator 空批合成失败轨迹 + lastError；chaser 透出 message
+- 改动包 C：ProviderRegistry.createClientSync 透传 streamChat（生产不再恒非流式）
+- 改动包 D：loop end_turn 自然停（闲聊 1 步即停）、PASS 降级 evidence、连错/步数保留 stopReason；新增 continuationJudge.ts（CC Stop-Hook 等价，有界 ≤2 续跑）；chaser 接判官
+- 新增测试：ContinuationJudge 4 例、TwoLayerTermination 4 例、retry 4 例、EmptyBatch 2 例、streamChat 透传 1 例、count 翻倍 3 例
+
+### 卡点 / 需要别人决定（接口争议）
+- 无。王浩宇卡已声明 R0 前置（勿再做同 id 累加）
+
+### TODO（明天 / 下一轮）
+- [ ] R6 schema 按 TurnStopReason/verdict 契约编写（赵天昂）
+
+## 深夜批次 5（R0 活体验证 + registry 400 修复）
+
+### 实际干了什么（事实）
+- 活体验证双层终止：nihao 任务 3s 结束（旧实现烧 20 步 40s）
+- 发现并修复 registry 400：createClientSync 兜底模型名取 config.model 原样发送 "openpangu:xxx" 路由串 → 网关 400（LM Studio 实测）；剥离 provider 前缀修复
+- 发现并修复 reasoning_content 兜底缺失：openPangu-Embedded 偶发 200 空 content（输出全在 reasoning_content）→ 非流式路径采用之
+- CHANGELOG 0.6.4 补记；version 0.6.4
+- 门槛：tsc EXIT=0；npm test 542 例（541 pass + 1 skip + 0 fail）；cleanup PASS
+
+### 卡点 / 需要别人决定（接口争议）
+- 无

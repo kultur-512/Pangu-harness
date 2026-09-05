@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.4 (R0：双层终止语义 + 三先决修复)
+
+产品主批准的 R0 落地（对抗清单 #1/#6/T-22 + 终止语义双层化）：
+- **契约 v3.1**：`TurnStopReason`（completed / verification-failed-continue / max-steps / consecutive-failures / aborted / no-verification）；`Trajectory` 增 `stopReason/continueCount/lastError`
+- **双层终止**：loop 层 end_turn（无工具调用）即自然停——PASS 字符串降级为 evidence（计入 trajectory.success 但不再直接终止）；`consecutive-failures`/`max-steps` 保留对应 stopReason。闲聊类任务 1 步即停（实测 nihao 40s→3s）
+- **外置判官**：新增 `src/loop/continuationJudge.ts`（CC Stop-Hook 等价）——turn 结束时若未验证完成且轨迹出现过工具调用，注入"验证未通过：原因，继续"有界续跑（≤2 次）；纯文本回合不判官
+- **#1 修复**：`withRetry`（429/5xx/网络错误，Retry-After 头优先，±25% jitter，≤3 次）+ `EMPTY_RESPONSE` 可重试（耗尽返回空）+ reasoning_content 兜底（openPangu-Embedded 实测偶发 200 空 content）+ orchestrator 空批合成失败轨迹（不再返回 undefined 导致 TypeError）
+- **#6 修复**：count 翻倍——createOrUpdateCard/addRemember 改脱离缓存克隆（count 预解析）、createPositiveCard 同 id 预解析、mergeAndCap 同 id 整卡替换（R1 写闭环前置）
+- **T-22 修复**：`ProviderRegistry.createClientSync` 透传 streamChat（生产不再恒非流式）
+- **registry 模型名前缀剥离**：`createClientSync` 兜底取 `config.model` 时原样发送 `openpangu:xxx` 路由串 → 网关 400（本地 LM Studio 实测发现并修复）
+- **reasoning_content 兜底**：非流式响应 content 空但 reasoning_content 非空时采用之（openPangu-Embedded 实测偶发 200 空 content）
+- 新增测试 14 例（judge/双层终止/retry/空批/count 回归），全套 542 例
+
 ## 0.6.3 (score 字段整体移除：成败唯一由验证信号判定)
 
 承接 0.6.1/0.6.2 的打分器归档，`score` 概念彻底退出：

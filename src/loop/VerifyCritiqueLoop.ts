@@ -17,6 +17,7 @@ import { ToolCall, inferToolCategory } from '../types/toolCall.js';
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
 import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawInjectionLevel, Tier } from '../tiers/TierConfig.js';
 import type { StaticAnalysisResult } from '../review/Reviewer.js';
+import type { TurnStopReason } from '../cli/repl/types.js';
 
 /**
  * Critique 构造上下文
@@ -170,16 +171,10 @@ export class VerifyCritiqueLoop {
   private terminalNoCheckViolations = 0;   // Terminal 风格：关键命令后未检查
   private automationStepsWithoutEffectCheck = 0;
 
-  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[] }> {
-    this.initialPromptForContext = initialPrompt || '';
+  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason }> {
     let stepNum = 0;
     let done = false;
-
-    // highRigor: behavioral flag for heavy verification, iron laws, high critique frequency, strict format enforcement.
-    // This represents the "strong mode" execution path (high-rigor discipline) regardless of underlying model.
-    // Computed from:
-    // - explicit isStrongMode (preferred public flag), or
-    // - strictStructured (strict parser intent) + !practicalMode.
+    let stopReason: TurnStopReason | undefined;
     const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode);
 
     while (!done && stepNum < this.maxSteps) {
@@ -382,7 +377,10 @@ export class VerifyCritiqueLoop {
         verificationResult = 'NO_TOOL_CALLS';
         signal = 'NO_TOOL_CALLS';
         this.stepsSinceLastRealVerification++;
-      }
+        // 接口契约 v3.1：end_turn——模型不再调用工具即自然停（闲聊/纯回答 1 步即停），
+        // 不再重置连续失败计数烧满步数（对抗清单 #五）。
+        done = true;
+        stopReason = 'no-verification';}
 
       // #2（2026-09-05）：critique 自我批判已摘除（archive/2026-09-05-removals/）——
       // 每次触发是一次额外完整模型调用，且打分器归档后其打分激励不复存在。
@@ -406,14 +404,16 @@ export class VerifyCritiqueLoop {
       // 失败保护（高纪律模式更宽松，允许更多探索）
       if (signal === 'FAIL' || signal === 'ERROR') {
         this.consecutiveFailures++;
+        stopReason = 'consecutive-failures';
       } else {
         this.consecutiveFailures = 0;
       }
 
-      // 成功条件：必须基于真实验证信号，不能仅凭 critique 文本判定
-      // Verify-Before-Claim 纪律规则：只有看到明确的 PASS / ALL_TESTS_PASSED 信号才能终止
+      // 接口契约 v3.1：PASS 降级为 evidence——记录信号并计入 trajectory.success
+      // （run() 末尾统一计算），但不再直接终止循环；终止由 end_turn /
+      // consecutive-failures / max-steps 决定。
       if (signal === 'PASS' || verificationResult.includes('ALL_TESTS_PASSED')) {
-        done = true;
+        this.hasPerformedRealVerification = true;
       }
 
       // critique 文本单独不能终止任务（#2：critique 已摘除，本判定为休眠保留——
@@ -431,13 +431,21 @@ export class VerifyCritiqueLoop {
       }
     }
 
+    if (!stopReason) stopReason = 'max-steps';
+    if (stopReason === 'no-verification') {
+      const success = this.steps.some(
+        s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
+      );
+      if (success) stopReason = 'completed';
+    }
+
     // 结束时把整条轨迹喂给记忆（#6：FailureMemory 轨道已摘除，收敛到
     // RefinedMemoryStore.refine 的任务落定提炼——见 MEMORY-DESIGN §7.1）
 
     const success = this.steps.some(
       s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
     );
-    return { success, steps: this.steps };
+    return { success, steps: this.steps, stopReason };
   }
 
   private classifySignal(result: string): VerificationSignal {

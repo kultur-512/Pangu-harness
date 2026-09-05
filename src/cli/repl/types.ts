@@ -226,6 +226,22 @@ export interface TaskState {
   updatedAt: number;
 }
 
+// ==================== 接口契约 v3.1：双层终止语义（2026-09-05） ====================
+/**
+ * 回合停止原因（双层终止）：
+ * - 模型层：end_turn（无工具调用）即自然停——PASS 字符串降级为 evidence，不再是终止条件；
+ * - 判官层：turn 想停时若 trajectory.success=false 且轨迹出现过工具调用，
+ *   注入"验证未通过：原因，继续"续跑同一任务（有界 2 次，Chaser 层实现）。
+ * R6 评测 schema 的 verdict 定义依赖本枚举，改动需同步 scripts/eval/results schema。
+ */
+export type TurnStopReason =
+  | 'completed'                    // end_turn 且轨迹含验证 PASS
+  | 'verification-failed-continue' // 判官拦截续跑（本轮回合结束但任务未完）
+  | 'max-steps'                    // 步数耗尽
+  | 'consecutive-failures'         // 连续工具失败保护
+  | 'aborted'                      // 用户/信号中止
+  | 'no-verification';             // end_turn 但从未产生 PASS（信息型/未声明验证）
+
 // ==================== Config ====================
 export interface ProviderConfig {
   type: 'openai-compatible';

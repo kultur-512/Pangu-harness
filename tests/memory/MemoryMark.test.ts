@@ -93,3 +93,48 @@ describe('接口契约 v3：记忆二态与衰减锚', () => {
     assert.ok(Math.abs(c1.lastUsedAt - Date.now()) < 60_000, 'lastUsedAt 刷新到 now');
   });
 });
+
+describe('接口契约 v3.1：count 翻倍修复回归（对抗清单 #6）', () => {
+  afterEach(cleanupAll);
+
+  function failTraj(): any {
+    return { id: 't', steps: [{ stepNumber: 1, readBeforeWriteViolation: true } as any], success: false };
+  }
+
+  it('同一失败信号连续两次 refine+save → count 恰为 2（旧实现翻倍为 4）', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new RefinedMemoryStore(ws);
+    const cards1 = store.refine({ trajectory: failTraj(), taskStyle: 'swe', attemptCount: 2, userFeedback: '' });
+    store.save(cards1);
+    const cards2 = store.refine({ trajectory: failTraj(), taskStyle: 'swe', attemptCount: 2, userFeedback: '' });
+    store.save(cards2);
+    // kind 在落盘时未写，经 loadFiltered 归一化为 failure
+    const hit = store.loadFiltered({}).find(c => c.kind === 'failure');
+    assert.ok(hit, '失败卡存在（归一化后）');
+    assert.equal(hit.count, 2, `恰好 +1/次，got ${hit.count}`);
+  });
+
+  it('/remember 同文本两次 → count 恰为 2', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new RefinedMemoryStore(ws);
+    store.save([store.addRemember('项目优先用 pnpm', false)]);
+    store.save([store.addRemember('项目优先用 pnpm', false)]);
+    const file = JSON.parse(fs.readFileSync(memPath(), 'utf-8'));
+    const hit = file.cards.find((c: any) => c.kind === 'preference');
+    assert.ok(hit);
+    assert.equal(hit.count, 2, `恰好 +1/次，got ${hit.count}`);
+  });
+
+  it('正向成功重复两次（同摘要）→ count 恰为 2', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new RefinedMemoryStore(ws);
+    const t1 = store.refine({ trajectory: { id: 't1', steps: [], success: true }, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    store.save(t1);
+    const t2 = store.refine({ trajectory: { id: 't2', steps: [], success: true }, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    store.save(t2);
+    const file = JSON.parse(fs.readFileSync(memPath(), 'utf-8'));
+    const hits = file.cards.filter((c: any) => c.kind === 'success');
+    assert.equal(hits.length, 1, '同摘要同 id → 单卡');
+    assert.equal(hits[0].count, 2, `恰好 +1/次，got ${hits[0].count}`);
+  });
+});

@@ -150,6 +150,10 @@ export class RefinedMemoryStore {
   ): RefinedMemoryCard {
     const summary = `已验证可行的做法：${evidence}`;
     const newRefs = writtenFiles.map(f => this.normPath(f)).filter(Boolean);
+    // 修复（#6）：同 id（同摘要）已存在时 count 预解析为 existing+1——配合
+    // mergeAndCap 整卡替换语义，重复成功恰好 +1 而非翻倍。
+    const existingSameId = this.load().cards.find(c => c.id === this.hashOfSuccessSummary(summary));
+    const resolvedCount = existingSameId ? (existingSameId.count ?? 0) + 1 : 1;
     const card: RefinedMemoryCard = {
       id: this.hashId(`success-${summary}`),
       kind: 'success',
@@ -158,7 +162,7 @@ export class RefinedMemoryStore {
       summary,
       weight: 1.0,
       taskStyle: (taskStyle as any) || 'all',
-      count: 1,
+      count: resolvedCount,
       lastSeen: now,
       firstSeen: now,
       applicableTiers: applicableTiers ?? [],
@@ -559,19 +563,21 @@ export class RefinedMemoryStore {
     const newRefs = writtenFiles.map(f => this.normPath(f)).filter(Boolean);
 
     if (existing) {
-      // 更新已有
-      existing.count += 1;
-      existing.lastSeen = now;
-      existing.weight = Math.min(5, existing.weight + 0.2);
-      // 升级 memoryCategory（如果新推断的更具体）
-      if (!existing.memoryCategory || existing.memoryCategory === 'general') {
-        (existing as any).memoryCategory = memCat;
-      }
-      // 合并 referencedFiles
+      // 修复（对抗清单 #6，2026-09-05）：返回【脱离缓存的克隆】，count 预解析为
+      // existing.count+1——绝不在缓存对象上原位累加。旧行为（原位 +1 后 save()
+      // 的 mergeAndCap 对同 id 再累加一次）使 count 每轮翻倍（1→2→4），R1 写闭环
+      // 接线后必触发。
       const prevRefs: string[] = (existing as any).referencedFiles || [];
-      const merged = Array.from(new Set([...prevRefs.map(this.normPath.bind(this)), ...newRefs]));
-      (existing as any).referencedFiles = merged;
-      return existing;
+      const mergedRefs = Array.from(new Set([...prevRefs.map(this.normPath.bind(this)), ...newRefs]));
+      const resolvedMemCat = (!existing.memoryCategory || existing.memoryCategory === 'general') ? memCat : existing.memoryCategory;
+      return {
+        ...existing,
+        count: (existing.count ?? 0) + 1,
+        lastSeen: now,
+        weight: Math.min(5, (existing.weight ?? 1) + 0.2),
+        memoryCategory: resolvedMemCat,
+        referencedFiles: mergedRefs,
+      } as RefinedMemoryCard;
     }
 
     // 新建
@@ -676,11 +682,16 @@ export class RefinedMemoryStore {
   addRemember(content: string, pin: boolean, now = Date.now()): RefinedMemoryCard {
     const existing = this.load().cards.find(c => c.kind === 'preference' && c.summary === content);
     if (existing) {
-      existing.count += 1;
-      existing.lastSeen = now;
-      existing.lastUsedAt = now;
-      if (pin) { existing.pinned = true; existing.weight = 1.0; }
-      return existing;
+      // 修复（#6 同源）：返回脱离缓存的克隆（count+1）——原位累加 + save 的
+      // mergeAndCap 会让重复 /remember 同文本时 count 翻倍。
+      return {
+        ...existing,
+        count: (existing.count ?? 0) + 1,
+        lastSeen: now,
+        lastUsedAt: now,
+        pinned: pin ? true : existing.pinned,
+        weight: pin ? 1.0 : existing.weight,
+      } as RefinedMemoryCard;
     }
     const card: RefinedMemoryCard = {
       id: this.hashId(`preference-${content}`),
@@ -863,14 +874,10 @@ export class RefinedMemoryStore {
     const map = new Map<string, RefinedMemoryCard>();
     for (const c of existing) map.set(c.id, c);
     for (const c of newCards) {
-      const existing2 = map.get(c.id);
-      if (existing2) {
-        existing2.count += c.count;
-        existing2.lastSeen = Math.max(existing2.lastSeen, c.lastSeen);
-        existing2.weight = Math.min(5, existing2.weight + 0.2);
-      } else {
-        map.set(c.id, c);
-      }
+      // 修复（#6）：同 id 整卡替换——调用方（createOrUpdateCard/addRemember/
+      // createPositiveCard）已预解析 count；此处再累加会造成翻倍。
+      // 幂等：同一对象重复 save 也只保留一份，不再放大。
+      map.set(c.id, c);
     }
     return Array.from(map.values());
   }
