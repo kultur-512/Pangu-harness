@@ -98,6 +98,8 @@ export interface CompleteOptions {
   maxTokens?: number;
   /** 原生 function calling（P1.1 请求侧）：OpenAI function schema 列表。 */
   tools?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
+  /** 0.7：外部中止信号（合并进 fetch/SSE 读流）。 */
+  signal?: AbortSignal;
   [key: string]: unknown;
 }
 
@@ -155,9 +157,14 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, externalSignal?: AbortSignal): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onAbort, { once: true });
+  }
   try {
     const res = await fetch(url, {
       ...init,
@@ -166,6 +173,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     return res;
   } finally {
     clearTimeout(id);
+    if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
   }
 }
 
@@ -245,7 +253,12 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify(body),
-    }, timeoutMs).catch((e: any) => {
+    }, timeoutMs, opts.signal).catch((e: any) => {
+      if (e?.name === 'AbortError') {
+        const err: any = new Error('TASK_ABORTED');
+        err.code = 'ABORTED';
+        throw err;
+      }
       const err: any = new Error(`complete network error: ${e?.message || e}`);
       err.network = true;
       throw err;
@@ -423,8 +436,13 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           method: 'POST',
           headers: authHeaders,
           body: JSON.stringify(body),
-        }, timeoutMs);
-      } catch (e) {
+        }, timeoutMs, opts.signal);
+      } catch (e: any) {
+        if (e?.name === 'AbortError') {
+          const err: any = new Error('TASK_ABORTED');
+          err.code = 'ABORTED';
+          throw err;
+        }
         // Transport-level failure → fall back to non-streaming so callers keep working
         for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
         return;
@@ -444,6 +462,11 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       const toolCallAcc = new Map<number, { id?: string; name: string; args: string }>();
 
       outer: while (true) {
+        if (opts.signal?.aborted) {
+          const err: any = new Error('TASK_ABORTED');
+          err.code = 'ABORTED';
+          throw err;
+        }
         const { value, done } = await reader.read();
         if (done) break;
 

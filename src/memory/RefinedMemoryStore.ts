@@ -7,7 +7,7 @@ import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
 import type { MemoryCategory } from './RefinedMemoryCard.js';
 import { FailureCategory } from './FailureMemory.js';
-import { Trajectory } from '../orchestration/TestTimeOrchestrator.js';
+import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
 
 export interface RefineInput {
@@ -126,8 +126,10 @@ export class RefinedMemoryStore {
     // Positive Memory — 一次通过 + 正向信号 → success 卡
     if (input.attemptCount === 1) {
       const fb = (input.userFeedback || '').trim();
-      // score 已移除（2026-09-05）：正向信号 = 用户正向反馈 OR 轨迹验证通过
-      const positive = POSITIVE_FEEDBACK_RE.test(fb) || input.trajectory?.success === true;
+      // 0.7：正向信号 = 用户正向反馈 OR 轨迹真实验证通过（stopReason==='completed'）。
+      // 纯问答/闲聊（stopReason==='answered'）不再产生 success 卡——它计入 UI
+      // "已回复"但不代表工程验证通过。
+      const positive = POSITIVE_FEEDBACK_RE.test(fb) || input.trajectory?.stopReason === 'completed';
       if (positive) {
         const card = this.createPositiveCard(input.taskStyle, input.applicableTiers, now, fb || '一次通过且真实验证通过', writtenFiles);
         newCards.push(card);

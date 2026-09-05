@@ -474,13 +474,30 @@ export class Repl {
       const duration = Date.now() - start;
 
       if (this.taskAborted) {
+        // 0.7：signal 已贯穿底层，等待真正 settle（通常 abort 后立即返回）
+        try { await taskWork.catch(() => {}); } catch {}
         this.renderer.warn('任务已中断');
         this.input.resume();
         this.currentAbort = null;
         return;
       }
 
-      this.renderer.success(`完成 (${duration}ms) ${result.success ? "· 已通过验证" : "· 未通过验证"}`);
+      // 0.7 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
+      const stopReason = (result as any)?.bestTrajectory?.stopReason;
+      const summary = stopReason === 'completed' ? '已通过验证'
+        : stopReason === 'answered' ? '已回复'
+        : result.success ? '已通过验证' : '未通过验证';
+      this.renderer.success(`完成 (${duration}ms) · ${summary}`);
+
+      // 0.7：answered 时把模型正文呈现给用户
+      if (stopReason === 'answered') {
+        const traj = (result as any)?.bestTrajectory;
+        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        if (answerText) {
+          const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
+          this.renderer.writeLine(preview);
+        }
+      }
 
       this.session.addTurn({
         id: Date.now().toString(36),
@@ -491,8 +508,9 @@ export class Repl {
         durationMs: duration,
         result: {
           success: result.success,
-          summary: result.success ? "已通过验证" : "未通过验证",
+          summary,
           budgetReport: result.budgetReport,
+          stopReason,
         },
       });
       this.saveSession();

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.7.0 (终止语义重构：判官摘除 + 意图分类 + AbortSignal 贯穿)
+
+产品主实测复现的系统性问题修复：简单输入（"1"/"你好，回答我你是谁"）被重复执行十几次、单任务跑 905s 不收敛；运行中 Ctrl+C 停不下来（网关侧仍持续 POST）；纯问答显示"任务未通过验证"且看不到模型答复。方案文档：`docs/panshalach/FIX-0.7-TERMINATION.md`。
+
+**判官摘除（0.6.4 双层终止收缩为单层）**
+- `continuationJudge.ts` 归档至 `archive/2026-09-05-removals/`（判官是唯一外层续跑源——`maxRollouts` 已全档为 1）；回合上界从 ~20 步×3 轮压回单次 `maxSteps`
+- `TurnStopReason` 移除 `verification-failed-continue`；`Trajectory` 移除 `continueCount`
+- **TestTimeOrchestrator 一并移除**（runMultiple 恒单次后 count/sort/预算裁剪全为死路径）：`Trajectory` 类型迁至 `src/loop/trajectory.ts`，chaser 单次直调 `loop.run()`，空批保护（合成失败轨迹 + lastError）并入 chaser
+
+**回合三态（CC 式自然停即成功）**
+- `answered`（新增）：end_turn 无工具调用且**有面向用户正文**（剥结构块后非空）→ `success=true`，UI 显示"已回复"并把模型正文呈现给用户（此前纯问答被标失败且答复被吞）
+- `no-verification`：end_turn 但无正文无工具（空白/空转）→ 仍失败
+- `completed`：轨迹含真实验证 PASS（保留）
+- **记忆信号收紧**：`refine`/compact 补漏的 success 卡信号从 `trajectory.success` 改为 `stopReason==='completed'`——纯问答/闲聊不再产生 success 卡（UI 成功 ≠ 记忆成功）
+
+**意图分类（`src/cli/taskIntent.ts`，纯函数）**
+- 四类：`execution`（工程动词/工具/命令/@path）/ `search`（文件后缀无动词——**先只读搜索，搜不到询问用户具体用意**，≤3 步、强制 readonly、禁写禁 bash）/ `chat`（问候/自我询问——单次 complete 直接回答，不进 agent 循环、不灌格式教学与工具 schema）/ `meta`
+- `PANSHA_INTENT_GATE=0` 逃生门（全量按 execution 兜底）
+- Prompt 组装按意图分支：`StructuredReasoner.buildChatDirective`/`buildSearchDirective` 与执行路径的格式教学彻底分离——消除"对话不调工具"与"每步必须输出工具块"的指令冲突（弱模型伪工具调用空转的直接诱因）
+
+**AbortSignal 贯穿（真正的 Ctrl+C）**
+- `solveIssue → VerifyCritiqueLoop → modelClient.complete(opts.signal) → openai-compatible fetchWithTimeout（外部 signal 合并进内部 controller）/ streamChat 读循环（abort 即抛 TASK_ABORTED）→ engineAdapter/executor`
+- `runAgentTask` 把 `ctx.signal` 透传给 solveIssue（此前只用于丢事件——signal 到 runAgentTask 边界就断了）；UI 层 abort 后**等待底层 settle**，不再"UI 返回但网关继续刷 POST"
+- loop 每步开头 + 模型调用返回后检查 signal → `stopReason='aborted'`
+- 已知边界：fetch 发出后 abort 中断的是读取/连接，网关侧生成可能仍在后台算完（无 stream 关闭语义时）；bash 子进程强杀待后续版本
+
+**预算累计修复**
+- `estimatedUsedTokens` 按每次模型调用累加（prompt+响应长度估算；此前声明后从未累加 → `[最终预算 0%]` 恒 0 误导）
+
+**文档/测试**
+- 新增 `docs/panshalach/FIX-0.7-TERMINATION.md`（方案）；`tests/loop/Termination.test.ts`（6 例：answered/no-verification/completed/max-steps/consecutive-failures/aborted）、`tests/cli/taskIntent.test.ts`（7 例）、`tests/tools/withWriteLock.test.ts`（写互斥从 orchestrator 测试迁出保留）
+- 删除 `ContinuationJudge.test.ts`/`TwoLayerTermination.test.ts`/orchestration 两测试；记忆测试正向卡用例随信号源更新（`stopReason='completed'`）
+- 验证（2026-09-05，Windows/Node 22）：`npx tsc --noEmit` 干净（EXIT=0）；`node --test --import tsx --test-concurrency=4`（显式 glob 全目录）**545 例：544 pass + 1 skip + 0 fail**
+- 待实测（用户侧）：REPL 输入 `1`/`你好` → 单次出正文；Ctrl+C → 网关停 POST；`hello.txt` → 先搜索搜不到询问
+
 ## 0.6.5 (部署落地：全局唤起 + 原生 function calling 请求侧 + 写工具全档位 + CC 风格提示词)
 
 产品主"部署后无法唤起"排查引出的全链路修复（本地 LM Studio openPangu-Embedded 实测驱动）：

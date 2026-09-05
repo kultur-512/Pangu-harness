@@ -45,6 +45,8 @@ export interface Turn {
     summary: string;
     trajectoryId?: string;
     budgetReport?: BudgetReport;
+    /** 0.7：回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification）。 */
+    stopReason?: string;
   };
   tier: Tier;
   durationMs?: number;
@@ -226,21 +228,22 @@ export interface TaskState {
   updatedAt: number;
 }
 
-// ==================== 接口契约 v3.1：双层终止语义（2026-09-05） ====================
+// ==================== 接口契约 v4：单层终止语义（2026-09-05 0.7） ====================
 /**
- * 回合停止原因（双层终止）：
- * - 模型层：end_turn（无工具调用）即自然停——PASS 字符串降级为 evidence，不再是终止条件；
- * - 判官层：turn 想停时若 trajectory.success=false 且轨迹出现过工具调用，
- *   注入"验证未通过：原因，继续"续跑同一任务（有界 2 次，Chaser 层实现）。
+ * 回合停止原因（单层终止；判官机制已于 0.7 摘除，见 archive/2026-09-05-removals/）：
+ * - completed：轨迹含真实验证 PASS（验证通过）；
+ * - answered：end_turn（无工具调用）且存在面向用户的正文答复——CC 式自然停即成功，
+ *   计入 success 与 UI"已回复"，但【不】作为记忆 success 卡信号（见 refine 收紧）；
+ * - max-steps / consecutive-failures / no-verification / aborted：失败系。
  * R6 评测 schema 的 verdict 定义依赖本枚举，改动需同步 scripts/eval/results schema。
  */
 export type TurnStopReason =
-  | 'completed'                    // end_turn 且轨迹含验证 PASS
-  | 'verification-failed-continue' // 判官拦截续跑（本轮回合结束但任务未完）
-  | 'max-steps'                    // 步数耗尽
-  | 'consecutive-failures'         // 连续工具失败保护
-  | 'aborted'                      // 用户/信号中止
-  | 'no-verification';             // end_turn 但从未产生 PASS（信息型/未声明验证）
+  | 'completed'              // 轨迹含真实验证 PASS
+  | 'answered'               // end_turn 且有正文答复（信息型/纯问答）
+  | 'max-steps'              // 步数耗尽
+  | 'consecutive-failures'   // 连续工具失败保护
+  | 'aborted'                // 用户/信号中止
+  | 'no-verification';       // end_turn 但无正文无工具（空白/空转）
 
 // ==================== Config ====================
 export interface ProviderConfig {

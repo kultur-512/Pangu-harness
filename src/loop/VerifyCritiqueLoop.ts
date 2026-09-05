@@ -88,6 +88,9 @@ export interface VerifyCritiqueLoopOptions {
    * 当前 diff，用于构造 <current_diff> 块。
    */
   currentDiff?: string;
+
+  /** 0.7：外部中止信号（贯穿到模型调用与工具执行）。abort 时本轮以 stopReason='aborted' 结束。 */
+  signal?: AbortSignal;
 }
 
 export class VerifyCritiqueLoop {
@@ -102,6 +105,7 @@ export class VerifyCritiqueLoop {
   private benchmarkType?: BenchmarkType | string; // taskStyle 的别名（内部同步维护）
   private taskStyle?: string;
   private isStrongMode?: boolean;
+  private signal?: AbortSignal;
   private profile = BenchmarkProfiles.get('swe');
   // critique 频率 / 纪律规则注入强度 / tier 名称
   private critiqueFrequency?: CritiqueFrequencySpec;
@@ -152,6 +156,7 @@ export class VerifyCritiqueLoop {
     }
     this.userRequest = options.userRequest;
     this.currentDiff = options.currentDiff;
+    this.signal = options.signal;
   }
 
   private maxSteps: number;
@@ -188,6 +193,10 @@ export class VerifyCritiqueLoop {
     const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode);
 
     while (!done && stepNum < this.maxSteps) {
+      if (this.signal?.aborted) {
+        stopReason = 'aborted';
+        break;
+      }
       stepNum++;
 
       const history = this.buildHistoryPrompt();
@@ -271,7 +280,16 @@ export class VerifyCritiqueLoop {
       const toolSchemas = typeof this.verificationEngine?.toolSchemas === 'function'
         ? this.verificationEngine.toolSchemas()
         : undefined;
-      const rawOrObj = await this.modelClient.complete(prompt, (Array.isArray(toolSchemas) && toolSchemas.length > 0) ? { tools: toolSchemas } : {});
+      const rawOrObj = await this.modelClient.complete(prompt, {
+        ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
+        signal: this.signal,
+      });
+
+      // 0.7：模型调用返回后若已被中止 → 立即以 aborted 结束（不再解析/执行工具）。
+      if (this.signal?.aborted) {
+        stopReason = 'aborted';
+        break;
+      }
 
       // Normalize
       let rawContent: string;
@@ -396,10 +414,11 @@ export class VerifyCritiqueLoop {
         verificationResult = 'NO_TOOL_CALLS';
         signal = 'NO_TOOL_CALLS';
         this.stepsSinceLastRealVerification++;
-        // 接口契约 v3.1：end_turn——模型不再调用工具即自然停（闲聊/纯回答 1 步即停），
-        // 不再重置连续失败计数烧满步数（对抗清单 #五）。
+        // 0.7：end_turn——模型不再调用工具即自然停（闲聊/纯回答 1 步即停）。
+        // 区分 answered（有面向用户正文答复）与 no-verification（空白/空转）。
         done = true;
-        stopReason = 'no-verification';}
+        stopReason = this.hasUserFacingText(rawContent) ? 'answered' : 'no-verification';
+      }
 
       // #2（2026-09-05）：critique 自我批判已摘除（archive/2026-09-05-removals/）——
       // 每次触发是一次额外完整模型调用，且打分器归档后其打分激励不复存在。
@@ -451,11 +470,11 @@ export class VerifyCritiqueLoop {
     }
 
     if (!stopReason) stopReason = 'max-steps';
-    if (stopReason === 'no-verification') {
-      const success = this.steps.some(
+    if (stopReason === 'no-verification' || stopReason === 'answered') {
+      const hasPass = this.steps.some(
         s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
       );
-      if (success) stopReason = 'completed';
+      if (hasPass) stopReason = 'completed';
     }
 
     // 结束时把整条轨迹喂给记忆（#6：FailureMemory 轨道已摘除，收敛到
@@ -463,8 +482,17 @@ export class VerifyCritiqueLoop {
 
     const success = this.steps.some(
       s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
-    );
+    ) || stopReason === 'answered';
     return { success, steps: this.steps, stopReason };
+  }
+
+  /** 0.7：剥离结构化块与工具块后，是否仍有面向用户的正文（决定 end_turn → answered vs no-verification）。 */
+  private hasUserFacingText(rawContent: string): boolean {
+    const stripped = String(rawContent ?? '')
+      .replace(/<(thinking|plan|verify|critique|format_check|iron_law_check)>[\s\S]*?<\/\1>/gi, '')
+      .replace(/<>[\s\S]*?<\/>/gi, '')
+      .trim();
+    return stripped.length > 0;
   }
 
   private classifySignal(result: string): VerificationSignal {

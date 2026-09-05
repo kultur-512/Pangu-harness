@@ -113,15 +113,14 @@ export async function compactSession(
   };
   const coveredIds = removed.map(t => t.id);
 
-  // compact 补漏提炼 — 被移除轮次若验证成功（result.success === true）则提炼
-  // success 卡；evidence 用该轮 userInput 摘要（score 时代是零信息量的
-  // "score=90"，且所有高分任务 hash 撞进同一张卡——此处一并修复）。
-  // 同内容 hash 去重仍在（回合结束已提炼则跳过 → 防双重计数）。
+  // compact 补漏提炼 — 被移除轮次若【真实验证通过】才提炼 success 卡；
+  // 0.7：用 stopReason 而非 success（answered 计入 success 但非工程验证通过，
+  // 纯问答/闲聊不产 success 卡）。evidence 用该轮 userInput 摘要。
   try {
     const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
     const store = new RefinedMemoryStore(session.workspace);
     const signals = removed
-      .filter((t) => t.result?.success === true)
+      .filter((t) => (t.result as any)?.stopReason === 'completed')
       .map((t) => {
         const brief = (t.userInput || '').replace(/\s+/g, ' ').trim().slice(0, 80) || '（无输入摘要）';
         return { summary: `已验证可行的做法：${brief}`, evidence: brief, taskStyle: 'all', now: Date.now() };

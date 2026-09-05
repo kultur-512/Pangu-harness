@@ -708,6 +708,10 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
       if (raced.kind === 'aborted') {
         try { controller.abort(); } catch {}
+        // 0.7：abort 已贯穿 solveIssue → loop → 模型 fetch / 工具执行。
+        // 等待底层 promise 真正 settle（signal 已触发，通常在当前 in-flight
+        // 请求中断后立即返回），避免"UI 已返回但网关仍在刷 POST"。
+        try { await runPromise.catch(() => {}); } catch {}
         // B3: mark this turn as aborted so the queue-drain loop below does NOT
         // auto-execute the remaining queued tasks (the user keeps them to
         // rerun deliberately; previously lastAborted was never set → aborted
@@ -725,6 +729,12 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         // P5-5.3: this task's rollouts are done
         agentTree.markAll('running', 'done');
         const r = raced.result;
+        const stopReason = (r as any)?.stopReason;
+        // 0.7 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
+        const summary = stopReason === 'completed' ? '已通过验证'
+          : stopReason === 'answered' ? '已回复'
+          : stopReason === 'aborted' ? '已中断'
+          : r?.success ? '已通过验证' : '未通过验证';
         const turn = {
           id: Date.now().toString(36),
           timestamp: Date.now(),
@@ -734,13 +744,24 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           durationMs: r?.durationMs ?? (Date.now() - startedAt),
           result: {
             success: !!r?.success,
-            summary: r?.success ? "已通过验证" : "未通过验证",
+            summary,
             budgetReport: r?.budgetReport as any,
           },
         };
+        (turn.result as any).stopReason = stopReason;
         try { session.addTurn(turn); } catch {}
         try { rollout.appendTurn(session.id, turn as any); } catch {}
-        recordOutput(r?.success ? "完成（已通过验证）" : "任务未通过验证");
+        // 0.7：answered 时把模型正文呈现给用户（/edit 可取回）
+        if (stopReason === 'answered' && r) {
+          const traj = (r as any).bestTrajectory;
+          const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+          if (answerText) {
+            const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
+            if (!useRich) renderer.writeLine(renderer.color(preview, 'white'));
+            else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'markdown', content: answerText });
+          }
+        }
+        recordOutput(summary);
       }
     } catch (err: any) {
       const msg = '任务执行失败: ' + (err?.message || err);
@@ -853,7 +874,11 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
     if (t === 'result' || event === 'result') {
       if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: data.success ? '完成（已通过验证）' : '任务未通过验证', level: data.success ? 'success' : 'warn' });
+      // 0.7 三态文案：answered→已回复；aborted→已中断；success→已通过验证；否则未通过验证
+      const sr2 = data.stopReason;
+      const resultText = sr2 === 'answered' ? '已回复' : sr2 === 'aborted' ? '已中断'
+        : data.success ? '完成（已通过验证）' : '任务未通过验证';
+      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: resultText, level: sr2 === 'answered' || data.success ? 'success' : 'warn' });
       if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
         if (typeof b.pushBudget === 'function') b.pushBudget(data.budgetReport.usageRatio);
       }
@@ -948,7 +973,10 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         break;
       case 'result':
         {
-          const msg = data.success ? '完成（已通过验证）' : '任务未通过验证';
+          // 0.7 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
+          const sr = data.stopReason;
+          const msg = sr === 'answered' ? '已回复' : sr === 'aborted' ? '已中断'
+            : data.success ? '完成（已通过验证）' : '任务未通过验证';
           r.success(msg);
           recordOutput(msg);
           if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {

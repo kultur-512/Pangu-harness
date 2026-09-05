@@ -215,10 +215,18 @@ describe('Positive Memory (M1.1)', () => {
     assert.equal(cards.filter(c => c.kind === 'success').length, 0);
   });
 
-  it('attemptCount===1 + no feedback + 验证成功（trajectory.success）→ refine', () => {
+  it('attemptCount===1 + no feedback + 真实验证通过（stopReason=completed）→ refine', () => {
     const store = new RefinedMemoryStore(makeTempWorkspace());
-    const cards = store.refine({ trajectory: fakeTraj(true), taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    const traj = { ...fakeTraj(true), stopReason: 'completed' as const };
+    const cards = store.refine({ trajectory: traj, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
     assert.equal(cards.filter(c => c.kind === 'success').length, 1);
+  });
+
+  it('0.7：answered（纯问答自然停）不产生 success 卡——success=true 也不行，必须 completed', () => {
+    const store = new RefinedMemoryStore(makeTempWorkspace());
+    const traj = { ...fakeTraj(true), stopReason: 'answered' as const };
+    const cards = store.refine({ trajectory: traj, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    assert.equal(cards.filter(c => c.kind === 'success').length, 0, '闲聊/纯问答不喂成功卡');
   });
 
   it('POSITIVE_FEEDBACK_RE matches the listed words', () => {

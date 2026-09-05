@@ -89,7 +89,22 @@ const command: Command = {
       });
 
       const duration = Date.now() - start;
-      ctx.renderer.success(`完成 (${duration}ms) ${result.success ? "· 已通过验证" : "· 未通过验证"}`);
+      // 0.7 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
+      const stopReason = (result as any)?.bestTrajectory?.stopReason;
+      const summary = stopReason === 'completed' ? '已通过验证'
+        : stopReason === 'answered' ? '已回复'
+        : result.success ? '已通过验证' : '未通过验证';
+      ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
+
+      // 0.7：answered 时把模型正文呈现给用户
+      if (stopReason === 'answered') {
+        const traj = (result as any)?.bestTrajectory;
+        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        if (answerText) {
+          const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
+          ctx.renderer.writeLine(preview);
+        }
+      }
 
       ctx.session.addTurn({
         id: Date.now().toString(36),
@@ -100,8 +115,9 @@ const command: Command = {
         durationMs: duration,
         result: {
           success: result.success,
-          summary: result.success ? "已通过验证" : "未通过验证",
+          summary,
           budgetReport: result.budgetReport,
+          stopReason,
         },
       });
 

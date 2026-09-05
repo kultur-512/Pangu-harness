@@ -32,6 +32,7 @@ export interface RunRequest {
 
 export interface RunResult {
   success: boolean;
+  stopReason?: string;
   durationMs?: number;
   error?: string;
   budgetReport?: any;
@@ -131,6 +132,7 @@ export async function runAgentTask(
       approvalTimeoutMs: ctx.approvalTimeoutMs,
       planMode: ctx.planMode,
       mcpTools: ctx.mcpTools,
+      signal: ctx.signal,
       onStep: (event: any) => {
         if (ctx.signal?.aborted) return;
         ctx.onEvent(event);
@@ -143,10 +145,11 @@ export async function runAgentTask(
 
     success = !!result.success;
 
-    ctx.onEvent({ type: 'result', success, budgetReport: result.budgetReport });
+    ctx.onEvent({ type: 'result', success, stopReason: result.bestTrajectory?.stopReason, budgetReport: result.budgetReport });
 
     return {
       success,
+      stopReason: result.bestTrajectory?.stopReason,
       durationMs: Date.now() - start,
       budgetReport: result.budgetReport,
     };

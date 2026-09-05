@@ -9,20 +9,25 @@
 
 ```
 用户任务
+  ▼ taskIntent 分类（0.7：execution / search / chat / meta）
+     chat → 单次 complete 直接回答（stopReason='answered'，不进 agent 循环）
+     search → 受限只读循环（≤3 步，强制 readonly，搜不到询问用户）
   ▼ PromptBuilder.buildForTask（唯一记忆注入口）
      [M1] 卡号记忆卡注入（参照文件/关键词/tier 过滤 + 预算）
-  ▼ PanshalachChaser.solveIssue（单 rollout，#1）
+  ▼ PanshalachChaser.solveIssue（0.7：单次 loop.run，判官/编排器已摘除）
      VerifyCritiqueLoop 步进：三路自适应解析（JSON/文本/XML，#7）
        → 真实工具执行 + 四档审批 → 验证信号（PASS/FAIL，唯一成败来源）
+       终止：end_turn 自然停（answered/no-verification）/ PASS+end_turn（completed）
+             / maxSteps / 连错上限 / signal abort —— 单层，无判官续跑
   ▼ 任务落定
-     refine(trajectory.success + attemptCount + 反馈) → save   ←【R1 待接线，最紧要】
+     refine(trajectory.stopReason==='completed' + attemptCount + 反馈) → save   ←【R1 待接线，最紧要】
      markInjected/markVerified（R2 信号源待接线）
      会话 addTurn + rollout append（turn/approval/agent/compact/context 事件）
      （需要时）后台预压缩：generation + coveredTurnIds + 安全合并
   ▼ 下一回合 L1 注入读到"上一轮沉淀"
 ```
 
-**已摘除**（恢复路径见 `archive/2026-09-05-*/`）：过程纪律打分器与 score 字段、critique 自我批判、任务前仓库扫描与锚点注入、静态分析预跑、任务风格提示头、FailureMemory 轨道、多 rollout best-of-N、`<>` 严格解析独占路径。
+**已摘除**（恢复路径见 `archive/2026-09-05-*/`）：过程纪律打分器与 score 字段、critique 自我批判、任务前仓库扫描与锚点注入、静态分析预跑、任务风格提示头、FailureMemory 轨道、多 rollout best-of-N、`<>` 严格解析独占路径、**外置验证判官与 TestTimeOrchestrator（0.7——单层终止 + 单次 loop.run）**。
 
 ## 1. 事实源与记忆分层（现状）
 
@@ -50,7 +55,7 @@
 
 | ID | 交付 | Owner | 验收 | 时间 |
 |---|---|---|---|---|
-| **R0 双层终止 + 三先决** | 终止语义双层化（end_turn 自然停 + 判官有界续跑，PASS 降级 evidence）+ TurnStopReason 契约 + count 翻倍修复 + withRetry/空批保护 + streamChat 透传 | Leader | 测试：judge/双层终止/retry/空批/count 回归全绿；判官有界 ≤2 | U1-U2（✅ 已落地 2026-09-05） |
+| **R0 双层终止 + 三先决** | ~~终止语义双层化（end_turn 自然停 + 判官有界续跑）~~ **0.7 修订**：判官已摘除（弱模型伪工具调用下续跑×3 不收敛，实测 905s），收缩为**单层终止**（end_turn 自然停 + maxSteps/连错上限）；TurnStopReason 契约（completed/answered/max-steps/consecutive-failures/aborted/no-verification）；count 翻倍修复 + withRetry/空批保护 + streamChat 透传 | Leader | 测试：Termination/taskIntent/retry/count 回归全绿（✅ 0.6.4 落地、0.7 重构） | U1-U2（✅） |
 | **R1 回合写闭环**（**最紧要**） | 任务落定统一 hook：`refine({trajectory, taskStyle, attemptCount, userFeedback})` → `save()` → `invalidateProjection()`；接 `Repl.executeTask`/`runAgentTask`/`sseInteractive` 三入口；正向 = 正向反馈 OR `trajectory.success` | 王浩宇 | 连续 3 个同风格任务后 `/memory list` 自动出现教训/成功卡（无需 /remember） | U1-U2 |
 | **R2 markVerified 信号源** | 任务落定取"本任务工具写入/验证过的文件集 ∩ 卡.referencedFiles"→ `markVerified(cardIds)`；`runAgentTask` 已持 lastBuildMeta.injectedCardIds | 王浩宇 | 卡被真实复用后 lastUsedAt/count 刷新（单测） | U2 |
 | **R3 Turn 结构化最小集** | `Turn.result` 增 `goal/changedFiles/verifyCmd`（summary 保留兼容）——多级摘要 envelope 的前置 | 王浩宇 | 落盘字段存在 + 旧格式兼容读 | U2 |

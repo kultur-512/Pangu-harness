@@ -128,9 +128,10 @@ describe('接口契约 v3.1：count 翻倍修复回归（对抗清单 #6）', ()
   it('正向成功重复两次（同摘要）→ count 恰为 2', () => {
     makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
     const store = new RefinedMemoryStore(ws);
-    const t1 = store.refine({ trajectory: { id: 't1', steps: [], success: true }, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    // 0.7：success 卡信号源 = stopReason==='completed'
+    const t1 = store.refine({ trajectory: { id: 't1', steps: [], success: true, stopReason: 'completed' as const }, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
     store.save(t1);
-    const t2 = store.refine({ trajectory: { id: 't2', steps: [], success: true }, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
+    const t2 = store.refine({ trajectory: { id: 't2', steps: [], success: true, stopReason: 'completed' as const }, taskStyle: 'swe', attemptCount: 1, userFeedback: '' });
     store.save(t2);
     const file = JSON.parse(fs.readFileSync(memPath(), 'utf-8'));
     const hits = file.cards.filter((c: any) => c.kind === 'success');
