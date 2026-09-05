@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.5 (R4+R5：事件查询层 + TaskState 持久化)
+
+王佐 U1-U2 落地（存储层；/task CLI 为赵天昂 R5 另半，依赖本层）：
+- **R4 MemoryEventStore**：新增 `src/memory/events.ts`——在 rolloutStore 底座（`appendAgentEvent`/`readAgentEvents`，df7a119）之上提供 kind/topic/session/taskId/时间窗的有界查询 + `latest`/`countByKind`/`activeTaskIds`/`topicStats`/`taskSummaries`；只读、损坏行/缺会话容错、不绕过底座自行读 JSONL（测试 5 例）
+- **R5 TaskState 持久化**：新增 `src/memory/taskState.ts`——`TaskStateStore`（create/get/update/applyEvents）+ `rebuildFromEvents`/`foldEvent`；履约 R5 落地合同：`originalRequirement` 不可漂移、version 乐观锁（冲突抛错）、原子写盘（tmp→rename 无残留）、事件折叠幂等（foldedEventIds 记账去重）
+- `types.ts`：`TaskState` 增可选 `foldedEventIds`（幂等记账，向后兼容）
+- 测试：R5 10 例；全套 557（556 pass + 1 skip + 0 fail）
+
 ## 0.6.4 (R0：双层终止语义 + 三先决修复)
 
 产品主批准的 R0 落地（对抗清单 #1/#6/T-22 + 终止语义双层化）：
