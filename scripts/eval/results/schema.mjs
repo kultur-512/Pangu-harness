@@ -78,9 +78,23 @@ export const RESULT_SCHEMA = Object.freeze({
     seed:            { type: 'integer', description: '随机种子（seedSupport 用）' },
     seedSupport:     { type: 'boolean', description: '是否同 seed 跨 ablation 对齐' },
     modelId:         { type: 'string', description: '实际跑的模型标识（含 provider 前缀）' },
+    panshalachVersion: { type: 'string', description: 'panshalach 版本（如 0.6.5）—— evidence chain 必填' },
     startedAt:       { type: 'string', format: 'date-time' },
     finishedAt:      { type: 'string', format: 'date-time' },
     durationMs:      { type: 'integer', minimum: 0 },
+    /**
+     * verdict 映射规则（v0.6.4 R0 + v0.6.5 R1/R2 对齐）：
+     * ┌─────────────────┬────────────────┬──────────────────────────────────┐
+     * │ trajectory.success│ verifiedSteps │ verdict                          │
+     * ├─────────────────┼────────────────┼──────────────────────────────────┤
+     * │ true            │ *              │ 'completed'                      │
+     * │ false           │ 存在（fail）    │ 'verification-failed-continue'   │
+     * │ false           │ 不存在         │ 'no-verification'                │
+     * │ false + max-steps│ *              │ 'max-steps'                      │
+     * │ false + aborted │ *              │ 'aborted'                        │
+     * │ false + 缺 attemptCount│ *        │ 'no-verification'（防"一次通过"伪造）│
+     * └─────────────────┴────────────────┴──────────────────────────────────┘
+     */
     verdict:         { enum: [...TURN_STOP_REASONS] },
     verification: {
       type: 'object',
@@ -91,12 +105,23 @@ export const RESULT_SCHEMA = Object.freeze({
         commands: { type: 'array', items: { type: 'string' } },
       },
     },
+    /**
+     * 记忆双层语义（王浩宇 R1/R2 反馈，2026-09-05）：
+     * - injectedCardIds  = PromptBuilder 注入路径返回的卡 ID 列表
+     *   （来自 `pb.lastBuildMeta?.injectedCardIds ?? []`，注入层语义）
+     * - verifiedCardIds  = 真实被验证步命中、referencedFiles ∩ provenFiles 非空的卡 ID 列表
+     *   （来自 `finalizeTaskMemory()` 返回，**落定层语义**）
+     *
+     * ⚠️ 两者不等价：injectedCardIds 是"被注入"，verifiedCardIds 是"被复用"。
+     *    可能有卡被注入但未复用（有 injectedCardIds 但不在 verifiedCardIds）。
+     *    也可能有新提炼的卡（不在 injectedCardIds 但写入 store，不进 verifiedCardIds）。
+     */
     memory: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        injectedCardIds:  { type: 'array', items: { type: 'string' } },
-        verifiedCardIds:  { type: 'array', items: { type: 'string' } },
+        injectedCardIds:  { type: 'array', items: { type: 'string' }, description: '注入层：PromptBuilder.buildForTask → lastBuildMeta.injectedCardIds' },
+        verifiedCardIds:  { type: 'array', items: { type: 'string' }, description: '落定层：finalizeTaskMemory 返回，真实复用且命中证明文件' },
       },
     },
     prompt: {
@@ -110,8 +135,34 @@ export const RESULT_SCHEMA = Object.freeze({
     },
     stopReason:      { enum: [...TURN_STOP_REASONS] },
     continueCount:   { type: 'integer', minimum: 0, description: '判官拦截续跑次数（0 = 未续跑）' },
+    /**
+     * 实际尝试次数（王浩宇 R1/R2 防伪造约束）：
+     * - 缺省 / undefined → verifier 不判 'completed'，强制 'no-verification'
+     * - 显式 1 → 可标 'completed'（一次通过）
+     * - 显式 >1 → 多次重试，按 trajectory.success + verifiedSteps 综合判定
+     *
+     * 来源：U4 runner 显式传入，王浩宇承诺 runOne() 会接 attempt 计数来源。
+     */
+    attemptCount:    { type: 'integer', minimum: 1, description: '实际尝试次数；缺省 → 强制 no-verification' },
     lastError:       { type: 'string', description: '单 rollout 失败保留的最后错误' },
     failureTaxonomy: { enum: [...FAILURE_TAXONOMY] },
+    /**
+     * 记忆闭环统计（王浩宇 R1 finalizeTaskMemory 返回的 .refined 字段透传）：
+     * - added   : 新生成的卡数
+     * - merged  : 合并去重的卡数
+     * - written : 实际写盘成功的卡数
+     * - capped  : 容量上限截断的卡数
+     */
+    refined: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        added:   { type: 'integer', minimum: 0 },
+        merged:  { type: 'integer', minimum: 0 },
+        written: { type: 'integer', minimum: 0 },
+        capped:  { type: 'integer', minimum: 0 },
+      },
+    },
     artifacts: {
       type: 'object',
       additionalProperties: false,
@@ -174,6 +225,7 @@ export function newResult(init) {
     seed: init.seed,
     seedSupport: init.seedSupport ?? true,
     modelId: init.modelId ?? 'unknown',
+    panshalachVersion: init.panshalachVersion ?? '0.6.5',
     startedAt,
     finishedAt: startedAt,
     durationMs: 0,

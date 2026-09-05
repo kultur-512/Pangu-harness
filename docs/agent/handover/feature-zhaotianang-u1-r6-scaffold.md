@@ -85,7 +85,7 @@ mock-smoke     → results/smoke-<date>.json       （smoke-eval.mjs 唯一产�
 
 ---
 
-## 4. 给王浩宇（W2 / Doer）—— U4 R6 runner 接入点
+## 4. 给王浩宇（W2 / Doer）—— U4 R6 runner 接入点（王浩宇 R1/R2 已确认 2026-09-05）
 
 ### 4.1 替换 `runOne()` 占位
 
@@ -115,13 +115,27 @@ mock-smoke     → results/smoke-<date>.json       （smoke-eval.mjs 唯一产�
 - **T1×7B×A/B/C 最小 9 runs**：U6 真端点跑通最低门槛
 - **envelope 触发率**（T5）：作为过程指标入结果表
 
+### 4.4 王浩宇 R1/R2（commit `157922a`）已落地的契约（2026-09-05 review）
+
+| 项 | 王浩宇答复 | U4 runner 接入方式 |
+|---|---|---|
+| `finalizeTaskMemory` 返回结构 | **选 A**：改返回 `verifiedCardIds: string[]`（替代 `verifiedCount: number`），仅动 `finalizeTaskMemory` 自身 + 单测 4 处断言，`solveIssue` 只消费 `.refined` 零波及 | runner 从 `chaser.solveIssue()` 返回的 `bestTrajectory.stopReason` + 注入的 `injectedMemoryCardIds` 计算；`verifiedCardIds` 由 `finalizeTaskMemory` 直接返回（落定层语义）|
+| `PromptBuilder.lastInjectedCardIds` 暴露 | **无需提 public/getter**；已有 `lastBuildMeta?.injectedCardIds` public | `buildForTask` → `pb.lastBuildMeta?.injectedCardIds ?? []` → `config.injectedMemoryCardIds` 传进 `solveIssue` |
+| verdict 映射规则 | 收到，schema 侧我落地 | 见 §2.1 表 + schema.mjs 内嵌映射规则注释 |
+| `attemptCount` 防伪造 | 收到；U4 会确保 runOne 里有 attempt 计数来源，避免"缺省 → no-verification"误伤 B 档 | runner 显式传 `attemptCount: 1`（B/C/C4 成功时），A 档不传（强制 no-verification）|
+| `signal` 透传 | U4 时一起定 | runner 接 `AbortSignal.timeout(ms)` 传 `config.signal` |
+
+**关键警告**（王浩宇特意强调）：`verifiedCardIds`（真实复用）≠ `injectedCardIds`（注入），schema 别互填。已在 `schema.mjs §2.1 memory` 注释中明确两层语义。
+
 ---
 
-## 5. 给王佐（W3 / Main-A）—— TaskState 注入位置
+## 5. 给王佐（W3 / Main-A）—— TaskState 注入位置（王佐 R5 已落 2026-09-05）
 
-U3 王佐负责把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 之后、recent-context 之前，KV-cache 友好）。
+✅ **王佐 R5（commit `c7a1eca`）已落地**：TaskState 持久化层——版本乐观锁 + originalRequirement 锚定 + 事件重建。
 
-**对 R6 的影响**：王佐 taskState.ts 落地后，`runOne()` 调用 `PanshalachChaser.solveIssue()` 时会自动消费 TaskState——R6 runner 不需要单独处理。验证方法：在 fixture 中显式构造 `TaskState`，跑 B 档看 `injectedCardIds` 是否反映 TaskState 影响。
+U3 王佐原计划把 `TaskState` 注入 `PromptBuilder`（槽位：env/feature 之后、recent-context 之前，KV-cache 友好）。
+
+**对 R6 的影响**：王佐 taskState.ts 已落，`runOne()` 调用 `PanshalachChaser.solveIssue()` 时会自动消费 TaskState——R6 runner 不需要单独处理。验证方法：在 fixture 中显式构造 `TaskState`，跑 B 档看 `injectedCardIds` 是否反映 TaskState 影响。
 
 ---
 

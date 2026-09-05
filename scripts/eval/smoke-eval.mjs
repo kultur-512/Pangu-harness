@@ -63,31 +63,38 @@ function mockResult({ ablation, taskFamily, taskId, seed }) {
       r.stopReason = 'no-verification';
       r.failureTaxonomy = 'overflow-skipped';
       r.tags.push('overflow-skipped', 'mock-no-real-overflow');
+      // attemptCount 缺省 → 强制 no-verification（防"一次通过"伪造）
       break;
     case 'B':
       // memory on — 必须有 injectedCardIds >= 1
       r.verdict = 'completed';
       r.stopReason = 'completed';
+      r.attemptCount = 1;  // 显式传 1 → 可标 completed
       r.memory.injectedCardIds = [`card-${taskFamily}-001`, `card-${taskFamily}-002`];
-      r.memory.verifiedCardIds = [`card-${taskFamily}-001`];
+      r.memory.verifiedCardIds = [`card-${taskFamily}-001`];  // ∩ provenFiles 非空
       r.verification = { signal: 'PASS', exitCode: 0, commands: [`mock-verify-${taskFamily}`] };
+      r.refined = { added: 1, merged: 0, written: 1, capped: 0 };
       break;
     case 'C':
       // B + 注入预算
       r.verdict = 'completed';
       r.stopReason = 'completed';
+      r.attemptCount = 1;
       r.memory.injectedCardIds = [`card-${taskFamily}-001`];
       r.memory.verifiedCardIds = [`card-${taskFamily}-001`];
       r.verification = { signal: 'ALL_TESTS_PASSED', exitCode: 0, commands: [`mock-budget-${taskFamily}`] };
+      r.refined = { added: 1, merged: 1, written: 2, capped: 0 };
       r.tags.push('budget-active');
       break;
     case 'C4':
       // B + 语义检索
       r.verdict = 'completed';
       r.stopReason = 'completed';
+      r.attemptCount = 1;
       r.memory.injectedCardIds = [`card-${taskFamily}-sem-001`];
       r.memory.verifiedCardIds = [`card-${taskFamily}-sem-001`];
       r.verification = { signal: 'PASS', exitCode: 0, commands: [`mock-semantic-${taskFamily}`] };
+      r.refined = { added: 1, merged: 0, written: 1, capped: 0 };
       r.tags.push('semantic-retrieval');
       break;
   }
