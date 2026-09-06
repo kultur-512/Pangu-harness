@@ -45,6 +45,15 @@ export interface EmbeddingProvider {
 // ===== 3. 余弦相似度工具 =====
 
 /**
+ * 把任意标量"规整"为有限实数（undefined / null / NaN / Infinity → 0）
+ * 这是 cosineSimilarity 的内部辅助：保证结果有限 + 不抛错 + 注释承诺的"视作 0"
+ */
+function sanitizeScalar(x: unknown): number {
+  if (typeof x !== 'number') return 0;
+  return Number.isFinite(x) ? x : 0;
+}
+
+/**
  * 余弦相似度：cos(θ) = (a · b) / (||a|| · ||b||)
  *
  * 输入：两个同维度向量
@@ -67,17 +76,19 @@ export function cosineSimilarity(a: DenseVector, b: DenseVector): CosineScore {
   let normB = 0;
 
   for (let i = 0; i < a.length; i++) {
-    const ai = a[i] ?? 0;
-    const bi = b[i] ?? 0;
+    // undefined / null / NaN / Infinity 都视作 0（保证结果有限 + 不抛错）
+    const ai = sanitizeScalar(a[i]);
+    const bi = sanitizeScalar(b[i]);
     dot += ai * bi;
     normA += ai * ai;
     normB += bi * bi;
   }
 
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  if (denom === 0) return 0;
+  if (denom === 0 || !Number.isFinite(denom)) return 0;
 
-  return dot / denom;
+  const result = dot / denom;
+  return Number.isFinite(result) ? result : 0;
 }
 
 // ===== 4. LocalNGramHashProvider 默认实现 =====
