@@ -47,6 +47,10 @@ third-party-refs/
 docs/panshalach/evals/sessions/
 docs/panshalach/evals/cache/
 
+# === R6 评测产物（运行生成，不入 git；schema.mjs 例外）===
+scripts/eval/results/*
+!scripts/eval/results/schema.mjs
+
 
 
 # === 命题方案书（本地研读稿，四态证据标签草案；采纳的合同已蒸馏进 ROADMAP-NEXT，不入 git）===

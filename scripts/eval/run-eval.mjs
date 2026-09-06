@@ -9,6 +9,7 @@
 //   node scripts/eval/run-eval.mjs --task T1 --tier C       # 单任务
 //   node scripts/eval/run-eval.mjs --mock                   # mock 模式（不连真端点）
 //   node scripts/eval/run-eval.mjs --source mock-smoke      # 同 --mock
+//   node scripts/eval/run-eval.mjs --dry                    # 只打印计划，不执行不写盘
 //
 // 契约（R6 合同）：
 //   结果必含 runId / source / seedSupport / verdict / verification{signal,exitCode,commands}
@@ -16,6 +17,20 @@
 //   / failureTaxonomy{primary,secondary?} / artifacts
 //   统计用配对差 + Wilson 区间，任务实例为统计单位
 //   mock 永不入真实结果表
+//
+// 路径隔离（merge 注，自 zhaotianang U1 版并入）：
+//   results/<date>-real-openpangu.json       ← real-openpangu 来源（不允许 mock 前缀）
+//   results/mock/<date>-mock-smoke.json      ← mock-smoke 来源（smoke-eval.mjs 同款路径）
+//
+// Prompt 指针加载（merge 注，自 zhaotianang U1 版并入）：
+//   tasks/T1-T3 的 issue.md 为实体化 issue 正文（80d3f08 起草），优先作为 prompt 源；
+//   无 issue.md 时回退解析 fixture.md 的 `## Prompt` 段（T4/T5 格式）。
+//
+// 退出码：
+//   0  全绿（或 --dry 计划打印完成）
+//   1  有任务 verdict=fail
+//   2  参数/fixture 加载失败
+//   3  路径隔离违规（应写入 results/mock/ 但源是 real，反之亦然）
 
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
@@ -24,9 +39,13 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 // 导入共享 schema
+// 注：schema.mjs 的 validateResult 校验的是 v0.6.5 RESULT_SCHEMA 必填集
+//（ablation/taskFamily/seed...），与本 runner 的 R6 运行时字段（tier/model/timestamp）
+// 尚未完全对齐——全量 schema 校验由 smoke-eval.mjs 承担；U4/U6 字段收敛后 runner 再接入。
 import {
+  EVAL_SOURCES,
   FAILURE_PRIMARY, FAILURE_SECONDARY,
-  normalizeFailureTaxonomy, validateResult,
+  normalizeFailureTaxonomy,
 } from './results/schema.mjs';
 
 // ── 常量 ──
@@ -48,6 +67,7 @@ function parseArgs() {
     task: /** @type {string|null} */ (null),
     source: /** @type {'real-openpangu'|'mock-smoke'} */ ('real-openpangu'),
     mock: false,
+    dry: false,
     model: 'openPangu-7B',
     seedSupport: false,
     help: false,
@@ -59,6 +79,7 @@ function parseArgs() {
       case '--task': opts.task = args[++i]; break;
       case '--source': opts.source = args[++i]; break;
       case '--mock': opts.source = 'mock-smoke'; opts.mock = true; break;
+      case '--dry': opts.dry = true; break;
       case '--model': opts.model = args[++i]; break;
       case '--seed': opts.seedSupport = true; break;
       case '--help': opts.help = true; break;
@@ -73,10 +94,12 @@ function parseArgs() {
 
 /**
  * 从 tasks/{T1..T5}/ 目录加载任务 fixture。
- * 每个 T* 目录含 README.md + fixture.md + verify.sh。
- * fixture.md 为结构化描述文件（README.md 头部的 YAML-like front matter）。
+ * Prompt 指针加载优先级：
+ *   1. issue.md   — T1-T3 实体化后的 issue 正文（赵天昂 80d3f08 起草）
+ *   2. fixture.md — `## Prompt` 段（T4/T5 wanghaoyu 格式）
+ * 每个 T* 目录含 README.md（任务族契约）+ verify.sh（自动验证）。
  *
- * @returns {Promise<Array<{id: string, tier: string, title: string, prompt: string, expected: string, workspace?: string}>>}
+ * @returns {Promise<Array<{id: string, tier: string, title: string, prompt: string, expected: string, workspace?: string, promptSource: string}>>}
  */
 async function loadTaskFixtures({ tier, taskId } = {}) {
   const dirs = await readdir(TASKS_DIR, { withFileTypes: true });
@@ -88,17 +111,36 @@ async function loadTaskFixtures({ tier, taskId } = {}) {
     if (!/^T\d+$/.test(entry.name)) continue;
 
     const taskDir = join(TASKS_DIR, entry.name);
+    const issuePath = join(taskDir, 'issue.md');
     const fixturePath = join(taskDir, 'fixture.md');
 
     try {
-      const content = await readFile(fixturePath, 'utf8');
-      const fixture = parseFixtureMarkdown(content, entry.name);
+      // 1) issue.md 指针加载（T1-T3）；2) 回退 fixture.md `## Prompt`（T4/T5）
+      let fixture = null;
+      let promptSource = '';
+      let issueContent = null;
+      try { issueContent = await readFile(issuePath, 'utf8'); } catch { /* 无 issue.md → 回退 */ }
+
+      if (issueContent) {
+        fixture = parseIssueMarkdown(issueContent, entry.name);
+        promptSource = 'issue.md';
+      } else {
+        const content = await readFile(fixturePath, 'utf8');
+        fixture = parseFixtureMarkdown(content, entry.name);
+        promptSource = 'fixture.md';
+      }
       if (!fixture) continue;
+
+      if (!fixture.prompt) {
+        console.warn(`[eval] 跳过 ${entry.name}: ${promptSource} 中无可解析 Prompt`);
+        continue;
+      }
 
       // 过滤：指定 task 或 tier
       if (taskId && fixture.id !== taskId) continue;
       if (tier && fixture.tier !== tier) continue;
 
+      fixture.promptSource = promptSource;
       fixtures.push(fixture);
     } catch {
       console.warn(`[eval] 跳过无法读取的任务: ${entry.name}`);
@@ -109,12 +151,44 @@ async function loadTaskFixtures({ tier, taskId } = {}) {
 }
 
 /**
- * 解析 fixture.md 为结构化 fixture。
- * 格式：README.md 头部 YAML-like front matter (id/tier/title) + ## 段。
- * 每个 T* 目录的 fixture.md 包含任务 prompt 和期望。
+ * 解析 issue.md（T1-T3 实体化正文）为结构化 fixture。
+ * 正文整体作为 prompt；去掉首个 H1 标题行与尾部 "Fixture 文件清单" 元信息节。
  *
  * @param {string} content
  * @param {string} dirName - 目录名如 "T1"
+ * @returns {{id: string, tier: string, title: string, prompt: string, expected: string, workspace?: string} | null}
+ */
+function parseIssueMarkdown(content, dirName) {
+  const lines = content.split('\n');
+
+  const titleMatch = content.match(/^#\s+(.+)$/m);
+  const title = titleMatch ? titleMatch[1].replace(/^T\d+\s*[—-]\s*/, '').trim() : dirName;
+
+  const body = [];
+  let sawH1 = false;
+  for (const line of lines) {
+    if (!sawH1 && line.startsWith('# ')) { sawH1 = true; continue; }
+    // 尾部元信息节不属于 prompt
+    if (line.startsWith('## Fixture 文件清单')) break;
+    body.push(line);
+  }
+
+  return {
+    id: dirName,
+    tier: 'C',
+    title,
+    prompt: body.join('\n').trim(),
+    expected: '',
+    workspace: undefined,
+  };
+}
+
+/**
+ * 解析 fixture.md 为结构化 fixture（T4/T5 及早期草稿格式）。
+ * 格式：头部 YAML-like front matter (- **key**: value) + `## Prompt` / `## 期望` 段。
+ *
+ * @param {string} content
+ * @param {string} dirName - 目录名如 "T4"
  * @returns {{id: string, tier: string, title: string, prompt: string, expected: string, workspace?: string} | null}
  */
 function parseFixtureMarkdown(content, dirName) {
@@ -503,10 +577,16 @@ function generateSummary(results, source) {
     else if (r.verdict === 'invalid') { t.invalid++; }
     else if (r.verdict === 'not_applicable') { t.notApplicable++; }
 
-    // 双层 taxonomy：统计 primary
+    // 双层 taxonomy：统计 primary（枚举漂移守卫，merge 注）
     const tax = normalizeFailureTaxonomy(r.failureTaxonomy);
     if (tax?.primary) {
+      if (!FAILURE_PRIMARY.includes(tax.primary)) {
+        console.warn(`[eval] warning: failureTaxonomy.primary "${tax.primary}" 不在 FAILURE_PRIMARY 枚举（schema 漂移?）`);
+      }
       byFailure[tax.primary] = (byFailure[tax.primary] || 0) + 1;
+    }
+    if (tax?.secondary !== undefined && !FAILURE_SECONDARY.includes(tax.secondary)) {
+      console.warn(`[eval] warning: failureTaxonomy.secondary "${tax.secondary}" 不在 FAILURE_SECONDARY 枚举（schema 漂移?）`);
     }
   }
 
@@ -533,14 +613,21 @@ async function main() {
     console.log(`用法: node scripts/eval/run-eval.mjs [选项]
 
 选项:
-  --tier <A|B|C|C4>   消融档位（默认全部）
+  --tier <A|B|C|C4>    消融档位（默认全部；tier 取自 fixture 元数据，缺省 C）
   --task <T1|T2|...>   指定任务（默认全部）
-  --source <source>     数据来源: real-openpangu | mock-smoke（默认 real-openpangu）
-  --mock                等同 --source mock-smoke
-  --model <model>       模型标识（默认 openPangu-7B）
-  --seed                标记支持 seed 可复现
-  --help                显示帮助`);
+  --source <source>    数据来源: real-openpangu | mock-smoke（默认 real-openpangu）
+  --mock               等同 --source mock-smoke
+  --dry                只打印计划，不执行、不写盘
+  --model <model>      模型标识（默认 openPangu-7B）
+  --seed               标记支持 seed 可复现
+  --help               显示帮助`);
     process.exit(0);
+  }
+
+  // 参数校验（merge 注，自 zhaotianang U1 版并入）
+  if (!EVAL_SOURCES.includes(opts.source)) {
+    console.error(`[eval] invalid --source: ${opts.source} (expected ${EVAL_SOURCES.join('|')})`);
+    process.exit(2);
   }
 
   console.log(`[eval] R6 评测 runner 启动`);
@@ -552,11 +639,16 @@ async function main() {
   console.log(`[eval] 加载 ${fixtures.length} 个任务 fixture:`);
   for (const f of fixtures) {
     const cfg = ablationConfig(f.tier);
-    console.log(`  - ${f.id} [${f.tier}] ${f.title} (${cfg.description})`);
+    console.log(`  - ${f.id} [${f.tier}] ${f.title} (prompt ← ${f.promptSource}) (${cfg.description})`);
   }
 
   if (fixtures.length === 0) {
     console.log('[eval] 无匹配任务，退出');
+    process.exit(0);
+  }
+
+  if (opts.dry) {
+    console.log('[eval] DRY mode — 不执行、不写盘');
     process.exit(0);
   }
 
@@ -576,7 +668,14 @@ async function main() {
   console.log(`\n[eval] === 汇总 ===`);
   console.log(`[eval] 总运行: ${summary.totalRuns} | 有效样本: ${summary.validSamples} | 通过: ${summary.passed} | 失败: ${summary.failed}`);
 
+  // 输出路径（source 决定目录：mock → results/mock/，real → results/）
   const outDir = opts.source === 'mock-smoke' ? MOCK_RESULTS_DIR : RESULTS_DIR;
+  // 路径隔离不变量（merge 注，自 zhaotianang U1 版并入；exit 3 契约）：
+  // real-openpangu 源不得落入 results/mock/
+  if (opts.source !== 'mock-smoke' && outDir === MOCK_RESULTS_DIR) {
+    console.error('[eval] PATH ISOLATION VIOLATION: real-openpangu cannot write into results/mock/');
+    process.exit(3);
+  }
   await mkdir(outDir, { recursive: true });
 
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');

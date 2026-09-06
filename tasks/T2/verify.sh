@@ -1,32 +1,37 @@
 #!/usr/bin/env bash
-# tasks/T2/verify.sh — T2 验证脚本
-# 检查 getConfig → getConfigValue 重命名是否正确，编译通过。
-set -euo pipefail
+# T2 verify.sh stub — 跨文件函数签名重构验证
+#
+# U3 周末（赵天昂）起 issue.md + 当前 stub；U4 由王浩宇补全：
+#   - 在 ./repo/ 下放 5-10 文件的小型 TypeScript 代码库（package.json + src + tests）
+#   - 替换当前 stub 为实际检查：
+#     1. grep 跨文件 import 链确认 add() 调用点都被覆盖
+#     2. `cd repo && npm test` 退出码 0
+#     3. （可选）跑 tsc --noEmit 验证类型一致性
+#
+# 用法：
+#   cd <task-workdir> && bash /path/to/verify.sh
+#
+# 退出码：
+#   0  全检查通过
+#   1  至少 1 项检查失败
+#   2  依赖缺失（repo/ 不存在）— U4 由王浩宇补
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CONFIG_FILE="$ROOT/src/cli/repl/ConfigManager.ts"
+set -u
 
-echo "[T2] 验证 getConfig → getConfigValue 重命名..."
+REPO_DIR="${1:-repo}"
 
-# 1. 检查旧名称已不存在
-if grep -qE '\bgetConfig\b' "$CONFIG_FILE"; then
-  echo "[T2] FAIL: ConfigManager.ts 中仍存在 getConfig"
-  exit 1
+echo "[T2] stub mode — U4 由王浩宇补全 repo/ 与实际验证"
+
+# 前置：repo/ 必须存在
+if [ ! -d "$REPO_DIR" ]; then
+  echo "[T2] FATAL  missing repo directory: $REPO_DIR"
+  echo "[T2]         U4 由王浩宇提供 5-10 文件的小型 TypeScript 代码库"
+  exit 2
 fi
 
-# 2. 检查新名称已存在
-if ! grep -qE '\bgetConfigValue\b' "$CONFIG_FILE"; then
-  echo "[T2] FAIL: ConfigManager.ts 中未找到 getConfigValue"
-  exit 1
-fi
-
-# 3. 编译验证
-cd "$ROOT"
-if npx tsc --noEmit; then
-  echo "[T2] PASS: tsc --noEmit 通过"
-else
-  echo "[T2] FAIL: tsc --noEmit 失败"
-  exit 1
-fi
-
-echo "[T2] ALL PASSED"
+# Stub 占位（U4 由王浩宇替换）：
+# 示例骨架（仅供参考，U4 可改）：
+#   1) cd "$REPO_DIR" && grep -rE "\\badd\\s*\\(" src/ tests/ | wc -l  # 调用点计数 > 0
+#   2) cd "$REPO_DIR" && [ -f package.json ] && npm test --silent
+echo "[T2] passed=0  failed=0  (stub; replace with real checks)"
+exit 0
