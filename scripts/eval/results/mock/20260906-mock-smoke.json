@@ -1,0 +1,232 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-06T03:29:58.208Z",
+    "source": "mock-smoke",
+    "model": "openPangu-7B",
+    "runnerVersion": "0.1.0"
+  },
+  "summary": {
+    "summaryId": "0e3370c3-f3d2-43fe-993c-644dd9a6464d",
+    "generatedAt": "2026-09-06T03:29:58.208Z",
+    "source": "mock-smoke",
+    "totalRuns": 5,
+    "validSamples": 5,
+    "passed": 5,
+    "failed": 0,
+    "byTier": {
+      "A": {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "B": {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "C": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "C4": {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      }
+    },
+    "byFailure": {},
+    "runIds": [
+      "c81260f3-277c-491b-86f3-819fa2345ac3",
+      "63387523-b563-4a0d-9d9b-88c5294e7def",
+      "ef8674c4-4bb8-470e-aabc-417b48e84ae3",
+      "73869f8c-be9e-4cad-a8f9-6ea9b07da084",
+      "a07c2b76-eaf5-4b5d-bbef-c8eeda820b60"
+    ]
+  },
+  "results": [
+    {
+      "runId": "c81260f3-277c-491b-86f3-819fa2345ac3",
+      "source": "mock-smoke",
+      "tier": "C",
+      "taskId": "T1",
+      "model": "openPangu-7B",
+      "seedSupport": false,
+      "timestamp": "2026-09-06T03:29:58.206Z",
+      "durationMs": 1,
+      "verdict": "pass",
+      "verification": {
+        "signal": "EXIT_CODE:0",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T1"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T1"
+        ]
+      },
+      "prompt": {
+        "chars": 111,
+        "estimatedTokens": 28,
+        "hash": "a5636857"
+      },
+      "artifacts": {
+        "trajectory": "mock/trajectories/T1.jsonl",
+        "log": "mock/logs/T1.log"
+      }
+    },
+    {
+      "runId": "63387523-b563-4a0d-9d9b-88c5294e7def",
+      "source": "mock-smoke",
+      "tier": "C",
+      "taskId": "T2",
+      "model": "openPangu-7B",
+      "seedSupport": false,
+      "timestamp": "2026-09-06T03:29:58.207Z",
+      "durationMs": 0,
+      "verdict": "pass",
+      "verification": {
+        "signal": "EXIT_CODE:0",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T2"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T2"
+        ]
+      },
+      "prompt": {
+        "chars": 136,
+        "estimatedTokens": 34,
+        "hash": "d3c72719"
+      },
+      "artifacts": {
+        "trajectory": "mock/trajectories/T2.jsonl",
+        "log": "mock/logs/T2.log"
+      }
+    },
+    {
+      "runId": "ef8674c4-4bb8-470e-aabc-417b48e84ae3",
+      "source": "mock-smoke",
+      "tier": "C",
+      "taskId": "T3",
+      "model": "openPangu-7B",
+      "seedSupport": false,
+      "timestamp": "2026-09-06T03:29:58.208Z",
+      "durationMs": 0,
+      "verdict": "pass",
+      "verification": {
+        "signal": "EXIT_CODE:0",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T3"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T3"
+        ]
+      },
+      "prompt": {
+        "chars": 202,
+        "estimatedTokens": 51,
+        "hash": "a4e7a396"
+      },
+      "artifacts": {
+        "trajectory": "mock/trajectories/T3.jsonl",
+        "log": "mock/logs/T3.log"
+      }
+    },
+    {
+      "runId": "73869f8c-be9e-4cad-a8f9-6ea9b07da084",
+      "source": "mock-smoke",
+      "tier": "C",
+      "taskId": "T4",
+      "model": "openPangu-7B",
+      "seedSupport": false,
+      "timestamp": "2026-09-06T03:29:58.208Z",
+      "durationMs": 0,
+      "verdict": "pass",
+      "verification": {
+        "signal": "EXIT_CODE:0",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T4"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T4"
+        ]
+      },
+      "prompt": {
+        "chars": 132,
+        "estimatedTokens": 33,
+        "hash": "ba31fa8c"
+      },
+      "artifacts": {
+        "trajectory": "mock/trajectories/T4.jsonl",
+        "log": "mock/logs/T4.log"
+      }
+    },
+    {
+      "runId": "a07c2b76-eaf5-4b5d-bbef-c8eeda820b60",
+      "source": "mock-smoke",
+      "tier": "C",
+      "taskId": "T5",
+      "model": "openPangu-7B",
+      "seedSupport": false,
+      "timestamp": "2026-09-06T03:29:58.208Z",
+      "durationMs": 0,
+      "verdict": "pass",
+      "verification": {
+        "signal": "EXIT_CODE:0",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T5"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T5"
+        ]
+      },
+      "prompt": {
+        "chars": 145,
+        "estimatedTokens": 37,
+        "hash": "7b1a8e20"
+      },
+      "artifacts": {
+        "trajectory": "mock/trajectories/T5.jsonl",
+        "log": "mock/logs/T5.log"
+      }
+    }
+  ]
+}
