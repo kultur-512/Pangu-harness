@@ -478,6 +478,8 @@ export class PromptBuilder {
   }
 
   private async appendMemoryCardsDedup(lines: string[], currentWorkspaceFiles?: string[], issue?: string): Promise<boolean> {
+    // R6 eval: PANSHA_NO_MEMORY=1 → B 档零注入（防线失败基准），强制跳过记忆卡注入
+    if (process.env.PANSHA_NO_MEMORY === '1') return false;
     const level = this.tierConfig.memoryLoadLevel;
     if (level === 'none') return false;
 

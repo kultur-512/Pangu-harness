@@ -1,0 +1,343 @@
+// scripts/eval/results/schema.mjs
+// 评测结果契约单一源（scripts/eval/* 与下游消费方共读）。
+//
+// 字段来源：
+//   1. ROADMAP-NEXT §3.1 R6 合同（runId/source/seedSupport/verdict/verification/memory/prompt/failureTaxonomy/artifacts）
+//   2. v0.6.4 接口契约 v3.1 双层终止语义（TurnStopReason 6 态 + continueCount + lastError）
+//   3. v0.6.5 R1/R2 契约（panshalachVersion / attemptCount / refined 透传 + memory 注入层 vs 落定层）
+//   4. FailureTaxonomy 双层升级（{ primary, secondary? } + normalizeFailureTaxonomy 向后兼容）
+//
+// 约束：
+//   - TurnStopReason 6 态从此处导出；与 src/cli/repl/types.ts 同步，改动需双向更新。
+//   - 失败分类枚举运行前冻结（运行时不允许新增分类）。
+//   - A 档必须真溢出（不溢出的样本标"不适用"，不进长程结论）。
+//   - B 档零注入 = 防线失败，不计为有效样本。
+//   - mock 永不入真实结果表（路径隔离：results/mock/*.json vs results/<date>.json）。
+//
+// 双方言兼容（merge 注，U4/U6 收敛前有效）：
+//   - v0.6.5 契约方言：verdict ∈ TURN_STOP_REASONS；failureTaxonomy 为单层 string（FAILURE_TAXONOMY）
+//   - R6 runner 方言：verdict ∈ EVAL_VERDICTS（pass/fail/not_applicable/invalid）；
+//     failureTaxonomy 为 { primary, secondary? }（FAILURE_PRIMARY / FAILURE_SECONDARY）
+//   - validateResult 同时接受两种方言；U6 接入 ajv 后收敛到双层 object。
+//
+// 用法：
+//   import { TURN_STOP_REASONS, RESULT_SCHEMA, validateResult } from './schema.mjs';
+
+import { createHash, randomUUID } from 'node:crypto';
+
+/** 双层终止语义 6 态（与 src/cli/repl/types.ts TurnStopReason 同步） */
+export const TURN_STOP_REASONS = Object.freeze([
+  'completed',                    // end_turn 且轨迹含验证 PASS
+  'verification-failed-continue', // 判官拦截续跑（本轮结束但任务未完）
+  'max-steps',                    // 步数耗尽
+  'consecutive-failures',         // 连续工具失败保护
+  'aborted',                      // 用户/信号中止
+  'no-verification',             // end_turn 但从未产生 PASS（信息型）
+]);
+
+/** 评测源（隔离 mock 与真模型） */
+export const EVAL_SOURCES = Object.freeze(['real-openpangu', 'mock-smoke']);
+
+/** 消融档（A/B/C/C4 来自 ROADMAP-NEXT §3.1 R6 合同） */
+export const ABLATIONS = Object.freeze({
+  A:  'baseline (no memory, no refine) — must overflow',
+  B:  'memory on (refine + markVerified) — zero-injection is line-defense failure',
+  C:  'B + injection budget (L0/L1 contracts)',
+  C4: 'B + semantic retrieval (n-gram, R7)',
+});
+
+// ── 失败分类（运行前冻结；运行时新增需改本文件 + ROADMAP-NEXT §3.1） ──
+
+/** 主失败分类——R6 runner 双层方言，枚举值运行前冻结，不可运行时增删 */
+export const FAILURE_PRIMARY = Object.freeze([
+  'tool-error',            // 工具执行失败（bash/write/read/glob/grep 返回非零）
+  'verification-failed',   // 真实验证步未通过（无 ALL_TESTS_PASSED/EXIT_CODE:0）
+  'no-verification',       // 整个轨迹无真实验证步（didRealVerification 未触发）
+  'budget-exhausted',      // 上下文窗口/步数预算耗尽
+  'aborted',               // 用户取消或 AbortSignal
+  'model-refusal',         // 模型拒绝执行（安全/能力边界）
+  'parse-error',           // 模型输出解析失败（tool call JSON 损坏等）
+  'timeout',               // 超时
+  'infra-error',           // 基础设施错误（端点不可达、OOM 等）
+  'memory-not-cited',      // 注入但卡未在 verify 步被引用（R7/R8 统计"卡注入利用率"）
+  'semantic-miss',         // C4 档语义检索未命中（区分检索质量失败 vs 注入失败）
+]);
+
+/** 次要失败分类——补充描述，可选 */
+export const FAILURE_SECONDARY = Object.freeze([
+  'tool-output-parse',     // 工具输出格式异常
+  'tool-loop',             // 工具重复调用无进展
+  'prompt-truncation',     // prompt 被截断
+  'context-overflow',      // 上下文溢出
+  'model-hallucination',   // 模型幻觉（编造文件名/命令）
+  'model-noncompliant',    // 模型不遵循指令格式
+  'mcp-unavailable',       // MCP 工具不可用
+  'approval-denied',       // 审批被拒绝
+  'prompt-too-short',      // A 档 prompt chars 未达溢出阈值（标 not-applicable）
+  'unknown',
+]);
+
+/**
+ * 单层失败分类——v0.6.5 契约方言遗留枚举（兼容别名）。
+ * 新样本建议写双层 { primary, secondary? }；单层 string 由
+ * normalizeFailureTaxonomy() 升级为双层。
+ */
+export const FAILURE_TAXONOMY = Object.freeze([
+  'none',                    // 无失败（success=true）
+  'verification-failed',     // 验证未通过
+  'tool-error',              // 工具执行错误
+  'parse-failed',            // 输出解析失败
+  'budget-exhausted',        // 步数/token 耗尽
+  'aborted',                 // 用户/信号中止
+  'overflow-skipped',        // A 档未溢出，标"不适用"（不进长程结论）
+  'line-defense-failed',     // B 档零注入，防线失败（不计为有效样本）
+  'unknown',                 // 未分类（需 lastError 透出）
+]);
+
+/** R6 runner 评测结论（fill-evaluation 按 pass/fail 出行；not_applicable/invalid 不进长程结论） */
+export const EVAL_VERDICTS = Object.freeze([
+  'pass',              // 任务成功且验证通过
+  'fail',              // 任务失败（含失败分类）
+  'not_applicable',    // A 档未溢出 / B 档 prompt 不足——不进长程结论
+  'invalid',           // 样本无效（如 B 档零注入=防线失败，不计为有效样本）
+]);
+
+/** 已知验证信号（沿用 verify-critique-loop 已有语义） */
+export const VERIFICATION_SIGNALS = Object.freeze([
+  'PASS',
+  'FAIL',
+  'ALL_TESTS_PASSED',
+  'TESTS_FAILED',
+  'NO_VERIFICATION',
+  'UNKNOWN',
+]);
+
+/** 一条评测结果的最小契约（每条任务实例 = 一个统计单位） */
+export const RESULT_SCHEMA = Object.freeze({
+  $schema: 'http://json-schema.org/draft-07/schema#',
+  $id: 'panshalach.eval.result.v1',
+  title: 'Panshalach Eval Result',
+  type: 'object',
+  required: ['runId', 'source', 'ablation', 'taskId', 'taskFamily', 'seed', 'verdict'],
+  additionalProperties: false,
+  properties: {
+    runId:           { type: 'string', description: 'UUID v4' },
+    source:          { enum: [...EVAL_SOURCES] },
+    ablation:        { enum: Object.keys(ABLATIONS) },
+    taskId:          { type: 'string', description: '任务实例 ID（T1/T2/T3/T4/T5 族内唯一）' },
+    taskFamily:      { enum: ['T1', 'T2', 'T3', 'T4', 'T5'] },
+    seed:            { type: 'integer', description: '随机种子（seedSupport 用）' },
+    seedSupport:     { type: 'boolean', description: '是否同 seed 跨 ablation 对齐' },
+    modelId:         { type: 'string', description: '实际跑的模型标识（含 provider 前缀）' },
+    panshalachVersion: { type: 'string', description: 'panshalach 版本（如 0.6.5）—— evidence chain 必填' },
+    startedAt:       { type: 'string', format: 'date-time' },
+    finishedAt:      { type: 'string', format: 'date-time' },
+    durationMs:      { type: 'integer', minimum: 0 },
+    /**
+     * verdict 映射规则（v0.6.4 R0 + v0.6.5 R1/R2 对齐）：
+     * ┌─────────────────┬────────────────┬──────────────────────────────────┐
+     * │ trajectory.success│ verifiedSteps │ verdict                          │
+     * ├─────────────────┼────────────────┼──────────────────────────────────┤
+     * │ true            │ *              │ 'completed'                      │
+     * │ false           │ 存在（fail）    │ 'verification-failed-continue'   │
+     * │ false           │ 不存在         │ 'no-verification'                │
+     * │ false + max-steps│ *              │ 'max-steps'                      │
+     * │ false + aborted │ *              │ 'aborted'                        │
+     * │ false + 缺 attemptCount│ *        │ 'no-verification'（防"一次通过"伪造）│
+     * └─────────────────┴────────────────┴──────────────────────────────────┘
+     * R6 runner 方言另用 EVAL_VERDICTS（pass/fail/not_applicable/invalid），
+     * 由 validateResult 双方言兼容；U6 ajv 接入后收敛。
+     */
+    verdict:         { enum: [...TURN_STOP_REASONS] },
+    verification: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        signal:   { enum: [...VERIFICATION_SIGNALS] },
+        exitCode: { type: 'integer' },
+        commands: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    /**
+     * 记忆双层语义（王浩宇 R1/R2 反馈，2026-09-05）：
+     * - injectedCardIds  = PromptBuilder 注入路径返回的卡 ID 列表
+     *   （来自 `pb.lastBuildMeta?.injectedCardIds ?? []`，注入层语义）
+     * - verifiedCardIds  = 真实被验证步命中、referencedFiles ∩ provenFiles 非空的卡 ID 列表
+     *   （来自 `finalizeTaskMemory()` 返回，**落定层语义**）
+     *
+     * ⚠️ 两者不等价：injectedCardIds 是"被注入"，verifiedCardIds 是"被复用"。
+     *    可能有卡被注入但未复用（有 injectedCardIds 但不在 verifiedCardIds）。
+     *    也可能有新提炼的卡（不在 injectedCardIds 但写入 store，不进 verifiedCardIds）。
+     */
+    memory: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        injectedCardIds:  { type: 'array', items: { type: 'string' }, description: '注入层：PromptBuilder.buildForTask → lastBuildMeta.injectedCardIds' },
+        verifiedCardIds:  { type: 'array', items: { type: 'string' }, description: '落定层：finalizeTaskMemory 返回，真实复用且命中证明文件' },
+      },
+    },
+    prompt: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        chars:           { type: 'integer', minimum: 0 },
+        estimatedTokens: { type: 'integer', minimum: 0 },
+        hash:            { type: 'string', description: 'SHA-256 of normalized prompt' },
+      },
+    },
+    stopReason:      { enum: [...TURN_STOP_REASONS] },
+    continueCount:   { type: 'integer', minimum: 0, description: '判官拦截续跑次数（0 = 未续跑）' },
+    /**
+     * 实际尝试次数（王浩宇 R1/R2 防伪造约束）：
+     * - 缺省 / undefined → verifier 不判 'completed'，强制 'no-verification'
+     * - 显式 1 → 可标 'completed'（一次通过）
+     * - 显式 >1 → 多次重试，按 trajectory.success + verifiedSteps 综合判定
+     *
+     * 来源：U4 runner 显式传入，王浩宇承诺 runOne() 会接 attempt 计数来源。
+     */
+    attemptCount:    { type: 'integer', minimum: 1, description: '实际尝试次数；缺省 → 强制 no-verification' },
+    lastError:       { type: 'string', description: '单 rollout 失败保留的最后错误' },
+    /**
+     * 失败分类：
+     * - 单层 string ∈ FAILURE_TAXONOMY（v0.6.5 遗留方言）
+     * - 双层 { primary ∈ FAILURE_PRIMARY, secondary? ∈ FAILURE_SECONDARY }（R6 runner 方言，推荐）
+     */
+    failureTaxonomy: { enum: [...FAILURE_TAXONOMY] },
+    /**
+     * 记忆闭环统计（王浩宇 R1 finalizeTaskMemory 返回的 .refined 字段透传）：
+     * - added   : 新生成的卡数
+     * - merged  : 合并去重的卡数
+     * - written : 实际写盘成功的卡数
+     * - capped  : 容量上限截断的卡数
+     */
+    refined: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        added:   { type: 'integer', minimum: 0 },
+        merged:  { type: 'integer', minimum: 0 },
+        written: { type: 'integer', minimum: 0 },
+        capped:  { type: 'integer', minimum: 0 },
+      },
+    },
+    artifacts: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        rolloutJsonl: { type: 'string', description: '相对路径（指向 results/<runId>/rollout.jsonl）' },
+        traceJson:    { type: 'string' },
+        stdoutTail:   { type: 'string' },
+      },
+    },
+    tags: { type: 'array', items: { type: 'string' }, description: '自由标签（如 overflow-skipped / line-defense-failed）' },
+  },
+});
+
+/**
+ * 校验 single-string 旧格式 → 升级为 { primary, secondary? } 双层格式。
+ * 向后兼容：如果已经是双层格式则原样返回。
+ * @param {string|{primary:string,secondary?:string}|undefined} taxonomy
+ * @returns {{primary:string,secondary?:string}|undefined}
+ */
+export function normalizeFailureTaxonomy(taxonomy) {
+  if (!taxonomy) return undefined;
+  if (typeof taxonomy === 'string') {
+    return { primary: taxonomy };
+  }
+  return taxonomy;
+}
+
+/**
+ * 轻量 runtime 校验（无 ajv 依赖）。仅检查 required + 类型 + enum。
+ * 严格 JSON Schema 校验留给 U6 接入 ajv 后再做。
+ *
+ * 双方言兼容：
+ *   - verdict 接受 TURN_STOP_REASONS（v0.6.5）∪ EVAL_VERDICTS（R6 runner）
+ *   - failureTaxonomy 接受单层 string（FAILURE_TAXONOMY）
+ *     或双层 { primary, secondary? }（FAILURE_PRIMARY / FAILURE_SECONDARY）
+ *
+ * @param {unknown} obj
+ * @returns {{ ok: boolean, errors: string[] }}
+ */
+export function validateResult(obj) {
+  const errors = [];
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    return { ok: false, errors: ['result must be a non-null object'] };
+  }
+  const r = /** @type {any} */ (obj);
+  for (const k of RESULT_SCHEMA.required) {
+    if (r[k] === undefined) errors.push(`missing required field: ${k}`);
+  }
+  if (r.source !== undefined && !EVAL_SOURCES.includes(r.source)) {
+    errors.push(`invalid source: ${r.source} (expected one of ${EVAL_SOURCES.join('|')})`);
+  }
+  if (r.verdict !== undefined && !TURN_STOP_REASONS.includes(r.verdict) && !EVAL_VERDICTS.includes(r.verdict)) {
+    errors.push(`invalid verdict: ${r.verdict}`);
+  }
+  if (r.ablation !== undefined && !(r.ablation in ABLATIONS)) {
+    errors.push(`invalid ablation: ${r.ablation}`);
+  }
+  if (r.taskFamily !== undefined && !['T1', 'T2', 'T3', 'T4', 'T5'].includes(r.taskFamily)) {
+    errors.push(`invalid taskFamily: ${r.taskFamily}`);
+  }
+  if (r.failureTaxonomy !== undefined) {
+    if (typeof r.failureTaxonomy === 'string') {
+      if (!FAILURE_TAXONOMY.includes(r.failureTaxonomy)) {
+        errors.push(`invalid failureTaxonomy: ${r.failureTaxonomy}`);
+      }
+    } else if (typeof r.failureTaxonomy === 'object' && !Array.isArray(r.failureTaxonomy)) {
+      const t = normalizeFailureTaxonomy(r.failureTaxonomy);
+      if (!t || typeof t.primary !== 'string' || !FAILURE_PRIMARY.includes(t.primary)) {
+        errors.push(`invalid failureTaxonomy.primary: ${JSON.stringify(r.failureTaxonomy)} (expected one of ${FAILURE_PRIMARY.join('|')})`);
+      }
+      if (t?.secondary !== undefined && !FAILURE_SECONDARY.includes(t.secondary)) {
+        errors.push(`invalid failureTaxonomy.secondary: ${t.secondary} (expected one of ${FAILURE_SECONDARY.join('|')})`);
+      }
+    } else {
+      errors.push(`invalid failureTaxonomy type: expected string or { primary, secondary? }`);
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * 工厂：生成一条空的 result 骨架（调用方填充字段）。
+ * @param {{ source: 'real-openpangu' | 'mock-smoke', ablation: keyof typeof ABLATIONS, taskFamily: 'T1'|'T2'|'T3'|'T4'|'T5', taskId: string, seed: number, seedSupport?: boolean, modelId?: string }} init
+ */
+export function newResult(init) {
+  const startedAt = new Date().toISOString();
+  return {
+    runId: randomUUID(),
+    source: init.source,
+    ablation: init.ablation,
+    taskId: init.taskId,
+    taskFamily: init.taskFamily,
+    seed: init.seed,
+    seedSupport: init.seedSupport ?? true,
+    modelId: init.modelId ?? 'unknown',
+    panshalachVersion: init.panshalachVersion ?? '0.6.5',
+    startedAt,
+    finishedAt: startedAt,
+    durationMs: 0,
+    verdict: 'no-verification',
+    verification: { signal: 'NO_VERIFICATION', exitCode: 0, commands: [] },
+    memory: { injectedCardIds: [], verifiedCardIds: [] },
+    prompt: { chars: 0, estimatedTokens: 0, hash: '' },
+    continueCount: 0,
+    failureTaxonomy: 'none',
+    artifacts: {},
+    tags: [],
+  };
+}
+
+/** SHA-256 哈希（用于 prompt.hash） */
+export function hashPrompt(s) {
+  return createHash('sha256').update(String(s ?? ''), 'utf8').digest('hex');
+}
+
+/** 简易时间窗采样（用于 durationMs） */
+export function stopwatch() {
+  const t0 = Date.now();
+  return () => Date.now() - t0;
+}
