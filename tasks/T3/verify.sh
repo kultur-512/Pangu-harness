@@ -70,11 +70,30 @@ check "T3-c3 Q3 answer body within 700 bytes (~200 Chinese chars)" '
   awk "BEGIN{n=0} /^### Q3/{flag=1; next} /^### /{flag=0} flag { n += length + 1 } END { if (n > 700) exit 1 }" "$1"
 ' "$F"
 
-# 召回率检查（U4 由王浩宇补全）
-# 模板：
-#   check "T3-r1 recall keyword X" 'grep -q "<keyword>" "$1"' "$F"
-#   check "T3-r2 recall keyword Y" 'grep -q "<keyword>" "$1"' "$F"
-echo "[T3] recall-rate keyword checks: U4 由王浩宇根据真实 document.md 补全"
+# ────────── keyword 召回检查（王浩宇 U4 追加）──────────
+# K1: 第 1 章核心主题唯一关键词
+check "T3-r1 recall K1 (第 1 章核心主题)" \
+  'grep -q "上下文窗口约束下的代码生成范式转移" "$1"' "$F"
+
+# P1-P4: 第 3 章关键人物
+check "T3-r2 recall P1 (李沐)" 'grep -q "李沐" "$1"' "$F"
+check "T3-r3 recall P2 (陈天奇)" 'grep -q "陈天奇" "$1"' "$F"
+check "T3-r4 recall P3 (周明)" 'grep -q "周明" "$1"' "$F"
+check "T3-r5 recall P4 (刘知远)" 'grep -q "刘知远" "$1"' "$F"
+
+# C1-C4: 第 3 章关键贡献
+check "T3-r6 recall C1 (参数服务器架构)" \
+  'grep -q "参数服务器架构" "$1"' "$F"
+check "T3-r7 recall C2 (TVM编译器堆栈)" \
+  'grep -q "TVM" "$1"' "$F"
+check "T3-r8 recall C3 (多语言预训练迁移)" \
+  'grep -q "多语言预训练" "$1"' "$F"
+check "T3-r9 recall C4 (知识增强预训练)" \
+  'grep -q "知识增强预训练" "$1"' "$F"
+
+# K5: 第 5 章结论关键词
+check "T3-r10 recall K5 (第 5 章结论)" \
+  'grep -q "多模态融合的下一代智能软件开发平台" "$1"' "$F"
 
 echo "[T3] passed=$PASS  failed=$FAIL"
 exit $FAIL
