@@ -1,7 +1,9 @@
 // scripts/eval/smoke-eval.mjs
 // Mock 模式自检：跑通 A/B/C/C4 × T1-T5 stub，验证 schema + writer 不退化。
+// 用于 CI gate 快速验证 eval 基建完整性（不连真端点）。
 //
-// 路径隔离：smoke 结果落 results/smoke-<date>.json（永不进真实结果表）。
+// 路径隔离（merge 注：输出路径取 wanghaoyu 版 results/mock/，被 results/.gitignore
+// 白名单跟踪；真实结果表 results/<date>-real-openpangu.json 永不被 mock 污染）。
 //
 // 用法：
 //   node scripts/eval/smoke-eval.mjs           # 默认今天
@@ -15,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 import {
   ABLATIONS,
@@ -28,6 +31,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const ROOT       = path.resolve(__dirname, '..', '..');
 const RESULTS_DIR = path.join(ROOT, 'scripts', 'eval', 'results');
+const MOCK_RESULTS_DIR = path.join(RESULTS_DIR, 'mock');
 
 const DRY = process.argv.includes('--dry');
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -134,20 +138,24 @@ function main() {
     }
   }
 
-  // 摘要
+  // 摘要（merge 注：totalRuns/validSamples/runIds 字段自 wanghaoyu 版并入）
   const byAblation = {};
   for (const r of results) {
     byAblation[r.ablation] = (byAblation[r.ablation] || 0) + 1;
   }
 
   const summary = {
+    summaryId: randomUUID(),
     generatedAt: new Date().toISOString(),
     source: 'mock-smoke',
     total,
+    totalRuns: total,
     passed: results.length,
     failed: errors.length,
+    validSamples: results.length,
     byAblation,
     ablations: ABLATIONS,
+    runIds: results.map(r => r.runId),
     results,
     errors,
   };
@@ -166,21 +174,31 @@ function main() {
     return;
   }
 
+  // 路径隔离不变量：smoke 结果只允许落 results/mock/（merge 注）
+  if (!MOCK_RESULTS_DIR.startsWith(RESULTS_DIR + path.sep + 'mock')) {
+    console.error('[smoke-eval] PATH ISOLATION VIOLATION: mock output must stay under results/mock/');
+    process.exit(3);
+  }
+
   try {
-    fs.mkdirSync(RESULTS_DIR, { recursive: true });
+    fs.mkdirSync(MOCK_RESULTS_DIR, { recursive: true });
   } catch (e) {
     console.error(`[smoke-eval] mkdir failed: ${e.message}`);
     process.exit(2);
   }
 
-  const outPath = path.join(RESULTS_DIR, `smoke-${TODAY}.json`);
+  const dateStr = TODAY.replace(/-/g, '');
+  const outPath = path.join(MOCK_RESULTS_DIR, `${dateStr}-mock-smoke.json`);
   try {
-    fs.writeFileSync(outPath, JSON.stringify(summary, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(outPath, JSON.stringify({ meta: { generatedAt: summary.generatedAt, source: 'mock-smoke', model: 'mock://smoke', runnerVersion: '0.2.0' }, summary, results }, null, 2) + '\n', 'utf8');
     console.log(`[smoke-eval] wrote ${outPath}`);
   } catch (e) {
     console.error(`[smoke-eval] write failed: ${e.message}`);
     process.exit(2);
   }
+
+  console.log('[smoke-eval] ALL PASSED');
+  process.exit(0);
 }
 
 main();

@@ -4,12 +4,17 @@
 > 下一步：U4 王浩宇补 `document.md`（10K-50K tokens 长文档）+ 加 keyword 召回检查
 > U6 真机 openPangu 端点跑分时使用，R8 多级摘要 L1/L2 评测必跑
 
+## Prompt 加载（runner 契约）
+
+run-eval.mjs 的 prompt 源 = `issue.md`（指针加载，正文整体作为 prompt）。
+本文件不再承载 issue 正文，仅做实体化指针。
+
 ## 实体文件清单
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
 | `README.md` | ✅ 已落 | T3 任务族契约（长文档场景、Rubric、评测合同） |
-| `issue.md` | ✅ 已落 | 中文长程维护场景的 Q1/Q2/Q3 摘要 issue |
+| `issue.md` | ✅ 已落 | 中文长程维护场景的 Q1/Q2/Q3 摘要 issue（**prompt 源**） |
 | `verify.sh` | ✅ 已落 | 4 条基础检查：3 个标题 + 全文/Q1/Q3 字节上限（PASS 6/6） |
 | `document.md` | ⏳ 待 U4 | 10K-50K tokens 长文档 |
 | `fixture.md` | ✅ 本文件 | 实体化指针（取代早期"U4 王浩宇实体化"占位） |
@@ -42,6 +47,14 @@ verify.sh 用 awk `length` 字节数近似：1 中文字符 ≈ 3 字节（UTF-8
    check "T3-r1 recall keyword X" 'grep -q "<keyword>" "$1"' "$F"
    check "T3-r2 recall keyword Y" 'grep -q "<keyword>" "$1"' "$F"
    ```
+
+## U4 强化方向（wanghaoyu 草案模式并入）
+
+wanghaoyu 58abf64 草案的 T3 实例为仓库内修改型（sseInteractive.ts 定位
+SSE done 回调追加 `[eval] refined:` 日志 + `npx tsc --noEmit` 编译门），
+未被本实例 verify.sh 覆盖，正文见 git 历史（58abf64 :3 版 fixture.md）。
+"目标代码定位 + 格式断言 + 编译门"检查可作为 U4 强化模板
+（大文件 ~98KB 定位场景与长文档检索能力同源）。
 
 ## 与 R8 评测合同对齐
 

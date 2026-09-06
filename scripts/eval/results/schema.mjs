@@ -4,13 +4,21 @@
 // 字段来源：
 //   1. ROADMAP-NEXT §3.1 R6 合同（runId/source/seedSupport/verdict/verification/memory/prompt/failureTaxonomy/artifacts）
 //   2. v0.6.4 接口契约 v3.1 双层终止语义（TurnStopReason 6 态 + continueCount + lastError）
+//   3. v0.6.5 R1/R2 契约（panshalachVersion / attemptCount / refined 透传 + memory 注入层 vs 落定层）
+//   4. FailureTaxonomy 双层升级（{ primary, secondary? } + normalizeFailureTaxonomy 向后兼容）
 //
 // 约束：
 //   - TurnStopReason 6 态从此处导出；与 src/cli/repl/types.ts 同步，改动需双向更新。
-//   - failureTaxonomy 运行前冻结（运行时不允许新增分类）。
+//   - 失败分类枚举运行前冻结（运行时不允许新增分类）。
 //   - A 档必须真溢出（不溢出的样本标"不适用"，不进长程结论）。
 //   - B 档零注入 = 防线失败，不计为有效样本。
-//   - mock 永不入真实结果表（路径隔离：results/smoke-*.json vs results/<date>.json）。
+//   - mock 永不入真实结果表（路径隔离：results/mock/*.json vs results/<date>.json）。
+//
+// 双方言兼容（merge 注，U4/U6 收敛前有效）：
+//   - v0.6.5 契约方言：verdict ∈ TURN_STOP_REASONS；failureTaxonomy 为单层 string（FAILURE_TAXONOMY）
+//   - R6 runner 方言：verdict ∈ EVAL_VERDICTS（pass/fail/not_applicable/invalid）；
+//     failureTaxonomy 为 { primary, secondary? }（FAILURE_PRIMARY / FAILURE_SECONDARY）
+//   - validateResult 同时接受两种方言；U6 接入 ajv 后收敛到双层 object。
 //
 // 用法：
 //   import { TURN_STOP_REASONS, RESULT_SCHEMA, validateResult } from './schema.mjs';
@@ -38,7 +46,42 @@ export const ABLATIONS = Object.freeze({
   C4: 'B + semantic retrieval (n-gram, R7)',
 });
 
-/** 失败分类枚举（运行前冻结；运行时新增需改本文件 + ROADMAP-NEXT §3.1） */
+// ── 失败分类（运行前冻结；运行时新增需改本文件 + ROADMAP-NEXT §3.1） ──
+
+/** 主失败分类——R6 runner 双层方言，枚举值运行前冻结，不可运行时增删 */
+export const FAILURE_PRIMARY = Object.freeze([
+  'tool-error',            // 工具执行失败（bash/write/read/glob/grep 返回非零）
+  'verification-failed',   // 真实验证步未通过（无 ALL_TESTS_PASSED/EXIT_CODE:0）
+  'no-verification',       // 整个轨迹无真实验证步（didRealVerification 未触发）
+  'budget-exhausted',      // 上下文窗口/步数预算耗尽
+  'aborted',               // 用户取消或 AbortSignal
+  'model-refusal',         // 模型拒绝执行（安全/能力边界）
+  'parse-error',           // 模型输出解析失败（tool call JSON 损坏等）
+  'timeout',               // 超时
+  'infra-error',           // 基础设施错误（端点不可达、OOM 等）
+  'memory-not-cited',      // 注入但卡未在 verify 步被引用（R7/R8 统计"卡注入利用率"）
+  'semantic-miss',         // C4 档语义检索未命中（区分检索质量失败 vs 注入失败）
+]);
+
+/** 次要失败分类——补充描述，可选 */
+export const FAILURE_SECONDARY = Object.freeze([
+  'tool-output-parse',     // 工具输出格式异常
+  'tool-loop',             // 工具重复调用无进展
+  'prompt-truncation',     // prompt 被截断
+  'context-overflow',      // 上下文溢出
+  'model-hallucination',   // 模型幻觉（编造文件名/命令）
+  'model-noncompliant',    // 模型不遵循指令格式
+  'mcp-unavailable',       // MCP 工具不可用
+  'approval-denied',       // 审批被拒绝
+  'prompt-too-short',      // A 档 prompt chars 未达溢出阈值（标 not-applicable）
+  'unknown',
+]);
+
+/**
+ * 单层失败分类——v0.6.5 契约方言遗留枚举（兼容别名）。
+ * 新样本建议写双层 { primary, secondary? }；单层 string 由
+ * normalizeFailureTaxonomy() 升级为双层。
+ */
 export const FAILURE_TAXONOMY = Object.freeze([
   'none',                    // 无失败（success=true）
   'verification-failed',     // 验证未通过
@@ -49,6 +92,14 @@ export const FAILURE_TAXONOMY = Object.freeze([
   'overflow-skipped',        // A 档未溢出，标"不适用"（不进长程结论）
   'line-defense-failed',     // B 档零注入，防线失败（不计为有效样本）
   'unknown',                 // 未分类（需 lastError 透出）
+]);
+
+/** R6 runner 评测结论（fill-evaluation 按 pass/fail 出行；not_applicable/invalid 不进长程结论） */
+export const EVAL_VERDICTS = Object.freeze([
+  'pass',              // 任务成功且验证通过
+  'fail',              // 任务失败（含失败分类）
+  'not_applicable',    // A 档未溢出 / B 档 prompt 不足——不进长程结论
+  'invalid',           // 样本无效（如 B 档零注入=防线失败，不计为有效样本）
 ]);
 
 /** 已知验证信号（沿用 verify-critique-loop 已有语义） */
@@ -94,6 +145,8 @@ export const RESULT_SCHEMA = Object.freeze({
      * │ false + aborted │ *              │ 'aborted'                        │
      * │ false + 缺 attemptCount│ *        │ 'no-verification'（防"一次通过"伪造）│
      * └─────────────────┴────────────────┴──────────────────────────────────┘
+     * R6 runner 方言另用 EVAL_VERDICTS（pass/fail/not_applicable/invalid），
+     * 由 validateResult 双方言兼容；U6 ajv 接入后收敛。
      */
     verdict:         { enum: [...TURN_STOP_REASONS] },
     verification: {
@@ -145,6 +198,11 @@ export const RESULT_SCHEMA = Object.freeze({
      */
     attemptCount:    { type: 'integer', minimum: 1, description: '实际尝试次数；缺省 → 强制 no-verification' },
     lastError:       { type: 'string', description: '单 rollout 失败保留的最后错误' },
+    /**
+     * 失败分类：
+     * - 单层 string ∈ FAILURE_TAXONOMY（v0.6.5 遗留方言）
+     * - 双层 { primary ∈ FAILURE_PRIMARY, secondary? ∈ FAILURE_SECONDARY }（R6 runner 方言，推荐）
+     */
     failureTaxonomy: { enum: [...FAILURE_TAXONOMY] },
     /**
      * 记忆闭环统计（王浩宇 R1 finalizeTaskMemory 返回的 .refined 字段透传）：
@@ -177,8 +235,27 @@ export const RESULT_SCHEMA = Object.freeze({
 });
 
 /**
+ * 校验 single-string 旧格式 → 升级为 { primary, secondary? } 双层格式。
+ * 向后兼容：如果已经是双层格式则原样返回。
+ * @param {string|{primary:string,secondary?:string}|undefined} taxonomy
+ * @returns {{primary:string,secondary?:string}|undefined}
+ */
+export function normalizeFailureTaxonomy(taxonomy) {
+  if (!taxonomy) return undefined;
+  if (typeof taxonomy === 'string') {
+    return { primary: taxonomy };
+  }
+  return taxonomy;
+}
+
+/**
  * 轻量 runtime 校验（无 ajv 依赖）。仅检查 required + 类型 + enum。
  * 严格 JSON Schema 校验留给 U6 接入 ajv 后再做。
+ *
+ * 双方言兼容：
+ *   - verdict 接受 TURN_STOP_REASONS（v0.6.5）∪ EVAL_VERDICTS（R6 runner）
+ *   - failureTaxonomy 接受单层 string（FAILURE_TAXONOMY）
+ *     或双层 { primary, secondary? }（FAILURE_PRIMARY / FAILURE_SECONDARY）
  *
  * @param {unknown} obj
  * @returns {{ ok: boolean, errors: string[] }}
@@ -195,7 +272,7 @@ export function validateResult(obj) {
   if (r.source !== undefined && !EVAL_SOURCES.includes(r.source)) {
     errors.push(`invalid source: ${r.source} (expected one of ${EVAL_SOURCES.join('|')})`);
   }
-  if (r.verdict !== undefined && !TURN_STOP_REASONS.includes(r.verdict)) {
+  if (r.verdict !== undefined && !TURN_STOP_REASONS.includes(r.verdict) && !EVAL_VERDICTS.includes(r.verdict)) {
     errors.push(`invalid verdict: ${r.verdict}`);
   }
   if (r.ablation !== undefined && !(r.ablation in ABLATIONS)) {
@@ -204,8 +281,22 @@ export function validateResult(obj) {
   if (r.taskFamily !== undefined && !['T1', 'T2', 'T3', 'T4', 'T5'].includes(r.taskFamily)) {
     errors.push(`invalid taskFamily: ${r.taskFamily}`);
   }
-  if (r.failureTaxonomy !== undefined && !FAILURE_TAXONOMY.includes(r.failureTaxonomy)) {
-    errors.push(`invalid failureTaxonomy: ${r.failureTaxonomy}`);
+  if (r.failureTaxonomy !== undefined) {
+    if (typeof r.failureTaxonomy === 'string') {
+      if (!FAILURE_TAXONOMY.includes(r.failureTaxonomy)) {
+        errors.push(`invalid failureTaxonomy: ${r.failureTaxonomy}`);
+      }
+    } else if (typeof r.failureTaxonomy === 'object' && !Array.isArray(r.failureTaxonomy)) {
+      const t = normalizeFailureTaxonomy(r.failureTaxonomy);
+      if (!t || typeof t.primary !== 'string' || !FAILURE_PRIMARY.includes(t.primary)) {
+        errors.push(`invalid failureTaxonomy.primary: ${JSON.stringify(r.failureTaxonomy)} (expected one of ${FAILURE_PRIMARY.join('|')})`);
+      }
+      if (t?.secondary !== undefined && !FAILURE_SECONDARY.includes(t.secondary)) {
+        errors.push(`invalid failureTaxonomy.secondary: ${t.secondary} (expected one of ${FAILURE_SECONDARY.join('|')})`);
+      }
+    } else {
+      errors.push(`invalid failureTaxonomy type: expected string or { primary, secondary? }`);
+    }
   }
   return { ok: errors.length === 0, errors };
 }

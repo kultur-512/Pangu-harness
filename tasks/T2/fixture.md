@@ -4,12 +4,17 @@
 > 下一步：U4 王浩宇补 `repo/`（5-10 文件小型 TypeScript 代码库）+ 强化 verify.sh
 > U6 真机 openPangu 端点跑分时使用，R7 评测 C4 消融必跑
 
+## Prompt 加载（runner 契约）
+
+run-eval.mjs 的 prompt 源 = `issue.md`（指针加载，正文整体作为 prompt）。
+本文件不再承载 issue 正文，仅做实体化指针。
+
 ## 实体文件清单
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
 | `README.md` | ✅ 已落 | T2 任务族契约（跨文件关联场景、Rubric、评测合同） |
-| `issue.md` | ✅ 已落 | 中文长程维护场景的跨文件重构 issue（add 函数扩展 bigint） |
+| `issue.md` | ✅ 已落 | 中文长程维护场景的跨文件重构 issue（add 函数扩展 bigint，**prompt 源**） |
 | `verify.sh` | ✅ 已落 stub | 占位：检查 repo/ 存在 + 退出 0；U4 王浩宇替换为 npm test |
 | `repo/` | ⏳ 待 U4 | 5-10 文件小型代码库（package.json + src + tests） |
 | `fixture.md` | ✅ 本文件 | 实体化指针（取代早期"U4 王浩宇实体化"占位） |
@@ -27,7 +32,14 @@
 2. 替换 `verify.sh` stub 为：
    - `grep -rE "\badd\s*\(" src/ tests/` 调用点计数
    - `cd repo && npm test` 退出码 0
-   - （可选）`tsc --noEmit` 类型一致性
+   - （可选）`npx tsc --noEmit` 类型一致性（wanghaoyu 草案模式：编译门检查）
+
+## U4 强化方向（wanghaoyu 草案模式并入）
+
+wanghaoyu 58abf64 草案的 T2 实例为仓库内修改型（ConfigManager.ts
+getConfig → getConfigValue 重命名 + 全调用点更新 + `npx tsc --noEmit` 编译门），
+未被本实例 verify.sh 覆盖，正文见 git 历史（58abf64 :3 版 fixture.md）。
+"旧名不存在 + 新名存在 + 编译门"三段式检查可作为 U4 强化模板。
 
 ## 与 R7 评测合同对齐
 

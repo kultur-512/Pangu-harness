@@ -4,6 +4,7 @@ import { PromptBuilder } from '../PromptBuilder.js';
 import { TierRegistry } from '../../../tiers/TierConfig.js';
 import { expandAtPaths } from '../types.js';
 import { classifyTaskIntent } from '../../taskIntent.js';
+import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../../loop/trajectory.js';
 
 const command: Command = {
   name: 'run',
@@ -117,6 +118,8 @@ const command: Command = {
         }
       }
 
+      const traj = (result as any)?.bestTrajectory;
+      const trajSteps = traj?.steps ?? [];
       ctx.session.addTurn({
         id: Date.now().toString(36),
         timestamp: Date.now(),
@@ -129,6 +132,10 @@ const command: Command = {
           summary,
           budgetReport: result.budgetReport,
           stopReason,
+          goal: finalTask,
+          changedFiles: extractChangedFiles(trajSteps),
+          verifyCmd: extractVerifyCommands(trajSteps),
+          outcome: mapOutcome(stopReason),
         },
       });
 
