@@ -99,7 +99,8 @@
 | **0.7.2 遗留**：Repl 直调 PanshalachChaser 三口未接 finalizeTaskMemory（记忆落定仅覆盖 runAgentTask 路径） | `Repl.ts` | 待统一执行器收口（与 R1"单一 finalizeTask 服务"同一纪律） |
 | **0.7.3 登记不进本轮（L 级）**：消息数组协议重构（complete/streamChat 仅 prompt 字符串单入口，无 messages 数组通道） | `openai-compatible.ts` / `VerifyCritiqueLoop.ts` | L 级跨文件手术，与"明天跑通一天"无直接因果；按需立项（USABLE-PLAN-0.7.3 §一） |
 | **0.7.3 登记（L 级）**：sseInteractive 巨函数拆分（现 2147 行，单函数占比过高、巨函数体覆盖薄弱） | `sseInteractive.ts` | L 级；拆分须测试先行 |
-| **0.7.3 登记（L 级）**：subagent 委派 / hooks 总线 / 后台 bash | — | L 级，明确不进本轮（USABLE-PLAN-0.7.3 §一） |
+| **0.7.3 登记（L 级）**：subagent 委派 / hooks 总线 / 后台 bash | — | L 级，明确不进 0.7 本轮（USABLE-PLAN-0.7.3 §一）；**0.8 立项部分解锁**——巨函数拆分与消息数组协议进 PLAN-0.8-FOUNDATION M1（依据 GAP-MATRIX-0.8.md），subagent/hooks 仍推 0.9+ |
+| **0.8 立项（2026-09-06，GAP-MATRIX-0.8 交叉对比驱动）**：M1 地基（sseInteractive 拆分 TurnController + messages 数组通道）+ M2 执行层七项（并行分段/卡死硬闸/结果落盘/usage 计量/错误分类/敏感路径/Turn.role） | `sseInteractive.ts` / `openai-compatible.ts` / `VerifyCritiqueLoop.ts` / `engineAdapter.ts` | 方案 `docs/panshalach/PLAN-0.8-FOUNDATION.md`；硬边界=三态语义/R6 契约/记忆信号/审批安全不变；M1+M2-2/M2-6 为最小不可分割集 |
 | **0.7.3 引入边界**：MCP 工具结果无验证尾标（`describeResult` 尾标只覆盖内置 bash/write_file/edit_file/read_file/glob/grep；MCP 调用成功不计 PASS） | `engineAdapter.ts` | 遗留：MCP 结果验证分类策略待定（宁缺毋滥，防 MCP 自述伪装真实验证） |
 | **0.7.4 契约漂移（R6 域销项）**：`scripts/eval/results/schema.mjs` TURN_STOP_REASONS 仍是 v0.6.5 方言（含 `verification-failed-continue`、缺 `answered`/`error`），且 `continueCount` 字段引用致 `verify-panshalach-cleanup.mjs` 0.7 段 FAIL | `scripts/eval/results/schema.mjs:29-37,190,327` / `scripts/eval/smoke-eval.mjs:106-110` | 待王浩宇（R6 schema owner）对齐 0.7 四态契约（answered/error 加性）+ 删除 continueCount 死字段（判官已摘除，恒 0）；销项后 cleanup 脚本恢复全绿 |
 | **0.7.4 hermes 调研唯一建议采纳项**：classic/Repl 路径 `solveIssue` 漏传 `windowTokens`（0.7.3 窗口预算在 classic/`--headless` 单条命令路径不生效） | `Repl.ts:427`（对照 `runAgentTask.ts:173`） | ~40 行小改，待排期（HERMES-ALIGN-0.7.4.md §5） |
