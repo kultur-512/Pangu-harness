@@ -45,6 +45,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 │   铁律: Read-Before-Write / Verify-Before-Claim / 可回滚           │
 │   回合三态: completed(真实验证PASS) / answered(end_turn有正文)      │
 │     / no-verification(空白空转)；另有 max-steps/连错上限/aborted    │
+│     / error(0.7.4：模型/网络/解析异常，与用户中断分离)              │
 │   AbortSignal 贯穿: solveIssue→loop→complete→fetch/executor        │
 │   budget 软限(token 按模型调用真实累计) / 每步轨迹采集              │
 ├──────────────────────────────────────────────────────────────────┤
@@ -67,7 +68,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 **各层职责一句话**
 - 模型接入层：把"用什么模型、走什么格式"与上层解耦 → **openPangu 可替换，无需动记忆/循环**。
 - 工具引擎层：真实执行 + 审批 + 护栏 = agent 的"手"，也决定哪些信号能被记录为可验证事实。
-- 执行循环层：agent 的"脑 + 自我复盘"，每步产出轨迹/验证信号（长程记忆的素材）。0.7.0 起单层终止（判官/TestTimeOrchestrator 摘除）：单次 loop.run + 回合三态（completed/answered/no-verification），AbortSignal 可贯穿中止。
+- 执行循环层：agent 的"脑 + 自我复盘"，每步产出轨迹/验证信号（长程记忆的素材）。0.7.0 起单层终止（判官/TestTimeOrchestrator 摘除）：单次 loop.run + 回合三态（completed/answered/no-verification；0.7.4 加性 error——模型故障与用户中断分离），AbortSignal 可贯穿中止。
 - 记忆增强层：agent 的"长期记忆"——把跨会话经验、压缩摘要、事件、状态外置到 prompt 预算里，不依赖模型窗口记忆。
 - 提示工程层：记忆注入的"闸门"——按档位与预算决定每轮把多少记忆呈现给模型。
 
@@ -147,7 +148,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
         score 已整体移除——成败由验证信号判定）
         终止（单层，无判官续跑）：PASS+end_turn → completed /
         end_turn 有正文 → answered / 空白空转 → no-verification /
-        max-steps / 连错上限 / signal abort
+        max-steps / 连错上限 / signal abort / 异常 → error(0.7.4)
     budget 软限：estimatedUsedTokens 按每次模型调用累加（0.7 修复恒 0）
   │
   ▼ 任务落定（回合写闭环 · P2 规划）

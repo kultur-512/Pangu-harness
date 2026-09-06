@@ -220,6 +220,9 @@ LM Studio 默认 `1234`、vLLM 默认 `8000`。端口被占时在服务侧换端
 **Q3：模型返回 200 但内容为空（reasoning_content 空响应）**
 openPangu-Embedded 实测偶发"content 空但 reasoning_content 非空"的 200 空响应。0.6.4 起已有双重兜底：非流式响应 content 为空时采用 `reasoning_content`；空响应纳入 `withRetry` 可重试（429/5xx/网络错误 + 传输类错误 fetch failed/TypeError，≤5 次——0.7.3 起从 3 次放宽）。若仍频繁出现：检查是否上下文超窗（`modelContexts` 是否配小/配大）、量化版本是否过激，或换 7B+ 模型验证。
 
+**Q4：任务显示"✗ 任务执行失败 · EMPTY_RESPONSE…"（0.7.4 新排障项）**
+加载的模型是 **diffusion/embedding 类**（如 `openpangu-7b-diffusion-base-i1`）——LM Studio 对此类模型的 `/v1/chat/completions` 返回 200-garbage（`Unexpected endpoint or method. Returning 200 anyway`），0.7.4 起该故障被正确识别为 `error` 终态（此前被伪装成"已中断"）。处置：在 LM Studio 加载**标准自回归对话模型**（如 openpangu-7b 非 diffusion 版）后重试。
+
 **Q4：`--approval readonly` 下写文件被拒**
 设计行为，不是故障：readonly 档写文件/执行类一律拒绝。headless/一次性执行需要显式提权：`zhulong --headless --approval full run "…"` 或 `PANSHA_APPROVAL=full`；REPL 内用 `/approvals full`。另注意非 TTY 一次性执行必须带 `--headless`，否则工具走 mock 守卫不真实落盘。
 
