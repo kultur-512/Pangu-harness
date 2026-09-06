@@ -1,13 +1,13 @@
 {
   "meta": {
-    "generatedAt": "2026-09-06T03:29:58.208Z",
+    "generatedAt": "2026-09-06T03:33:36.887Z",
     "source": "mock-smoke",
     "model": "openPangu-7B",
     "runnerVersion": "0.1.0"
   },
   "summary": {
-    "summaryId": "0e3370c3-f3d2-43fe-993c-644dd9a6464d",
-    "generatedAt": "2026-09-06T03:29:58.208Z",
+    "summaryId": "416efd76-82cc-4977-9b12-e34d0cdef855",
+    "generatedAt": "2026-09-06T03:33:36.887Z",
     "source": "mock-smoke",
     "totalRuns": 5,
     "validSamples": 5,
@@ -45,23 +45,23 @@
     },
     "byFailure": {},
     "runIds": [
-      "c81260f3-277c-491b-86f3-819fa2345ac3",
-      "63387523-b563-4a0d-9d9b-88c5294e7def",
-      "ef8674c4-4bb8-470e-aabc-417b48e84ae3",
-      "73869f8c-be9e-4cad-a8f9-6ea9b07da084",
-      "a07c2b76-eaf5-4b5d-bbef-c8eeda820b60"
+      "4f5446af-0a8f-4582-a79b-ef950b3f5e1c",
+      "0c01b8ee-6e40-46ab-8e24-4267eb6b8b43",
+      "32763a7a-1470-41f3-bc7b-05959f5eea28",
+      "c257cd9b-56b7-4a91-bcfc-0358a309e156",
+      "fed08015-91bd-402f-9c09-5b133f52a55d"
     ]
   },
   "results": [
     {
-      "runId": "c81260f3-277c-491b-86f3-819fa2345ac3",
+      "runId": "4f5446af-0a8f-4582-a79b-ef950b3f5e1c",
       "source": "mock-smoke",
       "tier": "C",
       "taskId": "T1",
       "model": "openPangu-7B",
       "seedSupport": false,
-      "timestamp": "2026-09-06T03:29:58.206Z",
-      "durationMs": 1,
+      "timestamp": "2026-09-06T03:33:36.885Z",
+      "durationMs": 2,
       "verdict": "pass",
       "verification": {
         "signal": "EXIT_CODE:0",
@@ -89,13 +89,13 @@
       }
     },
     {
-      "runId": "63387523-b563-4a0d-9d9b-88c5294e7def",
+      "runId": "0c01b8ee-6e40-46ab-8e24-4267eb6b8b43",
       "source": "mock-smoke",
       "tier": "C",
       "taskId": "T2",
       "model": "openPangu-7B",
       "seedSupport": false,
-      "timestamp": "2026-09-06T03:29:58.207Z",
+      "timestamp": "2026-09-06T03:33:36.887Z",
       "durationMs": 0,
       "verdict": "pass",
       "verification": {
@@ -124,13 +124,13 @@
       }
     },
     {
-      "runId": "ef8674c4-4bb8-470e-aabc-417b48e84ae3",
+      "runId": "32763a7a-1470-41f3-bc7b-05959f5eea28",
       "source": "mock-smoke",
       "tier": "C",
       "taskId": "T3",
       "model": "openPangu-7B",
       "seedSupport": false,
-      "timestamp": "2026-09-06T03:29:58.208Z",
+      "timestamp": "2026-09-06T03:33:36.887Z",
       "durationMs": 0,
       "verdict": "pass",
       "verification": {
@@ -159,13 +159,13 @@
       }
     },
     {
-      "runId": "73869f8c-be9e-4cad-a8f9-6ea9b07da084",
+      "runId": "c257cd9b-56b7-4a91-bcfc-0358a309e156",
       "source": "mock-smoke",
       "tier": "C",
       "taskId": "T4",
       "model": "openPangu-7B",
       "seedSupport": false,
-      "timestamp": "2026-09-06T03:29:58.208Z",
+      "timestamp": "2026-09-06T03:33:36.887Z",
       "durationMs": 0,
       "verdict": "pass",
       "verification": {
@@ -194,13 +194,13 @@
       }
     },
     {
-      "runId": "a07c2b76-eaf5-4b5d-bbef-c8eeda820b60",
+      "runId": "fed08015-91bd-402f-9c09-5b133f52a55d",
       "source": "mock-smoke",
       "tier": "C",
       "taskId": "T5",
       "model": "openPangu-7B",
       "seedSupport": false,
-      "timestamp": "2026-09-06T03:29:58.208Z",
+      "timestamp": "2026-09-06T03:33:36.887Z",
       "durationMs": 0,
       "verdict": "pass",
       "verification": {
