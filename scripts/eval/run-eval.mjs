@@ -364,6 +364,7 @@ async function runOne(fixture, ablation, opts) {
   }
 
   // ── real-openpangu：spawn harness 子进程 ──
+  const isWin = process.platform === 'win32';
   const cliArgs = [
     'tsx', 'src/cli.ts',
     '--headless',
@@ -376,7 +377,7 @@ async function runOne(fixture, ablation, opts) {
 
   try {
     const { stdout, stderr, exitCode, error } = await spawnWithTimeout(
-      'npx', cliArgs, {
+      isWin ? 'npx.cmd' : 'npx', cliArgs, {
         env: ablationEnv(ablation),
         cwd: fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT,
         timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS,
