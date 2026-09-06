@@ -147,7 +147,12 @@ Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsS
 
     if (practical) {
       // 实用模式：更短、更温和、日常编码友好
-      return `你是一个可靠的工程编码助手。请用简洁的结构思考并行动：
+      return `你是烛龙（Zhulong），交互式工程助手，有两种工作方式：
+- 对话——问候、提问、模糊输入（如单词、编号"1"、情绪表达）：直接简短回应，意图不明时一次问清目标；不读文件、不调用工具。
+- 执行——目标明确的工程任务：读代码、改文件、跑验证，直到验证通过后再报告完成。
+歧义不往高风险方向解读（"清理"不等于"删除"）；得到用户答复后立即行动，不反复追问。
+
+请用简洁的结构思考并行动：
 
 <thinking>
 简要分析问题（80-150字）：理解、关键点、做法、主要风险。
@@ -174,7 +179,13 @@ ${failureMemory}
 
     // 非实用模式（高纪律模式 / 高纪律路径）：保留更多结构与纪律提示
     return `
-你是一个可靠的工程编码助手。请使用以下结构进行思考和行动（可根据任务复杂度适当精简）：
+你是烛龙（Zhulong），交互式工程助手，有两种工作方式：
+- 对话——问候、提问、模糊输入（如单词、编号"1"、情绪表达）：直接简短回应，意图不明时一次问清目标；不读文件、不调用工具。
+- 执行——目标明确的工程任务：读代码、改文件、跑验证，直到验证通过后再报告完成。
+歧义不往高风险方向解读（"清理"不等于"删除"）；得到用户答复后立即行动，不反复追问。
+回答风格：简洁直接，先结论后细节；不知道就说不知道，不编造。
+
+请使用以下结构进行思考和行动（可根据任务复杂度适当精简）：
 
 <thinking>
 对当前问题的清晰分析（建议 150-300 字）。
@@ -286,30 +297,74 @@ ${executionResult}${toolInfo}
   }
 
   /**
-   * 构建高纪律模式下的格式建议提示（工程友好版）
-   * 强调：标准格式是高质量、可维护、可追溯工作的基础，同时有助于模型在各种场景（包括评测）中更稳定地被解析。
-   * 避免使用“必须100%否则失败”这种在日常工程中容易让模型过度保守或浪费 token 的表述。
+   * 构建工具调用格式教学提示。
+   * 带具体 few-shot 示例——小模型（如 openPangu-Embedded）无法从抽象模板泛化，
+   * 必须给出可模仿的真实调用。示例工具按 availableTools 动态挑选：教学里出现
+   * 该档位不可用的工具会诱导 UNKNOWN_TOOL 空转（实测教训：quick 档示例
+   * write_file，模型照抄后被拒，烧满步数）。
+   * @param toolNames 当前 adapter 实际注册的工具名（缺省视为仅 bash 可用）
    */
-  static buildToolCallFormatEnforcementPrompt(): string {
-    return `【高纪律模式 - 工具调用格式建议（高质量工程实践）】
+  static buildToolCallFormatEnforcementPrompt(toolNames?: string[]): string {
+    const tools = new Set((toolNames ?? ['bash']).map((n) => String(n).toLowerCase()));
+    const canWrite = tools.has('write_file');
 
-推荐使用以下结构化格式输出工具调用：
-
+    const examples: string[] = [];
+    examples.push(`执行命令示例：
 <>
-  <ToolName>
-    <paramName1>参数值1</paramName1>
-    <paramName2>参数值2</paramName2>
-  </ToolName>
-</>
+  <bash>
+    <command>echo hello</command>
+  </bash>
+</>`);
+    if (canWrite) {
+      examples.push(`写文件示例：
+<>
+  <write_file>
+    <file_path>notes.txt</file_path>
+    <content>hello world</content>
+  </write_file>
+</>`);
+    }
 
-为什么推荐这个格式？
-- 可解析性强，减少解析错误和重试
-- 便于轨迹记录、复盘和失败分析
-- 在真实项目和评测环境中都更可靠
+    return `【工具调用格式（必须遵守）】
+每一步你必须输出恰好一个工具调用块，用 <> 行包裹，直接输出，不要放进 \`\`\` 代码块：
 
-避免使用松散的 invoke tool 格式或直接写 Read(...) 这种不易被可靠解析的写法。
+${examples.join('\n\n')}
 
-请在输出工具调用前，快速确认格式清晰、参数完整。这能显著提升你在复杂工程任务中的成功率和可维护性。`;
+规则：
+- 一次只调用一个工具，看到结果后再决定下一步。
+- 可用工具：${[...tools].sort().join(', ')}。不要调用列表之外的工具。
+- 参数写在 <参数名>值</参数名> 中，不要用 JSON。
+- 完成修改后必须运行验证命令；全部通过时在最后输出 VERIFICATION: PASS。
+- 禁止只描述计划而不输出工具调用块。`;
+  }
+
+  /**
+   * 0.7：对话（chat）路径的单轮指令——不注入任何工具调用教学/格式纪律，
+   * 直接简洁回答。与 buildReasoningPrompt 的"执行"路径分离，消除弱模型
+   * "对话不调工具"与"每步必须输出工具块"的指令冲突。
+   */
+  static buildChatDirective(issue: string): string {
+    return `你是烛龙（Zhulong），交互式工程助手。
+这是一次普通对话/提问，不是需要改代码、跑验证的工程任务。
+请直接、简洁地回答用户，不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签。
+
+用户的输入：
+${issue}`;
+  }
+
+  /**
+   * 0.7：只读搜索（search）路径的指令——先用只读工具搜索目标；搜不到就
+   * 停止并询问用户具体用意；禁止写/bash。
+   */
+  static buildSearchDirective(issue: string): string {
+    return `你是烛龙（Zhulong），交互式工程助手。
+用户提到了一个文件/路径，但没有说明要做什么。请先只读搜索确认它是否存在：
+- 用 glob / read_file / grep 在工作区内查找；只读，禁止 write_file / edit_file / bash。
+- 找到 → 简要报告它的位置与内容概要，然后停止。
+- 找不到 → 直接告诉用户"未找到 <目标>"，并询问具体想做什么，不要猜测、不要创建或修改任何文件。
+
+用户的输入：
+${issue}`;
   }
 }
 

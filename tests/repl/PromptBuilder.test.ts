@@ -204,3 +204,44 @@ describe('P1-E PromptBuilder deduplication (v2)', () => {
     assert.ok(p2.includes('<tier_constraint tier="quick">'));
   });
 });
+
+// ==================== F7: buildForTask 按 intent 分支注入 ====================
+// 0.7：taskIntent 分类已存在（src/cli/taskIntent.ts），buildForTask 参数化接收
+// intent。chat 意图不注入重工程块（验证铁律 + 格式教学）；不传 intent = 现状行为
+// 完全不变（向后兼容——调用方尚无 intent 信息，接线待分类前移）。
+describe('PromptBuilder.buildForTask intent 分支（F7）', () => {
+  it("intent='chat'：不注入重工程块（硬约束/档位契约/格式教学/项目验证命令）", async () => {
+    const sess = new Session({ tier: 'high' });
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    const prompt = await pb.buildForTask('你好，回答我你是谁', 'chat');
+
+    assert.ok(!prompt.includes('【硬约束】'), 'L0 验证铁律块不注入');
+    assert.ok(!prompt.includes('【档位契约】'), '档位契约（纪律规则强度）块不注入');
+    assert.ok(!prompt.includes('<negative_tool_list>'), '格式教学块不注入');
+    assert.ok(!prompt.includes('纪律规则强度'), '无纪律教学文本');
+
+    // 轻量块保留：身份、tier XML 约束（P0-2 MUST ALWAYS）、当前任务
+    assert.ok(prompt.includes('当前档位: high'), '系统身份保留');
+    assert.ok(prompt.includes('<tier_constraint tier="high">'), 'tier_constraint XML 保留');
+    assert.ok(prompt.includes('【当前任务】'), '当前任务块保留');
+    assert.ok(prompt.includes('你好，回答我你是谁'), '任务正文保留');
+  });
+
+  it("intent='execution'：与现状一致，重工程块全部注入", async () => {
+    const sess = new Session({ tier: 'high' });
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    const prompt = await pb.buildForTask('修复登录 bug', 'execution');
+    assert.ok(prompt.includes('【硬约束】'));
+    assert.ok(prompt.includes('【档位契约】'));
+    assert.ok(prompt.includes('<negative_tool_list>'));
+  });
+
+  it('不传 intent：向后兼容——关键注入块与现状完全一致', async () => {
+    const sess = new Session({ tier: 'high' });
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    const prompt = await pb.buildForTask('修复登录 bug');
+    for (const block of ['【硬约束】', '【档位契约】', '<negative_tool_list>', '<tier_constraint tier="high">']) {
+      assert.ok(prompt.includes(block), `不传 intent 必须仍注入 ${block}`);
+    }
+  });
+});

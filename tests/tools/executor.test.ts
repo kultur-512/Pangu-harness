@@ -287,11 +287,12 @@ describe('engineAdapter safety gate', () => {
 
   // B1 (review defect): the six-tier contract must give write tools to
   // high/max/ex/pangu — 'max' was missing (isStrongMode + all-write confirm).
-  it('registers write/edit tools for high/max/ex/pangu but NOT quick/standard (B1)', async () => {
+  // 2026-09-05 裁决：写工具全档位注册（安全性由审批门禁兜底，不靠隐藏工具）。
+  it('registers write/edit tools for ALL tiers (B1 + 2026-09-05 全档位裁决)', async () => {
     setStdoutTty(true);
     delete process.env.PANSHA_SMOKE;
 
-    for (const tier of ['high', 'max', 'ex', 'pangu'] as const) {
+    for (const tier of ['quick', 'standard', 'high', 'max', 'ex', 'pangu'] as const) {
       const adapter = createEngineAdapter({
         workspaceRoot: root,
         tierConfig: { ...fakeTierConfig(), tier } as unknown as TierConfig,
@@ -299,16 +300,6 @@ describe('engineAdapter safety gate', () => {
       const tools = adapter.executor.availableTools();
       assert.ok(tools.includes('write_file'), `${tier}: write_file missing`);
       assert.ok(tools.includes('edit_file'), `${tier}: edit_file missing`);
-    }
-
-    for (const tier of ['quick', 'standard'] as const) {
-      const adapter = createEngineAdapter({
-        workspaceRoot: root,
-        tierConfig: { ...fakeTierConfig(), tier } as unknown as TierConfig,
-      });
-      const tools = adapter.executor.availableTools();
-      assert.ok(!tools.includes('write_file'), `${tier}: write_file must NOT be present`);
-      assert.ok(!tools.includes('edit_file'), `${tier}: edit_file must NOT be present`);
     }
   });
 });

@@ -28,11 +28,19 @@ export interface ReviewReport {
     verifyBeforeClaimMissing: number;
     formatIssues: number;
   };
-  /** 验证证据清单（实际执行的测试/命令 + 结果） */
+  /**
+   * 验证证据清单（实际执行的测试/命令 + 结果）
+   * C6（ROADMAP-NEXT §3.2）两态语义：
+   * - status 'detected'        = 仅探测到能力（脚本/项目类型存在），未真实执行 → passed 恒为 false；
+   * - status 'executed-pass'   = 真实执行且通过；
+   * - status 'executed-failed' = 真实执行且失败。
+   * 探测 ≠ 通过：不允许"探测到测试脚本"冒充验证证据。
+   */
   verificationEvidence: Array<{
     command: string;
     result: string;
     passed: boolean;
+    status?: 'detected' | 'executed-pass' | 'executed-failed';
   }>;
   /** 风险分级 */
   riskLevel: 'low' | 'medium' | 'high';
@@ -120,6 +128,7 @@ export class Reviewer {
             command: `Read: ${f}`,
             result: `已读取（${stat.size} bytes）`,
             passed: true,
+            status: 'executed-pass', // 读取真实发生了
           });
         }
       } catch {
@@ -127,12 +136,14 @@ export class Reviewer {
           command: `Read: ${f}`,
           result: '读取失败',
           passed: false,
+          status: 'executed-failed',
         });
       }
     }
 
     // 2) 探测 package.json 的 test 脚本（白名单测试）
     // P2 完善：根据 Panshalach 行为契约填充真实验证证据
+    // C6：探测只标 detected（passed=false），真实执行后才 executed-pass。
     const pkgPath = join(workspaceRoot, 'package.json');
     if (existsSync(pkgPath)) {
       try {
@@ -141,8 +152,9 @@ export class Reviewer {
         if (pkg.scripts?.test && isWhitelistedTestCommand(`npm test`)) {
           report.verificationEvidence.push({
             command: 'npm test',
-            result: `探测到测试脚本: ${pkg.scripts.test}（白名单测试命令）`,
-            passed: true,
+            result: `探测到测试脚本: ${pkg.scripts.test}（仅探测，未执行——不作为通过证据）`,
+            passed: false,
+            status: 'detected',
           });
         }
         // 探测其它常见测试脚本
@@ -151,37 +163,41 @@ export class Reviewer {
           if (pkg.scripts?.[cmd]) {
             report.verificationEvidence.push({
               command: `npm run ${cmd}`,
-              result: `探测到 ${cmd} 脚本（白名单内）`,
-              passed: true,
+              result: `探测到 ${cmd} 脚本（白名单内，仅探测未执行）`,
+              passed: false,
+              status: 'detected',
             });
           }
         }
       } catch {}
     }
 
-    // 3) 探测项目类型 → 推荐对应的测试命令
+    // 3) 探测项目类型 → 推荐对应的测试命令（仅探测，一律 detected）
     const hasPyproject = existsSync(join(workspaceRoot, 'pyproject.toml'));
     const hasGoMod = existsSync(join(workspaceRoot, 'go.mod'));
     const hasCargoToml = existsSync(join(workspaceRoot, 'Cargo.toml'));
     if (hasPyproject) {
       report.verificationEvidence.push({
         command: 'pytest',
-        result: '检测到 Python 项目（pyproject.toml），白名单测试命令可用',
-        passed: true,
+        result: '检测到 Python 项目（pyproject.toml），测试命令可用但本次未执行',
+        passed: false,
+        status: 'detected',
       });
     }
     if (hasGoMod) {
       report.verificationEvidence.push({
         command: 'go test',
-        result: '检测到 Go 项目（go.mod），白名单测试命令可用',
-        passed: true,
+        result: '检测到 Go 项目（go.mod），测试命令可用但本次未执行',
+        passed: false,
+        status: 'detected',
       });
     }
     if (hasCargoToml) {
       report.verificationEvidence.push({
         command: 'cargo test',
-        result: '检测到 Rust 项目（Cargo.toml），白名单测试命令可用',
-        passed: true,
+        result: '检测到 Rust 项目（Cargo.toml），测试命令可用但本次未执行',
+        passed: false,
+        status: 'detected',
       });
     }
 
@@ -215,7 +231,11 @@ export class Reviewer {
       calls: files.length,
     };
 
-    report.summary = `Review 完成: ${report.verificationEvidence.length} 项验证证据，风险=${report.riskLevel}，建议档位=${report.suggestedTier}`;
+    // C6：摘要区分"真实执行的证据"与"仅探测的能力"——探测不再冒充验证证据
+    const executedCount = report.verificationEvidence.filter(e => e.status === 'executed-pass' || e.status === 'executed-failed').length;
+    const detectedCount = report.verificationEvidence.filter(e => e.status === 'detected').length;
+
+    report.summary = `Review 完成: ${executedCount} 项已执行验证证据（另有 ${detectedCount} 项仅探测未执行，不计通过），风险=${report.riskLevel}，建议档位=${report.suggestedTier}`;
 
     return report;
   }

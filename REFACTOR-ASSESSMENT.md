@@ -106,6 +106,46 @@
 > **2026-09-05 注记（AGENT-CONTRIBUTION §3.1 禁区申报）**：`PanshalachChaser.solveIssue` 返回**形状**未变，但 `score` 语义经产品主批准收敛为验证锚定两值（成功=100/未成功=0），过程纪律打分器（TrajectoryScorer + 内联启发式）归档至 `archive/2026-09-05-scoring/`。success 闸门（≥80）与记忆 success 卡阈值（≥85）行为不变。
 >
 > **2026-09-05 二次申报**：score 字段已从 `solveIssue` 返回值/`RunResult`/`Trajectory` 中整体移除（0.6.3）——成败唯一由验证信号（`trajectory.success`）判定，记忆正向信号同步切换。
+>
+> **六次申报累计（0.6.4 R0 / 0.6.5 部署 / 0.7.0 终止语义重构 / 0.7.1 UI 手感 / 0.7.2 反思迭代 / 0.7.3 主链确定性）**：
+>
+> **① 0.6.4——R0 双层终止 + 三先决修复（commit 3db3422）**
+> - 改动摘要：`TurnStopReason` 契约 v3.1（completed/verification-failed-continue/max-steps/consecutive-failures/aborted/no-verification）落 `types.ts`；`Trajectory` 增 `stopReason/continueCount/lastError`；新增外置判官 `src/loop/continuationJudge.ts`（未验证回合有界续跑 ≤2）；loop 层 end_turn 自然停；withRetry（429/5xx）/空批合成失败轨迹/count 翻倍修复/streamChat 透传。
+> - 理由：产品主实测弱模型伪工具调用下循环不收敛 + 空响应 TypeError；终止语义需要显式契约承载。
+> - 影响面：`src/cli/repl/types.ts`（TurnStopReason/Trajectory 契约，下游全员依赖）、`VerifyCritiqueLoop`、`PanshalachChaser`（solveIssue 返回形状不变）、记忆正向信号、测试 +14 例。
+> - 验收证据：CHANGELOG「0.6.4 (R0：双层终止语义 + 三先决修复)」段（全套 542 例）。
+>
+> **② 0.6.5——部署落地（commit 8fad5e8）**
+> - 改动摘要：npm link 全局部署（zhulong/panshalach bin，清理旧 `zorge` 孤儿 junction）；`modelSeed.ts` 配置播种（env 缺席时配置 `model` 字段兜底，接入 runOneShot/startRepl/sseInteractive/classicRepl 全入口）；ConfigManager 加载顺序修正（项目级 `.panshalach.json` 覆盖用户级 `~/.panshalach/config.json`）；`--approval <readonly|default|full>` / `PANSHA_APPROVAL` 审批通道（headless 不再锁死 readonly）；原生 function calling 请求侧（`CompleteOptions.tools` → `tools + tool_choice:auto` 两条请求路径透传 + `EngineAdapter.toolSchemas()`）；写工具全档位注册；格式教学按实际可用工具动态 few-shot；身份提示 CC 风格。
+> - 理由：产品主"部署后无法唤起"排查暴露的配置播种/审批/请求侧缺口。
+> - 影响面：`ConfigManager`/`modelSeed`（配置契约与加载语义）、四个 CLI 入口、`openai-compatible.ts`（请求参数）、TierConfig 消费面（写工具注册）、提示词层。
+> - 验收证据：CHANGELOG「0.6.5 (部署落地：全局唤起 + 原生 function calling 请求侧 + 写工具全档位 + CC 风格提示词)」段（含验证边界如实记录）。
+>
+> **③ 0.7.0——终止语义重构：判官摘除 + 意图分类 + AbortSignal 贯穿（commit 106dae6）**
+> - 改动摘要：continuationJudge 与 TestTimeOrchestrator 摘除归档 `archive/2026-09-05-removals/`（0.6.4 双层终止收缩为**单层**，回合上界 = 单次 maxSteps）；`Trajectory` 迁 `src/loop/trajectory.ts`（删 `continueCount`）；`TurnStopReason` 移除 `verification-failed-continue`、新增 `answered`（回合三态：completed/answered/no-verification）；记忆 refine/compact 成功卡信号收紧为 `stopReason==='completed'`（纯问答不进记忆）；新增 `src/cli/taskIntent.ts` 意图分类（chat 单次直答 / search 只读≤3步 / task 全循环 + `PANSHA_INTENT_GATE=0` 逃生门）；AbortSignal 贯穿 solveIssue→loop→complete/streamChat→engineAdapter/executor（Ctrl+C 真中止）；`estimatedUsedTokens` 按模型调用真实累计（修复恒 0）。
+> - 理由：实测复现三症状——简单输入（"1"/"你好"）重复执行十几次 905s 不收敛；Ctrl+C 停不下来（网关持续 POST）；纯问答显示失败且答复被吞。判官是唯一外层续跑源，TestTimeOrchestrator 在恒单 rollout 后 count/sort/预算裁剪全为死路径。
+> - 影响面：`src/PanshalachChaser.ts`（solveIssue 主体重写，返回形状不变、success 语义扩展）、`src/cli/repl/types.ts`（TurnStopReason 枚举二次变更——禁区再次触碰）、`src/memory/RefinedMemoryStore.ts`（refine 信号源）、`src/model/openai-compatible.ts`（signal 合并/TASK_ABORTED）、Repl/RunCommand/sseInteractive/runAgentTask（文案与透传）；测试增删改（Termination/taskIntent/withWriteLock 新增，ContinuationJudge/TwoLayerTermination/orchestration 两测试删除）。
+> - 验收证据：CHANGELOG「0.7.0 (终止语义重构：判官摘除 + 意图分类 + AbortSignal 贯穿)」段——`npx tsc --noEmit` EXIT=0；`node --test --import tsx --test-concurrency=4` 545 例（544 pass + 1 skip + 0 fail）；`node verify-panshalach-cleanup.mjs` PASS（2026-09-05 收尾复验三项一致）；方案书 `docs/panshalach/FIX-0.7-TERMINATION.md`。
+> - 遗留（如实申报）：fetch 发出后 abort 网关侧生成可能仍算完；bash 子进程强杀待 0.7.1；1B 端到端手测待做（`1`/`你好`/Ctrl+C/`hello.txt` 四路径，翟苑皓 F6）——均登记 ROADMAP-NEXT §3.2。
+>
+> **④ 0.7.1——UI 手感两批次 + backlog C/F/D 组（commits e88048a + 72bdf21）**
+> - 改动摘要：批次 A（P0 信任级：Ctrl+C 全链路 / gerund 清行纪律 / 审批三连伤；P1 反馈级：真流式 / 工具实时卡片 / 结束总结块，+25 例 UI 单测）；批次 B（横幅 v2 / Tab 补全 + `?` 快捷面板 / 未知命令模糊建议 / `/help` 26 命令统一 / 模式徽标 + shift+tab / CJK 宽度治理 / 文案中文化 / 情境 tip）；C1-C8 技术债（记忆 200KiB 上限执行 / compact 先写盘 / FeatureTracker 告警 / walkFiles symlink 防御 / appendEvent auditStatus / Reviewer 探测执行两态 / bash abort tree-kill 跨平台归一）；F 组收尾（abort 传播 / answered 断言 / PromptBuilder intent 参数化）+ D1/D3 工程脚本。
+> - 理由：REPL 手感病灶（12 项，对标 CC 2.1.88 解剖）+ backlog 审查技术债；方案 `docs/panshalach/UI-UX-REVAMP-0.7.1.md`。
+> - 影响面：`sseInteractive.ts` 主体、`approval.ts`/`engineAdapter.ts`（事件透传）、`Reviewer.ts`/`bash.ts`/`walk.ts`/`compactService.ts`/`rolloutStore.ts`/`PromptBuilder.ts`；测试 545 → 625 例。
+> - 验收证据：CHANGELOG「0.7.1」段——批次 A 后 570 例（569+1skip+0 fail）、批次 B 后 625 例（624+1skip+0 fail），tsc 干净，cleanup/protected-files PASS。
+>
+> **⑤ 0.7.2——反思迭代：意图前移接线 + 记忆落定主线版（commit ff6dce9）**
+> - 改动摘要：4/4 入口（runAgentTask/Repl/RunCommand/SimulateCommand）在 buildForTask 之前对**原始输入**分类（chat 直答 / search 只读 ≤3 步运行时首次真正可达）；`finalizeTaskMemory` 单一落定点（completed 时 refine→save + injectedCardIds ∩ 轨迹写集 → markVerified，发 `memory.finalized` 事件，失败不影响任务返回）；集成测试 4 例先红后绿；SUBMISSION 定稿 + DEPLOY-CN 新建。
+> - 理由：反思 8 维度审查——主线空心化（意图分类运行时未生效、记忆闭环 4 环只真 1 环）；方案 `docs/panshalach/REFLECTION-0.7.2.md`。
+> - 影响面：四个任务入口（透传 intent）、`tests/integration/intentAndMemory.test.ts`（新增）；R1/R2 合同的窄口径实现（仅 runAgentTask 路径，Repl 直调三口待统一执行器）。
+> - 验收证据：CHANGELOG「0.7.2」段——629 例（628+1skip+0 fail），tsc 干净。
+>
+> **⑥ 0.7.3——主链确定性（工作区，方案 `docs/panshalach/USABLE-PLAN-0.7.3.md`，13 项三梯队）**
+> - 改动摘要：真实成功信号入册（engineAdapter 按 `res.ok`+工具类别确定性追加 `VERIFICATION: PASS/NEUTRAL` 尾标 + classifySignal NEUTRAL→PARTIAL / 裸 `EXIT_CODE:0` 尾部锚定——**completed 真机可达**、记忆闭环激活）；三入口审批/中断透传（`--approval full` one-shot 真实生效、classic 不再假中止）；中断现场落盘（aborted 回合写 session+rollout、保留已流出正文）；answered 空转防呆；窗口预算挂真值（未知回落 32768、`/model list` null 持久化、loop 超 70% 窗口裁中段）；finish_reason=length 防御；首跑报错质量；结果超阈值才剪（4000 阈值，头 2500+尾 800）；withRetry 5 次 + 传输类错误；写集提取修正则（引号内空格/Windows 盘符/tee）；'a' 决策持久化到项目配置；文档清漂 + package.json 0.7.0→0.7.3。
+> - 理由：红队可复现探针实测出两个被 629 例绿灯密封的 P0（真实成功被误判失败、completed 真机不可达致记忆闭环死码）+ 文档主验证命令审批断链 + classic 假中止。
+> - 契约影响（如实申报）：`Trajectory`/`Turn`/`RunResult`/`ModelClientOutput`/`CommandContext` 增**可选**字段（`partialText`/`truncated`/`approvalBridge`/`signal`/`windowTokens`）——全部加性，旧消费者不受影响；`solveIssue` 返回形状不变；`TurnStopReason` 枚举未变。
+> - 验收证据：CHANGELOG「0.7.3」段——`npx tsc --noEmit` EXIT=0；`node --test --import tsx --test-concurrency=4 "tests/**/*.test.ts"` **663 例：662 pass + 1 skip + 0 fail**（2026-09-06，Windows/Node 22）。
+> - 遗留（如实申报）：真机四用例待端点（F6，禁止预填 PASS）；Repl 直调三口 finalize 待统一执行器；MCP 工具结果无验证尾标；L 级六项（消息数组协议 / sseInteractive 拆分 / 会话树指针化 / subagent / hooks / 后台 bash）明确不进本轮——均登记 ROADMAP-NEXT §3.2。
 
 > 本期已执行 A/B/C/D（见 REFACTOR 计划）；下述 P1–P6 为后续里程碑。
 

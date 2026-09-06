@@ -3,6 +3,7 @@ import type { Command, CommandContext, CommandResult, ModelProvider } from '../t
 import { PromptBuilder } from '../PromptBuilder.js';
 import { TierRegistry } from '../../../tiers/TierConfig.js';
 import { expandAtPaths } from '../types.js';
+import { classifyTaskIntent } from '../../taskIntent.js';
 
 const command: Command = {
   name: 'simulate',
@@ -40,7 +41,9 @@ const command: Command = {
     // Use the same rich prompt builder as run (tier contract + memory cards)
     const tierConfig = TierRegistry.get(ctx.session.tier);
     const pb = new PromptBuilder(ctx.session, tierConfig);
-    const enriched = await pb.buildForTask(finalTask);
+    // 意图分类前移——对原始任务文本分类后再富化（chat 不灌工程块）
+    const intent = classifyTaskIntent(finalTask);
+    const enriched = await pb.buildForTask(finalTask, intent);
 
     ctx.renderer.info(`[SIMULATE] ${finalTask}`);
     if (ctx.session.turns.length > 0) {
@@ -53,6 +56,12 @@ const command: Command = {
         yes: true,
         dryRun: true,
         memoryPreInjected: true,
+        intent, // 入口前移的意图显式传入
+        // simulate 仅透传 approvalMode——dryRun 在
+        // engineAdapter 构造之前即返回（PanshalachChaser.solveIssue 的 dry-run
+        // 预估分支），审批桥/中断信号在该路径上没有消费方，声明不做（dryRun
+        // 语义保持不变）。
+        approvalMode: ctx.session.approvalMode,
       });
       ctx.renderer.success(`模拟完成（dry-run 不执行任务）`);
       return { data: result };

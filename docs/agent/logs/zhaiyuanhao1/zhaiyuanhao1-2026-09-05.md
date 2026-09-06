@@ -135,3 +135,22 @@ last_updated: $(date +%H:%M)
 
 ### 卡点 / 需要别人决定（接口争议）
 - 无
+
+## 深夜批次 6（0.7 终止语义重构：判官摘除 + 意图分类 + AbortSignal 贯穿）
+
+### 实际干了什么（事实）
+- 产品主实测复现：输入 "1"/"你好，回答我你是谁" 被重复执行十几次（905s 不收敛）；Ctrl+C 停不下来（网关持续 POST）；纯问答显示"未通过验证"且答复被吞
+- 根因核实：判官是唯一外层续跑源（maxRollouts 恒 1），伪工具调用下最坏 20 步×3 轮；signal 到 runAgentTask 边界断裂；格式教学对问答也要求"每步必须输出工具块"
+- 判官摘除归档（continuationJudge.archived.ts）+ TestTimeOrchestrator 移除（Trajectory 迁 src/loop/trajectory.ts，空批保护并入 chaser）；TurnStopReason 移除 verification-failed-continue，新增 answered
+- 记忆信号收紧：refine/compact success 卡信号 = stopReason==='completed'（answered 不喂卡）
+- 新增 src/cli/taskIntent.ts（execution/search/chat/meta + PANSHA_INTENT_GATE 逃生门）；chaser 按意图分支（chat 单次 complete；search 受限只读循环 ≤3 步强制 readonly）
+- AbortSignal 贯穿：solveIssue→loop→complete(opts.signal)→openai-compatible（fetch 外部 signal 合并 + streamChat 读循环 abort 抛 TASK_ABORTED）→engineAdapter/executor；UI abort 后等待底层 settle
+- 预算累计修复：estimatedUsedTokens 按模型调用累加（此前恒 0）
+- 文档：docs/panshalach/FIX-0.7-TERMINATION.md（方案）；CHANGELOG 0.7.0；ROADMAP-NEXT §0/R0 行同步；archive README 追加归档说明
+
+### 卡点 / 需要别人决定（接口争议）
+- 无。王浩宇 R1 接线注意：refine 正向信号已改 stopReason==='completed'（非 trajectory.success）
+
+### TODO（明天 / 下一轮）
+- [ ] 用户侧实测：REPL 输入 "1"/"你好" 单次出正文；Ctrl+C 网关停 POST；hello.txt 先搜索搜不到询问
+- [ ] bash 子进程强杀（abort 时 taskkill /T）待 0.7.1

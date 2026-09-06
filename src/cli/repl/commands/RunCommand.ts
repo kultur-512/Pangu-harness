@@ -3,6 +3,8 @@ import type { Command, CommandContext, CommandResult, ModelProvider } from '../t
 import { PromptBuilder } from '../PromptBuilder.js';
 import { TierRegistry } from '../../../tiers/TierConfig.js';
 import { expandAtPaths } from '../types.js';
+import { classifyTaskIntent } from '../../taskIntent.js';
+import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../../loop/trajectory.js';
 
 const command: Command = {
   name: 'run',
@@ -42,7 +44,9 @@ const command: Command = {
     // Build rich prompt (tier contract + memory cards + recent context)
     const tierConfig = TierRegistry.get(ctx.session.tier);
     const pb = new PromptBuilder(ctx.session, tierConfig);
-    const enriched = await pb.buildForTask(finalTask);
+    // 意图分类前移——对原始任务文本分类后再富化（chat 不灌工程块）
+    const intent = classifyTaskIntent(finalTask);
+    const enriched = await pb.buildForTask(finalTask, intent);
 
     ctx.renderer.info(`开始执行: ${finalTask}`);
     if (ctx.session.turns.length > 0) {
@@ -70,6 +74,14 @@ const command: Command = {
         tier: ctx.session.tier as any,
         yes: true,
         memoryPreInjected: true,
+        intent, // 入口前移的意图显式传入
+        // one-shot / classic registry 路径与 SSE 主路径共享同一审批/中断语义。
+        // approvalBridge 缺席时（headless 无桥）引擎按拒绝处理（安全默认）；
+        // approvalMode 照传（--approval full 时写操作无需审批即可放行）。
+        approvalMode: ctx.session.approvalMode,
+        sessionAllowlist: ctx.session.sessionApprovalAllowlist,
+        approvalBridge: ctx.approvalBridge,
+        signal: ctx.signal,
         onStep: (event: any) => {
           if (event.type === 'step') {
             ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
@@ -89,8 +101,25 @@ const command: Command = {
       });
 
       const duration = Date.now() - start;
-      ctx.renderer.success(`完成 (${duration}ms) ${result.success ? "· 已通过验证" : "· 未通过验证"}`);
+      // 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
+      const stopReason = (result as any)?.bestTrajectory?.stopReason;
+      const summary = stopReason === 'completed' ? '已通过验证'
+        : stopReason === 'answered' ? '已回复'
+        : result.success ? '已通过验证' : '未通过验证';
+      ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
 
+      // answered 时把模型正文呈现给用户
+      if (stopReason === 'answered') {
+        const traj = (result as any)?.bestTrajectory;
+        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        if (answerText) {
+          const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
+          ctx.renderer.writeLine(preview);
+        }
+      }
+
+      const traj = (result as any)?.bestTrajectory;
+      const trajSteps = traj?.steps ?? [];
       ctx.session.addTurn({
         id: Date.now().toString(36),
         timestamp: Date.now(),
@@ -100,8 +129,13 @@ const command: Command = {
         durationMs: duration,
         result: {
           success: result.success,
-          summary: result.success ? "已通过验证" : "未通过验证",
+          summary,
           budgetReport: result.budgetReport,
+          stopReason,
+          goal: finalTask,
+          changedFiles: extractChangedFiles(trajSteps),
+          verifyCmd: extractVerifyCommands(trajSteps),
+          outcome: mapOutcome(stopReason),
         },
       });
 

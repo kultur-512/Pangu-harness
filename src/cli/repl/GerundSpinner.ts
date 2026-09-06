@@ -1,14 +1,12 @@
 // src/cli/repl/GerundSpinner.ts
-// 趣味动名词 spinner 标签（双语）。
+// 趣味动名词 spinner 标签（P3-2 批次 B：纯中文词表）。
 // nextGerund() never repeats the previous word. Pure logic — the caller owns
 // the 4s interval and elapsed-time formatting (timers are gate-relevant).
 
 const GERUNDS: readonly string[] = [
   '推演中', '反刍中', '煨煮中', '潜行中', '勾勒中',
   '编排中', '研磨中', '淬炼中', '穿行中', '搭建中',
-  'Pondering', 'Ruminating', 'Simmering', 'Vibing', 'Reticulating',
-  'Percolating', 'Scheming', 'Brewing', 'Wandering', 'Frolicking',
-  'Conjuring', 'Noodling', 'Moseying', 'Puttering',
+  '凝神中', '翻检中', '运筹中', '梳理中', '抽丝剥茧中', '穿针引线中',
 ];
 
 let lastIndex = -1;

@@ -10,6 +10,8 @@ import { KeyHandler } from './KeyHandler.js';
 import { MultilineBuffer } from './MultilineBuffer.js';
 import { PromptBuilder } from './PromptBuilder.js';
 import { TierRegistry } from '../../tiers/TierConfig.js';
+import { classifyTaskIntent } from '../taskIntent.js';
+import { createCliApprovalBridge } from '../../tools/approval.js';
 
 // Import all commands
 import HelpCommand from './commands/HelpCommand.js';
@@ -39,6 +41,7 @@ import AgentsCommand from './commands/AgentsCommand.js';
 import FeatureCommand from './commands/FeatureCommand.js';
 import TreeCommand from './commands/TreeCommand.js';
 import { AgentTree } from './AgentTree.js';
+import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../loop/trajectory.js';
 
 export class Repl {
   private registry = new CommandRegistry();
@@ -54,7 +57,7 @@ export class Repl {
   private currentAbort: (() => void) | null = null;
   private taskAborted = false;
   private taskAbortController: AbortController | null = null;
-  /** P5-5.3: sub-agent rollout tree (public for /agents). */
+  /** Sub-agent rollout tree (public for /agents). */
   public agentTree!: AgentTree;
 
   // Ink UI (Path B) - active bridge when rich TTY mode is running
@@ -90,17 +93,17 @@ export class Repl {
     this.registry.register(SessionCommand);
     this.registry.register(InitCommand);
     this.registry.register(ServeCommand);
-    this.registry.register(ApprovalsCommand); // M1-2.4
-    this.registry.register(UndoCommand); // M2.1
-    this.registry.register(CompactCommand); // M2.3
-    this.registry.register(UsageCommand); // M2.4
-    this.registry.register(ResumeCommand); // P3-3.5
-    this.registry.register(RewindCommand); // P3-3.6
-    this.registry.register(AgentsCommand); // P5-5.3
-    this.registry.register(FeatureCommand); // P1-T14
-    this.registry.register(TreeCommand); // P2-T18
+    this.registry.register(ApprovalsCommand);
+    this.registry.register(UndoCommand);
+    this.registry.register(CompactCommand);
+    this.registry.register(UsageCommand);
+    this.registry.register(ResumeCommand);
+    this.registry.register(RewindCommand);
+    this.registry.register(AgentsCommand);
+    this.registry.register(FeatureCommand);
+    this.registry.register(TreeCommand);
 
-    // P5-5.3: per-session agent tree (fed by the interactive layer's onEvent)
+    // per-session agent tree (fed by the interactive layer's onEvent)
     this.agentTree = new AgentTree();
 
     // Completer + Input with Tab support
@@ -169,6 +172,10 @@ export class Repl {
       input: this.input,
       repl: this,
       provider: this.session.provider,
+      // /run 等 registry 命令在 classic 路径下也能走
+      // 真审批桥（懒创建——仅在引擎发出审批请求时才打开 readline）。
+      // signal 无法在此注入：AbortController 属于 executeTask 的单任务生命周期。
+      approvalBridge: createCliApprovalBridge(),
     };
     if (this.inkBridge) {
       base.inkBridge = this.inkBridge;
@@ -298,7 +305,7 @@ export class Repl {
       this.renderer.warn('检测到看起来像 shell / 命令行的输入。');
       this.renderer.writeLine('在 ▸ 提示符下直接输入会被当成“任务”让 Agent 执行。');
       this.renderer.writeLine('如果你是想测试构建，请在**另一个** PowerShell 窗口执行：');
-      // B9: was a hard-coded developer path — derive from the actual cwd.
+      // was a hard-coded developer path — derive from the actual cwd.
       this.renderer.writeLine('    cd ' + process.cwd());
       this.renderer.writeLine('    node dist/cli.js');
       this.renderer.writeLine('');
@@ -330,7 +337,7 @@ export class Repl {
       return;
     }
 
-    // G2 (review fix): Consume model context length from provider (persisted or cache). Default 256K.
+    // Consume model context length from provider (persisted or cache). Default 256K.
     const modelName = this.session.model || 'default';
     const effectiveModel = (provider && typeof (provider as any).getEffectiveModel === 'function')
       ? (provider as any).getEffectiveModel(modelName)
@@ -344,9 +351,12 @@ export class Repl {
 
     // Prepare richer prompt/context from REPL side (session history + tier rules + memory cards)
     const pb = this.getPromptBuilder();
-    let enriched = await pb.buildForTask(issue);
+    // 意图分类前移——对【原始输入】分类（富化文本必含执行词，
+    // 在其上分类会使 chat/search 恒不可达）。gate 语义由 classifyTaskIntent 内部保持。
+    const intent = classifyTaskIntent(issue);
+    let enriched = await pb.buildForTask(issue, intent);
 
-    // Inject context length hint so the model is aware of its own window (G2)
+    // Inject context length hint so the model is aware of its own window
     if (contextLen > 0) {
       const ctxK = Math.round(contextLen / 1000);
       enriched += `\n\n【当前模型上下文】模型 "${effectiveModel}" 的上下文上限约为 ${ctxK}K tokens。请在此范围内合理规划输出与思考深度。`;
@@ -380,11 +390,17 @@ export class Repl {
       abortReject = reject;
     });
 
+    // classic 路径自己的 AbortController——Ctrl+C 时
+    // race 仍 reject（提示符立即返回），同时 signal 贯穿 solveIssue → loop →
+    // 模型 fetch / 工具执行，让引擎真正停下（不再假中止）。
+    const taskAbortController = new AbortController();
+
     this.currentAbort = () => {
       this.taskAborted = true;
       this.renderer.warn('任务已中断 (Ctrl+C)');
       // Resume input as soon as possible so the user gets the prompt back.
       try { this.input.resume(); } catch {}
+      try { taskAbortController.abort(); } catch {}
       if (abortReject) {
         const err: any = new Error('TASK_ABORTED');
         err.code = 'ABORTED';
@@ -413,6 +429,12 @@ export class Repl {
       yes: true,
       dryRun: simulate,
       memoryPreInjected: true,
+      intent, // 入口前移的意图显式传入
+      // classic 路径与 SSE 主路径共享同一审批/中断语义。
+      approvalMode: this.session.approvalMode,
+      sessionAllowlist: this.session.sessionApprovalAllowlist,
+      approvalBridge: createCliApprovalBridge(),
+      signal: taskAbortController.signal,
       onStep: (event: any) => {
         if (this.taskAborted) {
           return;
@@ -435,7 +457,8 @@ export class Repl {
           this.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
         }
         if (event.type === 'critique') {
-          this.renderer.writeLine(this.renderer.color('Critique: ' + event.critique, 'yellow'));
+          // 删除死前缀 `Critique: `（critique 机制已休眠）
+          this.renderer.writeLine(this.renderer.color(event.critique, 'yellow'));
         }
         if (event.type === 'softLimit' || event.type === 'budget') {
           const ratio = typeof event.usedRatio === 'number' ? event.usedRatio : 0;
@@ -474,14 +497,35 @@ export class Repl {
       const duration = Date.now() - start;
 
       if (this.taskAborted) {
+        // signal 已贯穿底层，等待真正 settle（通常 abort 后立即返回）
+        let settled: any = null;
+        try { settled = await taskWork; } catch {}
+        this.recordAbortedTurn(issue, duration, settled?.bestTrajectory?.partialText);
         this.renderer.warn('任务已中断');
         this.input.resume();
         this.currentAbort = null;
         return;
       }
 
-      this.renderer.success(`完成 (${duration}ms) ${result.success ? "· 已通过验证" : "· 未通过验证"}`);
+      // 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
+      const stopReason = (result as any)?.bestTrajectory?.stopReason;
+      const summary = stopReason === 'completed' ? '已通过验证'
+        : stopReason === 'answered' ? '已回复'
+        : result.success ? '已通过验证' : '未通过验证';
+      this.renderer.success(`完成 (${duration}ms) · ${summary}`);
 
+      // answered 时把模型正文呈现给用户
+      if (stopReason === 'answered') {
+        const traj = (result as any)?.bestTrajectory;
+        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        if (answerText) {
+          const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
+          this.renderer.writeLine(preview);
+        }
+      }
+
+      const bestTraj = (result as any)?.bestTrajectory;
+      const trajSteps = bestTraj?.steps ?? [];
       this.session.addTurn({
         id: Date.now().toString(36),
         timestamp: Date.now(),
@@ -491,13 +535,23 @@ export class Repl {
         durationMs: duration,
         result: {
           success: result.success,
-          summary: result.success ? "已通过验证" : "未通过验证",
+          summary,
           budgetReport: result.budgetReport,
+          stopReason,
+          goal: issue,
+          changedFiles: extractChangedFiles(trajSteps),
+          verifyCmd: extractVerifyCommands(trajSteps),
+          outcome: mapOutcome(stopReason),
         },
       });
       this.saveSession();
     } catch (err: any) {
       if (this.taskAborted || (err && (err.code === 'ABORTED' || err.message === 'TASK_ABORTED'))) {
+        // abort 竞速先 reject 的路径同样落 aborted turn（等底层
+        // signal 触发后 settle，通常立即返回）。
+        let settled: any = null;
+        try { settled = await taskWork; } catch {}
+        this.recordAbortedTurn(issue, Date.now() - start, settled?.bestTrajectory?.partialText);
         this.renderer.warn('任务已中断');
       } else {
         this.renderer.error('失败: ' + (err?.message || err));
@@ -509,6 +563,27 @@ export class Repl {
         try { this.inkBridge.setRunning(false); } catch {}
       }
     }
+  }
+
+  /**
+   * 中断现场落盘：classic 路径的 aborted 回合同样写 turn——
+   * 与 sseInteractive 的 aborted 分支同语义：stopReason='aborted' + partialText
+   * （已流出正文，可能为空）。session 落账后持久化。
+   */
+  private recordAbortedTurn(issue: string, durationMs: number, partialText?: string): void {
+    try {
+      this.session.addTurn({
+        id: Date.now().toString(36),
+        timestamp: Date.now(),
+        userInput: issue,
+        userInputType: 'task',
+        tier: this.session.tier,
+        durationMs,
+        ...(partialText ? { partialText } : {}),
+        result: { success: false, summary: '已中断', stopReason: 'aborted', goal: issue, changedFiles: [], verifyCmd: [], outcome: 'aborted' },
+      });
+      this.saveSession();
+    } catch {}
   }
 
   /**

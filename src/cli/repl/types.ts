@@ -23,7 +23,7 @@ export type StepEvent =
   | { version: 1; type: 'critique'; rolloutId: string; stepNumber: number; critique: string }
   | { version: 1; type: 'softLimit'; usedRatio: number }
   | { version: 1; type: 'degradation'; reason: string }
-  // M1-2.4 (append-only per instruction): approval request surfaces through the
+  // (append-only): approval request surfaces through the
   // same onStep channel so rich/line UIs can render a confirm card.
   | {
       version: 2;
@@ -35,6 +35,9 @@ export type StepEvent =
     };
 
 // ==================== Session ====================
+/** R3: 回合结局显式枚举（多级摘要 L1 envelope 聚合用） */
+export type TurnOutcome = 'completed' | 'answered' | 'max-steps' | 'consecutive-failures' | 'aborted' | 'no-verification';
+
 export interface Turn {
   id: string;
   timestamp: number;
@@ -45,9 +48,24 @@ export interface Turn {
     summary: string;
     trajectoryId?: string;
     budgetReport?: BudgetReport;
+    /** 回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification）。 */
+    stopReason?: string;
+    /** R3: 任务目标（userInput 规范化，L1 envelope 目标锚点） */
+    goal?: string;
+    /** R3: 变更文件集（从 trajectory 步骤的 write_file/edit_file/bash 重定向抽取，L2 变更索引） */
+    changedFiles?: string[];
+    /** R3: 验证命令（bash 验证脚本，用于评估"真实验证 vs 形式验证"） */
+    verifyCmd?: string[];
+    /** R3: 回合结局显式枚举（stopReason 的规范化版本，便于聚合） */
+    outcome?: TurnOutcome;
   };
   tier: Tier;
   durationMs?: number;
+  /**
+   * 中断现场落盘：aborted 回合保留的已流出模型正文（部分结果）。
+   * 仅 stopReason='aborted' 的 turn 携带；completed/answered 回合恒不写该字段。
+   */
+  partialText?: string;
 }
 
 export interface SessionFile {
@@ -59,7 +77,7 @@ export interface SessionFile {
   tier: Tier;
   workspace: string;
   model: string;
-  // M1-2.4 (append-only per instruction): approval state persists with the session
+  // (append-only): approval state persists with the session
   approvalMode?: 'readonly' | 'default' | 'full';
   sessionApprovalAllowlist?: string[];
   turns: Turn[];
@@ -87,7 +105,14 @@ export interface CommandContext {
   renderer: OutputRenderer;
   input: InputReader;
   repl: any;              // Repl instance
-  provider?: ModelProvider; // P3: ModelProvider for resolving clients (never pass null to PanshalachChaser)
+  provider?: ModelProvider; // ModelProvider for resolving clients (never pass null to PanshalachChaser)
+  /**
+   * 审批桥与中止信号——由宿主（Repl.buildContext /
+   * sseInteractive 注册点）注入；RunCommand 等任务命令原样透传给 solveIssue，
+   * 使 one-shot / classic 路径与 SSE 主路径共享同一审批与中断语义。
+   */
+  approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
+  signal?: AbortSignal;
 }
 
 export interface CommandResult {
@@ -228,21 +253,22 @@ export interface TaskState {
   updatedAt: number;
 }
 
-// ==================== 接口契约 v3.1：双层终止语义（2026-09-05） ====================
+// ==================== 接口契约 v4：单层终止语义（2026-09-05 0.7） ====================
 /**
- * 回合停止原因（双层终止）：
- * - 模型层：end_turn（无工具调用）即自然停——PASS 字符串降级为 evidence，不再是终止条件；
- * - 判官层：turn 想停时若 trajectory.success=false 且轨迹出现过工具调用，
- *   注入"验证未通过：原因，继续"续跑同一任务（有界 2 次，Chaser 层实现）。
+ * 回合停止原因（单层终止；判官机制已于 0.7 摘除，见 archive/2026-09-05-removals/）：
+ * - completed：轨迹含真实验证 PASS（验证通过）；
+ * - answered：end_turn（无工具调用）且存在面向用户的正文答复——CC 式自然停即成功，
+ *   计入 success 与 UI"已回复"，但【不】作为记忆 success 卡信号（见 refine 收紧）；
+ * - max-steps / consecutive-failures / no-verification / aborted：失败系。
  * R6 评测 schema 的 verdict 定义依赖本枚举，改动需同步 scripts/eval/results schema。
  */
 export type TurnStopReason =
-  | 'completed'                    // end_turn 且轨迹含验证 PASS
-  | 'verification-failed-continue' // 判官拦截续跑（本轮回合结束但任务未完）
-  | 'max-steps'                    // 步数耗尽
-  | 'consecutive-failures'         // 连续工具失败保护
-  | 'aborted'                      // 用户/信号中止
-  | 'no-verification';             // end_turn 但从未产生 PASS（信息型/未声明验证）
+  | 'completed'              // 轨迹含真实验证 PASS
+  | 'answered'               // end_turn 且有正文答复（信息型/纯问答）
+  | 'max-steps'              // 步数耗尽
+  | 'consecutive-failures'   // 连续工具失败保护
+  | 'aborted'                // 用户/信号中止
+  | 'no-verification';       // end_turn 但无正文无工具（空白/空转）
 
 // ==================== Config ====================
 export interface ProviderConfig {
@@ -310,8 +336,18 @@ export interface ModelClient {
 export interface CompleteOptions {
   maxTokens?: number;
   temperature?: number;
-  // 未来可按需扩展（stream、tools 等）
+  /** 原生 function calling（P1.1 请求侧）：OpenAI function schema 列表。 */
+  tools?: ToolSchema[];
+  // 未来可按需扩展（stream 等）
   [key: string]: unknown;
+}
+
+/** OpenAI function calling 工具 schema（请求侧透传用）。 */
+export interface ToolSchema {
+  name: string;
+  description?: string;
+  /** JSON Schema 形式的参数描述。 */
+  parameters?: Record<string, unknown>;
 }
 
 export interface ModelClientOutput {
@@ -319,6 +355,11 @@ export interface ModelClientOutput {
   raw?: string;
   toolCalls?: unknown[];
   detectedFormat?: string;
+  /**
+   * finish_reason==='length'（max_tokens 截断）时置 true。
+   * VerifyCritiqueLoop 收到截断响应禁判 answered，注入提示继续下一步。
+   */
+  truncated?: boolean;
 }
 
 /** 模型提供者：负责把模型名解析为可调用客户端。create* 不可用时必须返回 null（不 throw）。 */

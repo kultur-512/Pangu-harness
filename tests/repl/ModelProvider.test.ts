@@ -237,6 +237,11 @@ describe('PANSHA_MODEL env seed (fix-a6-routing)', () => {
 describe('B12 upward .panshalach.json discovery', () => {
   it('finds a parent-directory .panshalach.json from a deeper cwd', () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-b12-'));
+    // Isolate the user-level config (~/.panshalach/config.json) so a real
+    // user config on this machine cannot satisfy discovery before the
+    // parent-directory walk is exercised.
+    const prevUserDir = process.env.PANSHA_USER_CONFIG_DIR;
+    process.env.PANSHA_USER_CONFIG_DIR = path.join(base, 'no-user-cfg');
     const parent = path.join(base, 'proj');
     const child = path.join(parent, 'src', 'deep');
     fs.mkdirSync(child, { recursive: true });
@@ -259,6 +264,8 @@ describe('B12 upward .panshalach.json discovery', () => {
       assert.ok(c && typeof c.complete === 'function', 'scnet client must resolve via parent config');
     } finally {
       process.chdir(prevCwd);
+      if (prevUserDir === undefined) delete process.env.PANSHA_USER_CONFIG_DIR;
+      else process.env.PANSHA_USER_CONFIG_DIR = prevUserDir;
       try { fs.rmSync(base, { recursive: true, force: true }); } catch {}
     }
   });

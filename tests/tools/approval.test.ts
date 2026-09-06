@@ -161,6 +161,8 @@ describe('engineAdapter approval gate', () => {
     const p = { file_path: 'rbw.txt', content: 'x' };
     // NOTE: first call needs prior read for RBW; use a NEW file to isolate approval logic
     await adapter.execute(call('write_file', { file_path: 'a1.txt', content: '1' }));
+    // 评审 Bug#1 回归断言：'a' = 加入 allowlist 且**本次放行**（首次调用必须成功写盘）
+    assert.ok(fs.existsSync(path.join(root, 'a1.txt')), "first 'a' decision must approve the current call");
     await adapter.execute(call('write_file', { file_path: 'a2.txt', content: '2' }));
     assert.equal(bridgeCalls, 1, 'second write must skip the bridge via allowlist');
     assert.ok(allowlist.has('write_file'));
