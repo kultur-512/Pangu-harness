@@ -77,3 +77,41 @@ describe('glob tool', () => {
     assert.equal(r.error, 'PATH_ESCAPED');
   });
 });
+
+// ==================== C4: walkFiles 不跟随符号链接（受信工作区假设 + symlink 防御） ====================
+describe('C4: walkFiles symlink defense', () => {
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-glob-c4-'));
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'real.txt'), 'real');
+    fs.writeFileSync(path.join(root, 'src', 'inside.txt'), 'inside');
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('skips symlinked directories (no traversal into them, no cycles)', () => {
+    // junction 在 Windows 无需管理员权限；POSIX 上等价于目录 symlink
+    fs.symlinkSync(path.join(root, 'src'), path.join(root, 'linkdir'), process.platform === 'win32' ? 'junction' : 'dir');
+    // 指向自身根的循环链接——不防御则无限递归（受 maxDepth 兜底），防御则完全不进入
+    fs.symlinkSync(root, path.join(root, 'selfloop'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    const r = walkFiles(root, { maxDepth: 4 });
+    const rels = r.files.map((f) => f.rel);
+    assert.ok(rels.includes('real.txt'), 'real file must be listed');
+    assert.ok(rels.includes('src/inside.txt'), 'real nested file must be listed');
+    assert.ok(!rels.some((p) => p.startsWith('linkdir')), 'symlinked dir must NOT be traversed');
+    assert.ok(!rels.some((p) => p.startsWith('selfloop')), 'self-referential link must NOT be followed');
+  });
+
+  it('skips symlinked files when the platform allows creating them', () => {
+    try {
+      fs.symlinkSync(path.join(root, 'real.txt'), path.join(root, 'link.txt'), 'file');
+    } catch {
+      // Windows 无开发者模式/管理员权限时创建文件符号链接会失败——跳过该断言
+      return;
+    }
+    const r = walkFiles(root);
+    const rels = r.files.map((f) => f.rel);
+    assert.ok(rels.includes('real.txt'));
+    assert.ok(!rels.includes('link.txt'), 'symlinked file must be skipped');
+  });
+});

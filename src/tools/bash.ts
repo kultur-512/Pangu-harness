@@ -3,6 +3,9 @@
 // - spawn with shell:true, cwd=workspaceRoot, detached (for tree-kill)
 // - tier-driven timeout: quick=30s / standard=60s / high|ex|pangu=120s (cap 600000)
 // - timeout kills the whole process tree (taskkill /T /F on Windows, -SIGKILL on POSIX)
+// - C7: ctx.signal abort → same tree-kill + ABORTED result (executor 层联动)
+// - C8: tree-kill 跨平台一致——Windows taskkill /T /F；POSIX kill(-pid, SIGKILL)
+//   （detached 使 shell 成为进程组长，负 pid 即整组）
 // - stdout+stderr merged, 20k internal cap
 // - env passthrough + PANSHA_EXEC=1
 // - DANGER MARKING ONLY (enforcement belongs to the approval layer, 2.4):
@@ -86,10 +89,28 @@ export function createBashTool(opts: BashToolOptions = {}): ToolImpl {
       child.stdout?.on('data', append);
       child.stderr?.on('data', append);
 
+      // C8: tree-kill 单一实现，超时与 abort 共用（跨平台一致）：
+      // - Windows: taskkill /T /F 连同 shell 包装器与孙进程整树强杀（taskkill
+      //   不需要 detached，detached 反而会让孙进程脱离 stdout 管道）
+      // - POSIX: detached 使直接子进程成为进程组长 → kill(-pid) 覆盖整组；
+      //   失败兜底单杀直接子进程
+      const killTree = () => {
+        try {
+          if (process.platform === 'win32') {
+            if (child.pid) spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+          } else if (child.pid) {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+          }
+        } catch {}
+      };
+
       const finish = (exitCode: number | null, error?: string) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (ctx.signal && onAbort) {
+          try { ctx.signal.removeEventListener('abort', onAbort); } catch {}
+        }
         const ok = error ? false : exitCode === 0;
         const tail = error
           ? ``
@@ -109,17 +130,25 @@ export function createBashTool(opts: BashToolOptions = {}): ToolImpl {
         if (settled) return;
         // Kill the whole tree — shell:true spawns a shell wrapper, so killing
         // only the direct child would leave grandchildren alive.
-        try {
-          if (process.platform === 'win32') {
-            if (child.pid) spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-          } else if (child.pid) {
-            try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
-          }
-        } catch {}
+        killTree();
         finish(null, 'TIMEOUT');
         // Give the OS a beat, then final-claim the process so no zombie keeps the loop alive
         setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 100);
       }, timeoutMs);
+
+      // C7: abort signal 联动 —— executor 层传入的 ctx.signal 触发时整树击杀并
+      // 以 ABORTED 收尾（不等待超时）。已 abort 的 signal 立即生效。
+      let onAbort: (() => void) | null = null;
+      if (ctx.signal) {
+        onAbort = () => {
+          if (settled) return;
+          killTree();
+          finish(null, 'ABORTED');
+          setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 100);
+        };
+        if (ctx.signal.aborted) onAbort();
+        else ctx.signal.addEventListener('abort', onAbort, { once: true });
+      }
 
       child.on('error', (e: any) => finish(null, 'SPAWN_ERROR: ' + (e?.message || e)));
 

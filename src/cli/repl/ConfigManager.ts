@@ -7,8 +7,12 @@ import { homedir } from 'os';
 import type { PanshalachConfig, ProviderConfig } from './types.js';
 import type { Tier } from '../../tiers/TierConfig.js';
 
-const USER_CONFIG_DIR = join(homedir(), '.panshalach');
-const USER_CONFIG_PATH = join(USER_CONFIG_DIR, 'config.json');
+// 用户级配置目录可用 PANSHA_USER_CONFIG_DIR 重定向（测试隔离 / 便携部署）；
+// 默认 ~/.panshalach。惰性求值：env 可在进程启动后再设（测试运行时重定向）。
+function userConfigPaths(): { dir: string; path: string } {
+  const dir = process.env.PANSHA_USER_CONFIG_DIR || join(homedir(), '.panshalach');
+  return { dir, path: join(dir, 'config.json') };
+}
 
 /**
  * 深度合并
@@ -51,16 +55,17 @@ export class ConfigManager {
   private load() {
     this.config = {};
 
-    // 加载顺序：项目级 .panshalach.json → 用户级 ~/.panshalach/config.json → CLI 参数（CLI 由调用方在 getAll 后叠加）
-    const projectPath = join(this.workspaceRoot, '.panshalach.json');
-    this.mergeProjectConfig(projectPath);
-
+    // 加载顺序：用户级 ~/.panshalach/config.json（基底）→ 项目级 .panshalach.json（更具体，覆盖用户级）→ CLI 参数（CLI 由调用方在 getAll 后叠加）
+    const { path: USER_CONFIG_PATH } = userConfigPaths();
     if (existsSync(USER_CONFIG_PATH)) {
       try {
         const user = JSON.parse(readFileSync(USER_CONFIG_PATH, 'utf-8'));
         this.config = deepMerge(this.config, user);
       } catch {}
     }
+
+    const projectPath = join(this.workspaceRoot, '.panshalach.json');
+    this.mergeProjectConfig(projectPath);
   }
 
   /**
@@ -94,6 +99,7 @@ export class ConfigManager {
 
   save() {
     // Save to user config for simplicity
+    const { dir: USER_CONFIG_DIR, path: USER_CONFIG_PATH } = userConfigPaths();
     if (!existsSync(USER_CONFIG_DIR)) {
       mkdirSync(USER_CONFIG_DIR, { recursive: true });
     }
@@ -102,5 +108,37 @@ export class ConfigManager {
 
   getAll(): PanshalachConfig {
     return { ...this.config };
+  }
+}
+
+/**
+ * 审批 'a'（总是允许）决策持久化——把工具追加进项目配置
+ * `.panshalach.json` 的 `approvalAllowlist: [tool...]`。会话启动时经
+ * Session 构造器加载回 sessionApprovalAllowlist（ConfigManager.mergeProjectConfig
+ * 已能读回同一文件）。best-effort：任何读/写失败静默返回 false，绝不阻塞审批流。
+ */
+export function appendProjectApprovalAllowlist(workspaceRoot: string, tool: string): boolean {
+  try {
+    const t = String(tool || '').trim().toLowerCase();
+    if (!t || !workspaceRoot) return false;
+    const p = join(workspaceRoot, '.panshalach.json');
+    let proj: any = {};
+    if (existsSync(p)) {
+      let text = readFileSync(p, 'utf-8');
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      text = text.trim();
+      if (text) proj = JSON.parse(text);
+      if (!proj || typeof proj !== 'object' || Array.isArray(proj)) proj = {};
+    }
+    const list: string[] = Array.isArray(proj.approvalAllowlist)
+      ? proj.approvalAllowlist.filter((x: unknown) => typeof x === 'string')
+      : [];
+    if (list.includes(t)) return true;
+    list.push(t);
+    proj.approvalAllowlist = list;
+    writeFileSync(p, JSON.stringify(proj, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
   }
 }

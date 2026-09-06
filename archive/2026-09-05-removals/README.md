@@ -3,6 +3,12 @@
 - **归档决定**：产品主（探测报告 7 项逐项裁决：#1 全单次、#2/#3/#4/#5/#6 摘除、#7 走三路）
 - **主题**：记忆管理为重点的 harness，除去对性能（token/运行时）与叙事有影响的装置
 
+> **0.7 追加归档（2026-09-05）**：`continuationJudge.archived.ts`（外置验证判官——0.6.4 双层终止的判官层。
+> 摘除原因：判官是唯一外层续跑源（maxRollouts 已全档为 1），对"出现过工具但未验证"的回合注入
+> 续跑 ≤2 次，弱模型伪工具调用下最坏 20 步×3 轮不收敛（实测 905s）。双层终止收缩为单层。
+> `TestTimeOrchestrator.archived.ts`（runMultiple 编排器——count/sort/预算裁剪在恒单 rollout 下
+> 全为死路径；Trajectory 类型已迁 `src/loop/trajectory.ts`，空批保护并入 chaser）。
+
 ## 裁决与落地对照
 
 | # | 裁决 | 落地 |

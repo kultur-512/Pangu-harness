@@ -7,6 +7,7 @@
 import type { OutputRenderer, ColorName, SpinnerHandle } from './types.js';
 import * as ansi from '../../utils/ansi.js';
 import { getTerminalCapabilities } from './TerminalCapabilities.js';
+import { stringWidth } from './stringWidth.js';
 
 // Local interface augmentation
 declare module './types.js' {
@@ -179,12 +180,17 @@ export class OutputRendererImpl implements OutputRenderer {
   }
 
   table(headers: string[], rows: string[][]): void {
+    // P3-1（批次 B）：列宽/补空格按显示宽度（CJK=2 列）计算，替换裸 .length/padEnd
     const all = [headers, ...rows];
     const widths = headers.map((_, i) =>
-      Math.max(...all.map(r => (r[i] || '').length))
+      Math.max(...all.map(r => stringWidth(r[i] || '')))
     );
     const line = (row: string[]) =>
-      row.map((cell, i) => (cell || '').padEnd(widths[i])).join('  ');
+      row.map((cell, i) => {
+        const c = cell || '';
+        const pad = Math.max(0, widths[i] - stringWidth(c));
+        return c + ' '.repeat(pad);
+      }).join('  ');
     const headerLine = c(line(headers), 'bold');
     this.writeLine(headerLine);
     this.writeLine('-'.repeat(widths.reduce((a, b) => a + b + 2, 0)));

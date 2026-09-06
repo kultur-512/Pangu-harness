@@ -104,7 +104,13 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
   }
 
   // === 降级路径：经典行模式（原有行为） ===
-  const repl = new Repl({ provider, ...(session ? { session } : {}) });
+  const { applyConfigModel } = await import('./repl/modelSeed.js');
+  const repl = new Repl({
+    provider,
+    ...(session
+      ? { session }
+      : { session: applyConfigModel(new Session()) as Session }),
+  });
   await repl.start();
 }
 
@@ -112,7 +118,13 @@ export async function runOneShot(args: string[]): Promise<void> {
   // 单次命令执行保持原有路径
   const provider = createDefaultModelProvider();
   try { setSharedModelProvider(provider as any); } catch {}
-  const session = applyEnvModel(new Session());
+  // env 优先（applyEnvModel），配置文件 model 字段兜底（applyConfigModel）；
+  // PANSHA_APPROVAL / --approval 决定 headless 审批档位（默认 readonly 会拦截写文件）。
+  const { applyConfigModel, envApprovalMode } = await import('./repl/modelSeed.js');
+  const approval = envApprovalMode();
+  const session = applyConfigModel(
+    applyEnvModel(new Session(approval ? { approvalMode: approval } : {}))
+  ) as Session;
   const repl = new Repl({ session, provider });
   await repl.runOneShot(args);
 }

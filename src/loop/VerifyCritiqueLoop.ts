@@ -88,6 +88,16 @@ export interface VerifyCritiqueLoopOptions {
    * 当前 diff，用于构造 <current_diff> 块。
    */
   currentDiff?: string;
+
+  /** 外部中止信号（贯穿到模型调用与工具执行）。abort 时本轮以 stopReason='aborted' 结束。 */
+  signal?: AbortSignal;
+
+  /**
+   * 上下文窗口预算（tokens，来自 provider.getModelContextLength，
+   * unknown 回落 32768）。>0 时 buildHistoryPrompt 组装后超过窗口 70%
+   * （token 估算 chars/4）→ 裁 history 中段（保前 2 步 + 后 2 步）。
+   */
+  windowTokens?: number;
 }
 
 export class VerifyCritiqueLoop {
@@ -102,6 +112,7 @@ export class VerifyCritiqueLoop {
   private benchmarkType?: BenchmarkType | string; // taskStyle 的别名（内部同步维护）
   private taskStyle?: string;
   private isStrongMode?: boolean;
+  private signal?: AbortSignal;
   private profile = BenchmarkProfiles.get('swe');
   // critique 频率 / 纪律规则注入强度 / tier 名称
   private critiqueFrequency?: CritiqueFrequencySpec;
@@ -123,7 +134,7 @@ export class VerifyCritiqueLoop {
     private verificationEngine: any,
     options: VerifyCritiqueLoopOptions = {}
   ) {
-    // #7（2026-09-05）：解析统一走三路自适应（JSON/文本/XML 容错探测）——
+    // 解析统一走三路自适应（JSON/文本/XML 容错探测）——
     // useUniversalAdapter 选项仅为兼容保留，恒真；<> 严格独占解析路径已归档。
     this.useUniversal = true;
     this.strictStructured = options.strictStructured ?? true;
@@ -152,6 +163,8 @@ export class VerifyCritiqueLoop {
     }
     this.userRequest = options.userRequest;
     this.currentDiff = options.currentDiff;
+    this.signal = options.signal;
+    this.windowTokens = options.windowTokens;
   }
 
   private maxSteps: number;
@@ -162,6 +175,17 @@ export class VerifyCritiqueLoop {
   private stepsSinceLastRealVerification = 0;
   private verificationAttempts = 0;
 
+  // 消费型一次性旗标——非状态机：置位后在下一次 prompt
+  // 组装处消费并复位；对应的终局门只看布尔本身。
+  /** 上一步响应被 max_tokens 截断，下一步 prompt 注入精简提示。 */
+  private pendingTruncationNotice = false;
+  /** 格式提醒已注入过（防呆只重试一步）。 */
+  private formatNudgeUsed = false;
+  /** 下一步 prompt 注入格式提醒。 */
+  private pendingFormatNudge = false;
+  /** 上下文窗口预算（tokens）。>0 时 buildHistoryPrompt 超 70% 裁中段。 */
+  private windowTokens?: number;
+
   private filesReadThisTrajectory = new Set<string>();
   private filesWrittenThisTrajectory = new Set<string>();
   private readBeforeWriteViolations = 0;
@@ -171,17 +195,47 @@ export class VerifyCritiqueLoop {
   private terminalNoCheckViolations = 0;   // Terminal 风格：关键命令后未检查
   private automationStepsWithoutEffectCheck = 0;
 
-  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason }> {
+  /** 当前引擎实际可用的工具名（格式教学示例必须与之匹配，防 UNKNOWN_TOOL 空转）。 */
+  private availableToolNames(): string[] | undefined {
+    try {
+      const names = this.verificationEngine?.executor?.availableTools?.();
+      return Array.isArray(names) && names.length > 0 ? names.map(String) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason; partialText?: string }> {
     let stepNum = 0;
     let done = false;
     let stopReason: TurnStopReason | undefined;
+    /** aborted 时本步已流出的模型正文（部分结果，随轨迹带回宿主落盘）。 */
+    let partialText: string | undefined;
     const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode);
 
     while (!done && stepNum < this.maxSteps) {
+      if (this.signal?.aborted) {
+        stopReason = 'aborted';
+        break;
+      }
       stepNum++;
 
       const history = this.buildHistoryPrompt();
       let prompt = `${initialPrompt}\n\n[历史执行记录]\n${history}`;
+
+      // 截断续跑提示——上一步响应被 max_tokens 截断时，注入一次性
+      // 提醒（消费型旗标，不是新状态机）。
+      if (this.pendingTruncationNotice) {
+        this.pendingTruncationNotice = false;
+        prompt += '\n\n【上一条响应被 max_tokens 截断，请精简后继续】如需调用工具请保持调用块完整；如为答复请精简内容后输出。';
+      }
+      // answered 空转防呆——execution 意图下"只说话不动作"的第一次，
+      // 注入一次格式提醒重试一步（消费型旗标）。
+      if (this.pendingFormatNudge) {
+        this.pendingFormatNudge = false;
+        prompt += '\n\n' + StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames())
+          + '\n【重要】上一步你只输出了文字说明而没有输出任何工具调用块。当前是执行类任务：请立即输出一个工具调用块开始实际操作（如 read_file / bash / write_file），不要只描述计划。';
+      }
 
       // 构建 prompt 时根据 practicalMode + 任务风格调整纪律规则/格式注入强度
       // 高纪律模式设计目标：工程强 + 分数强
@@ -224,7 +278,7 @@ export class VerifyCritiqueLoop {
         if ((injectionLevel === 'minimal' || injectionLevel === 'low') && !hasFormatIssue) {
           // 跳过格式提示
         } else if (stepNum <= formatEarlyBound || hasFormatIssue) {
-          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt()}`;
+          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames())}`;
         }
 
         // 验证提醒更实用
@@ -244,6 +298,10 @@ export class VerifyCritiqueLoop {
         }
       } else {
         // === 实用 / 日常模式：轻量纪律提示（避免无谓消耗）===
+        // 首轮格式教学：任何档位第一步都必须知道调用格式（小模型无示例不产出调用）。
+        if (stepNum <= 1) {
+          prompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames())}`;
+        }
         if (this.readBeforeWriteViolations > 0) {
           prompt += `\n\n【小提醒】最近有在未读取文件的情况下直接修改文件的倾向，建议先读取再修改。`;
         }
@@ -252,7 +310,18 @@ export class VerifyCritiqueLoop {
         }
       }
 
-      const rawOrObj = await this.modelClient.complete(prompt);
+      // P1.1 请求侧：真实引擎带 toolSchemas() 时走原生 function calling；
+      // mock/旧引擎没有该方法 → 不带 tools，维持文本协议路径（测试兼容）。
+      const toolSchemas = typeof this.verificationEngine?.toolSchemas === 'function'
+        ? this.verificationEngine.toolSchemas()
+        : undefined;
+      const rawOrObj = await this.modelClient.complete(prompt, {
+        ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
+        signal: this.signal,
+      });
+
+      // 中止检查不在 complete 返回后立即做：解析是纯本地操作，先做它才能
+      // 保全"已流出正文 + 已解析 toolCalls"的现场（见下方 aborted 分支）。
 
       // Normalize
       let rawContent: string;
@@ -275,7 +344,7 @@ export class VerifyCritiqueLoop {
       let toolCalls: ToolCall[] = preParsedToolCalls ?? [];
 
       if (toolCalls.length === 0) {
-        // #7：三路自适应解析（OpenAI JSON / 文本 / <> XML），恒容错；
+        // 三路自适应解析（OpenAI JSON / 文本 / <> XML），恒容错；
         // strictStructured 仅影响 XML 探测深度，不再独占解析路径。
         const res = this.universalAdapter.parse(rawContent, {
           strictStructured: this.strictStructured,
@@ -283,6 +352,30 @@ export class VerifyCritiqueLoop {
         });
         toolCalls = res.toolCalls;
         detectedFormat = res.detectedFormat ?? detectedFormat;
+      }
+
+      // 中断现场落盘：中止检查移到解析之后——abort 不再丢现场：
+      //   - 本步已流出正文（剥离结构块）作为 partialText 随轨迹带回宿主；
+      //   - 本步已解析的 toolCalls 补合成失败结果（call/result 成对进历史，
+      //     "aborted before dispatch"）；
+      //   - 不执行任何工具，随后以 stopReason='aborted' 终局。
+      if (this.signal?.aborted) {
+        const partial = this.extractUserText(rawContent);
+        if (toolCalls.length > 0) {
+          this.steps.push({
+            stepNumber: stepNum,
+            reasoning,
+            toolCalls,
+            verificationResult: toolCalls
+              .map((c) => `TOOL_ERROR: ABORTED aborted before dispatch: ${c.toolName}`)
+              .join('\n---\n'),
+            verificationSignal: 'FAIL',
+            detectedFormat,
+          });
+        }
+        if (partial) partialText = partial;
+        stopReason = 'aborted';
+        break;
       }
 
       // 确保每个工具调用都有 category（用于多任务风格纪律规则跟踪）
@@ -358,10 +451,13 @@ export class VerifyCritiqueLoop {
         const lower = verificationResult.toLowerCase();
         // 真实执行引擎的成功 bash 结果以 `EXIT_CODE:0` 结尾——最强真实验证信号。
         // 下方的 PASS 启发式作为补充信号。
+        // `verification:` 松匹配收紧为 `verification: pass`——
+        // 否则 engineAdapter 给 read/glob/grep 追加的 `VERIFICATION: NEUTRAL` 会被
+        // 误计为真实验证（NEUTRAL=PARTIAL：清零连败但不计 PASS/不触发 completed）。
         const looksLikeRealPass =
           lower.includes('exit_code:0') ||
           lower.includes('all_tests_passed') ||
-          lower.includes('verification:') ||
+          lower.includes('verification: pass') ||
           (lower.includes('pass') && lower.includes('5')) || // 针对我们的加法例子
           lower.includes('正确') && (lower.includes('5') || lower.includes('pass'));
 
@@ -377,12 +473,38 @@ export class VerifyCritiqueLoop {
         verificationResult = 'NO_TOOL_CALLS';
         signal = 'NO_TOOL_CALLS';
         this.stepsSinceLastRealVerification++;
-        // 接口契约 v3.1：end_turn——模型不再调用工具即自然停（闲聊/纯回答 1 步即停），
-        // 不再重置连续失败计数烧满步数（对抗清单 #五）。
-        done = true;
-        stopReason = 'no-verification';}
+        // end_turn——模型不再调用工具即自然停（闲聊/纯回答 1 步即停）。
+        // 区分 answered（有面向用户正文答复）与 no-verification（空白/空转）。
+        //
+        // finish_reason=length 截断的响应【禁判 answered】——残缺
+        // 内容不可作为完成，注入提示重试一步（消费型旗标，上一步 prompt 组装处
+        // 消费；maxSteps 兜底防无限循环）。
+        // answered 空转防呆——execution 意图（isStrongMode 或
+        // taskStyle==='execution'）且从未做过真实验证时，"有正文却只说话不动手"
+        // 的第一次不终局，注入格式提醒重试一步；第二次仍无动作按 no-verification
+        // 终局（不计 success）。仅用消费型布尔旗标实现，不引入新状态机。
+        const hasText = this.hasUserFacingText(rawContent);
+        const truncatedResponse = !!(rawOrObj as any)?.truncated;
+        const executionIntent = !!this.isStrongMode
+          || String(this.taskStyle ?? this.benchmarkType ?? '') === 'execution';
+        if (truncatedResponse) {
+          this.pendingTruncationNotice = true;
+          // done 保持 false——截断响应继续下一步
+        } else if (executionIntent && !this.hasPerformedRealVerification && hasText && !this.formatNudgeUsed) {
+          this.formatNudgeUsed = true;
+          this.pendingFormatNudge = true;
+          // done 保持 false——注入格式提醒后重试一步
+        } else if (executionIntent && !this.hasPerformedRealVerification) {
+          // 含"第二次文本空转"：不再按 answered 计成功（有正文即假完成）
+          done = true;
+          stopReason = 'no-verification';
+        } else {
+          done = true;
+          stopReason = hasText ? 'answered' : 'no-verification';
+        }
+      }
 
-      // #2（2026-09-05）：critique 自我批判已摘除（archive/2026-09-05-removals/）——
+      // critique 自我批判已摘除（archive/2026-09-05-removals/）——
       // 每次触发是一次额外完整模型调用，且打分器归档后其打分激励不复存在。
       // LoopStep.critique 恒 undefined；buildCritiquePrompt/上下文装配保留为休眠代码。
       const critique: string | undefined = undefined;
@@ -432,26 +554,55 @@ export class VerifyCritiqueLoop {
     }
 
     if (!stopReason) stopReason = 'max-steps';
-    if (stopReason === 'no-verification') {
-      const success = this.steps.some(
+    if (stopReason === 'no-verification' || stopReason === 'answered') {
+      const hasPass = this.steps.some(
         s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
       );
-      if (success) stopReason = 'completed';
+      if (hasPass) stopReason = 'completed';
     }
 
-    // 结束时把整条轨迹喂给记忆（#6：FailureMemory 轨道已摘除，收敛到
+    // 结束时把整条轨迹喂给记忆（FailureMemory 轨道已摘除，收敛到
     // RefinedMemoryStore.refine 的任务落定提炼——见 MEMORY-DESIGN §7.1）
 
     const success = this.steps.some(
       s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
-    );
-    return { success, steps: this.steps, stopReason };
+    ) || stopReason === 'answered';
+    // aborted 时携带本步已流出正文，供宿主落 turn（partialText）
+    return { success, steps: this.steps, stopReason, partialText };
+  }
+
+  /** 剥离结构化块与工具块，返回面向用户的正文（aborted 部分结果提取用）。 */
+  private extractUserText(rawContent: string): string {
+    return String(rawContent ?? '')
+      .replace(/<(thinking|plan|verify|critique|format_check|iron_law_check)>[\s\S]*?<\/\1>/gi, '')
+      .replace(/<>[\s\S]*?<\/>/gi, '')
+      .trim();
+  }
+
+  /** 剥离结构化块与工具块后，是否仍有面向用户的正文（决定 end_turn → answered vs no-verification）。 */
+  private hasUserFacingText(rawContent: string): boolean {
+    return this.extractUserText(rawContent).length > 0;
   }
 
   private classifySignal(result: string): VerificationSignal {
-    if (result.includes('ALL_TESTS_PASSED') || result.includes('VERIFICATION: PASS')) return 'PASS';
-    if (result.includes('PARTIAL')) return 'PARTIAL';
+    // 真实引擎成功信号入册。
+    // 顺序契约：
+    //   1) 显式 PASS 尾标（smoke mock + engineAdapter 对 bash 的确定性追加）
+    //   2) APPLIED 尾标（write/edit——写入成功 ≠ 验证通过 → PARTIAL）
+    //   3) NEUTRAL 尾标（read/glob/grep——只读成功，无验证效力）→ PARTIAL，
+    //      必须排在 FAIL/ERROR 子句之前（只读输出正文可能偶然含 "error" 字样）
+    //   4) FAIL/ERROR
+    //   5) 裸 `EXIT_CODE:0`：尾部锚定 `/\nEXIT_CODE:0\s*$/`（防正文内嵌字面量误判），
+    //      排在 FAIL 检查之后（真 bash 成功尾行优先级低于显式失败信号）
+    // 尾标判定用**分段尾锚定**（parts 以 '---' 连接，每段末尾各有自己的尾标）：
+    // 全文 includes 会把 read/grep 正文里的字面量误判成信号（本仓库源码即触发器）。
+    // 多调用步骤一成一败仍判 PASS：PASS 段存在即过（可接受粒度，测试已注明）。
+    const segments = result.split('\n---\n');
+    const segEndsWith = (re: RegExp) => segments.some((s) => re.test(s));
+    if (result.includes('ALL_TESTS_PASSED') || segEndsWith(/\nVERIFICATION: PASS\s*$/)) return 'PASS';
+    if (segEndsWith(/\nVERIFICATION: APPLIED\s*$/) || segEndsWith(/\nVERIFICATION: NEUTRAL\s*$/) || result.includes('PARTIAL')) return 'PARTIAL';
     if (result.includes('FAIL') || result.includes('ERROR')) return 'FAIL';
+    if (/\nEXIT_CODE:0\s*$/.test(result)) return 'PASS';
     return 'FAIL';
   }
 
@@ -460,11 +611,16 @@ export class VerifyCritiqueLoop {
     // 保留 <plan> 和 <verify> 的完整结构（长上下文利用）：
     // 按 tier + practical 给出合理上限，但确保结构化块完整
     const planLimit = isPractical ? 200 : 300;
-    const resultLimit = isPractical ? 200 : 300;
     const thinkLimit = isPractical ? 200 : 300;
     const critiqueLimit = isPractical ? 150 : 200;
+    // 结果截断改"超阈值才剪"——≤4000 字符原样保留（read_file 输出
+    // 常超旧上限 200-300，静默剪掉会让模型误以为文件不完整）；超限保留
+    // 头 2500 + 尾 800 + 显式修剪标记。
+    const RESULT_LIMIT = 4000;
+    const RESULT_HEAD = 2500;
+    const RESULT_TAIL = 800;
 
-    return this.steps
+    const parts = this.steps
       .map(s => {
         const flags: string[] = [];
         if (s.didRealVerification) flags.push('VERIFIED');
@@ -474,10 +630,20 @@ export class VerifyCritiqueLoop {
         // 保留 plan / verify 的核心结构（不被激进截断）
         const plan = (s.reasoning.plan || '').slice(0, planLimit);
         const verify = (s.reasoning.verify || '').slice(0, planLimit);
-        const resultText = (s.verificationResult || '').slice(0, resultLimit);
-        // 截断结果必须告知模型——静默截断会让模型以为文件没加载完
-        // 而拒绝编辑；明确提示后模型会用 offset 重读。
-        const resultTruncated = (s.verificationResult || '').length > resultLimit;
+        const fullResult = s.verificationResult || '';
+        let resultText = fullResult;
+        let resultTruncated = false;
+        if (fullResult.length > RESULT_LIMIT) {
+          const trimmed = fullResult.length - RESULT_HEAD - RESULT_TAIL;
+          resultText = fullResult.slice(0, RESULT_HEAD)
+            + `\n[...已修剪 ${trimmed} 字符...]`
+            + (RESULT_TAIL > 0 ? fullResult.slice(-RESULT_TAIL) : '');
+          resultTruncated = true;
+        }
+        // 截断结果必须告知模型——且明确保留了头尾，模型可据此判断是否需要重读。
+        const resultNote = resultTruncated
+          ? `\n[⚠ 上一轮结果过长已修剪中段（保留头 ${RESULT_HEAD} + 尾 ${RESULT_TAIL} 字符）。若需要完整内容（尤其 read_file 输出），请用 read_file 重新读取目标文件（输出中会给出 offset 续读位置）。]`
+          : '';
         const thinking = (s.reasoning.thinking || '').slice(0, thinkLimit);
         const critique = s.critique
           ? s.critique.slice(0, critiqueLimit)
@@ -488,12 +654,25 @@ export class VerifyCritiqueLoop {
 Thinking: ${thinking}
 Plan: ${plan}
 Verify: ${verify}
-Result: ${resultText}${resultTruncated ? `\n[⚠ 上一轮结果已截断（保留前 ${resultLimit} 字符）。若需要完整内容（尤其 read_file 输出），请用 read_file 重新读取目标文件（输出中会给出 offset 续读位置）。]` : ''}
+Result: ${resultText}${resultNote}
 Critique: ${critique}`;
 
         return isPractical ? base : base + `\nFormat: ${s.detectedFormat ?? 'unknown'}`;
-      })
-      .join('\n---\n');
+      });
+
+    const join = (arr: string[]) => arr.join('\n---\n');
+
+    // 窗口预算——组装后若超窗口 70%（token 估算 chars/4），
+    // 裁 history 中段：保前 2 步 + 后 2 步，中段替换为显式标记
+    //（windowTokens 未提供时保持旧行为，不裁）。
+    if (this.windowTokens && this.windowTokens > 0 && parts.length > 4) {
+      const budgetChars = this.windowTokens * 4 * 0.7;
+      if (join(parts).length > budgetChars) {
+        const kept = [...parts.slice(0, 2), `[...${parts.length - 4} 步已裁剪（上下文窗口预算）...]`, ...parts.slice(-2)];
+        return join(kept);
+      }
+    }
+    return join(parts);
   }
 
   /**

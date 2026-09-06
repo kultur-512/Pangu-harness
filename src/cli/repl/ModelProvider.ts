@@ -114,13 +114,13 @@ export class DefaultModelProvider implements ModelProvider {
 
         let providers: any = (all.providers && typeof all.providers === 'object') ? { ...all.providers } : {};
 
-        // P1.2: env 注入泛化——PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL 三件套，
+        // env 注入泛化——PANSHA_<PROV>_API_KEY/_BASE_URL/_MODEL 三件套，
         // SCNET_API_KEY/SCNET_KEY 保留为 scnet 历史别名（行为不变）。
         providers = this._applyEnvInjection(providers);
 
         // ULTRA ROBUST: if a configured provider still has no key (e.g. BOM / parse
         // oddity in this root's .panshalach.json), try to extract the key directly
-        // from the file bytes for this root. Scans ALL providers (P1.2).
+        // from the file bytes for this root. Scans ALL providers.
         const keyless = Object.entries(providers).filter(([, v]: any) => v && !v.apiKey);
         if (keyless.length > 0) {
           const extracted = this._extractProviderKeyFromFile(root);
@@ -419,7 +419,7 @@ export class DefaultModelProvider implements ModelProvider {
       return this._createProviderClient('scnet', modelPart); // 历史别名兼容
     }
 
-    // 2b. Generic provider:model prefix (fix-a6-routing) — any configured
+    // 2b. Generic provider:model prefix — any configured
     // provider works, e.g. "a6:some-model". Additive; scnet semantics above
     // are untouched.
     if (name.includes(':')) {
@@ -488,14 +488,17 @@ export class DefaultModelProvider implements ModelProvider {
   }
 
   /**
-   * Get the context window length (in tokens) for a model name.
+   * Get the context window (in tokens) for a model name.
    * Priority:
    * 1. In-memory cache from a recent /model list (remoteContextsCache, ALL providers)
    * 2. Persisted in .panshalach.json providers.<prov>.modelContexts (ALL providers)
-   * 3. 256000 (256K) default
+   * 3. 32768 (32K) default — 未知回落用 32K 保守值而非 256000 哨兵：
+   *    把未知窗口当 256K 用会让 8K 模型在长任务中必爆；保守值只多压缩不误判。
+   *    预算侧（sseInteractive/resolveWindowTokens）同时把 ≤0 与 ===256000 视为
+   *    unknown → 32768，消化历史配置里已写入的 256000 哨兵。
    */
   getModelContextLength(name: string): number {
-    if (!name) return 256000;
+    if (!name) return 32768;
 
     const effective = this.getEffectiveModel(name);
 
@@ -518,8 +521,8 @@ export class DefaultModelProvider implements ModelProvider {
       }
     } catch {}
 
-    // 3. Default
-    return 256000;
+    // 3. Default (unknown → conservative 32K)
+    return 32768;
   }
 
   /**
@@ -716,6 +719,8 @@ export async function resolveSharedClient(
   if (c) return { client: c, provider: shared };
 
   throw new Error(
-    'No model client available. Configure .panshalach.json providers (scnet/a6/...), or set PANSHA_MODEL=<provider:model>, or pass a ModelProvider.'
+    '未配置可用模型。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3）' +
+    ' ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择。' +
+    '（也可设 PANSHA_<PROV>_API_KEY/_BASE_URL 环境变量或传 ModelProvider。）'
   );
 }

@@ -44,7 +44,8 @@ describe('M2.2: L1 相关记忆', () => {
   it('kind filter loads failure + success + preference together', () => {
     const store = makeStore();
     const now = Date.now();
-    store.save(store.refine({ trajectory: { id: 't', steps: [], success: true }, taskStyle: 'swe', attemptCount: 1, userFeedback: '', now })); // success
+    // 0.7：success 卡信号源是 stopReason==='completed'（answered 不喂卡）
+    store.save(store.refine({ trajectory: { id: 't', steps: [], success: true, stopReason: 'completed' as const }, taskStyle: 'swe', attemptCount: 1, userFeedback: '', now })); // success
     store.save(store.refine({ trajectory: { id: 't2', steps: [{ stepNumber: 1, readBeforeWriteViolation: true } as any], success: false }, taskStyle: 'swe', now })); // failure
     store.remember('用 TS 写', false, now);
     const cards = store.loadFiltered({});

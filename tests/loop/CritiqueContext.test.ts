@@ -6,15 +6,17 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { VerifyCritiqueLoop } from '../../src/loop/VerifyCritiqueLoop.js';
 
-// fix-#10: chain test — a truncated read_file result in step N must carry a
-// visible "已截断" marker into step N+1's prompt (silent truncation made the
+// fix-#10: chain test — an over-limit read_file result in step N must carry a
+// visible trim marker into step N+1's prompt (silent truncation made the
 // model believe the file never loaded and refuse to edit under RBW).
-describe('fix-#10 buildHistory truncation marker (v2)', () => {
-  it('long verificationResult → next prompt contains truncation marker + re-read hint', async () => {
+// 0.7.3 T2#9：阈值从 300 字符改为 4000（≤4000 原样保留）；超限保留
+// 头 2500 + 尾 800 + 显式「已修剪 N 字符」标记——断言随新契约更新。
+describe('fix-#10 buildHistory truncation marker (v2, T2#9 契约)', () => {
+  it('超限 verificationResult（>4000 字符）→ next prompt contains trim marker + re-read hint', async () => {
     const captured: string[] = [];
 
     const longRead = 'READ_SUCCESS: src/tools/glob.ts\n' +
-      Array.from({ length: 60 }, (_, i) => `${i + 1}\tconst line${i} = ${i};`).join('\n'); // ~1000+ chars
+      Array.from({ length: 200 }, (_, i) => `${i + 1}\tconst line${i} = ${i};`).join('\n'); // ~4600 chars > 4000 阈值
 
     const modelClient = {
       callCount: 0,
@@ -71,9 +73,12 @@ describe('fix-#10 buildHistory truncation marker (v2)', () => {
     const step2Prompt = historyPrompts[historyPrompts.length - 1] || '';
     assert.ok(step2Prompt.length > 0, 'must have a history-carrying prompt');
     assert.ok(
-      step2Prompt.includes('已截断') && step2Prompt.includes('read_file'),
-      `step prompt must warn about truncation + re-read hint, got tail: ${step2Prompt.slice(-260)}`
+      step2Prompt.includes('已修剪') && step2Prompt.includes('read_file'),
+      `step prompt must warn about trimming + re-read hint, got tail: ${step2Prompt.slice(-260)}`
     );
+    // T2#9：头 2500 + 尾 800 必须保留（不再只留前 300）
+    assert.ok(step2Prompt.includes(longRead.slice(0, 2000)), '结果头部必须保留');
+    assert.ok(step2Prompt.includes(longRead.slice(-500)), '结果尾部必须保留');
   });
 });
 

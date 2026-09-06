@@ -69,7 +69,9 @@ describe('ModelProvider env 三件套 (P1.2)', () => {
     });
     assert.equal(p.getModelContextLength('m-a'), 4096);
     assert.equal(p.getModelContextLength('m-b'), 8192);
-    assert.equal(p.getModelContextLength('unknown-model'), 256000);
+    // 0.7.3 T2#6：未知回落从 256000 哨兵改为 32768 保守值（预算侧同时把
+    // ===256000 视为 unknown，消化历史配置中的哨兵）
+    assert.equal(p.getModelContextLength('unknown-model'), 32768);
   });
 
   it('scnet legacy alias (SCNET_API_KEY) still works standalone', () => {

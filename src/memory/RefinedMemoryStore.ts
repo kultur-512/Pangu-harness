@@ -7,7 +7,7 @@ import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
 import type { MemoryCategory } from './RefinedMemoryCard.js';
 import { FailureCategory } from './FailureMemory.js';
-import { Trajectory } from '../orchestration/TestTimeOrchestrator.js';
+import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
 
 export interface RefineInput {
@@ -126,8 +126,10 @@ export class RefinedMemoryStore {
     // Positive Memory — 一次通过 + 正向信号 → success 卡
     if (input.attemptCount === 1) {
       const fb = (input.userFeedback || '').trim();
-      // score 已移除（2026-09-05）：正向信号 = 用户正向反馈 OR 轨迹验证通过
-      const positive = POSITIVE_FEEDBACK_RE.test(fb) || input.trajectory?.success === true;
+      // 0.7：正向信号 = 用户正向反馈 OR 轨迹真实验证通过（stopReason==='completed'）。
+      // 纯问答/闲聊（stopReason==='answered'）不再产生 success 卡——它计入 UI
+      // "已回复"但不代表工程验证通过。
+      const positive = POSITIVE_FEEDBACK_RE.test(fb) || input.trajectory?.stopReason === 'completed';
       if (positive) {
         const card = this.createPositiveCard(input.taskStyle, input.applicableTiers, now, fb || '一次通过且真实验证通过', writtenFiles);
         newCards.push(card);
@@ -194,8 +196,21 @@ export class RefinedMemoryStore {
       cards: capped,
     };
 
+    // C1（ROADMAP-NEXT §3.2）：MAX_FILE_SIZE_BYTES 声明执行 —— 序列化后超限
+    // 直接 reject（throw，与 writeFileSync 的既有错误风格一致），拒绝写半截大文件。
+    const serialized = JSON.stringify(file, null, 2);
+    if (Buffer.byteLength(serialized, 'utf-8') > MEMORY_LIMITS.MAX_FILE_SIZE_BYTES) {
+      const sizeKiB = (Buffer.byteLength(serialized, 'utf-8') / 1024).toFixed(1);
+      const capKiB = Math.round(MEMORY_LIMITS.MAX_FILE_SIZE_BYTES / 1024);
+      throw new Error(
+        `✗ 记忆文件写入被拒绝：序列化后 ${sizeKiB}KiB 超过上限 ${capKiB}KiB` +
+        `（MEMORY_LIMITS.MAX_FILE_SIZE_BYTES）。本次 save 未写盘；` +
+        `请先用 /memory clear 或等待衰减清理旧卡后重试。`
+      );
+    }
+
     // 写入
-    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+    writeFileSync(this.filePath, serialized, 'utf-8');
     this.cache = file;
     this.invalidateProjection(); // save() 写入 → 重建
 

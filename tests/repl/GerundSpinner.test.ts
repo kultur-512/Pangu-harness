@@ -8,8 +8,16 @@ import { nextGerund, gerundCount, formatRunningLabel } from '../../src/cli/repl/
 import { stringWidth } from '../../src/cli/repl/stringWidth.js';
 
 describe('GerundSpinner', () => {
-  it('vocabulary has at least 24 entries', () => {
-    assert.ok(gerundCount() >= 24);
+  it('vocabulary has at least 10 entries (P3-2 批次 B：纯中文词表)', () => {
+    assert.ok(gerundCount() >= 10);
+  });
+
+  it('vocabulary is Chinese-only (P3-2 批次 B：删英文词条)', () => {
+    for (let i = 0; i < 50; i++) {
+      const g = nextGerund();
+      assert.ok(!/[a-zA-Z]/.test(g), `non-Chinese gerund leaked: ${g}`);
+      assert.ok(/[\u4e00-\u9fff]/.test(g), `gerund without CJK: ${g}`);
+    }
   });
 
   it('never repeats the immediate previous gerund (100 draws)', () => {

@@ -76,7 +76,8 @@ export function addFeature(workspace: string, title: string): FeatureItem | null
   return item;
 }
 
-/** Mark done — evidence is REQUIRED. Returns error string or null on success. */
+/** Mark done — evidence is REQUIRED. Returns error string or null on success.
+ *  C3（ROADMAP-NEXT §3.2）：检查 save 返回值——写失败必须告警，不得静默成功。 */
 export function markFeatureDone(workspace: string, id: string, evidence: string): string | null {
   const items = loadFeatures(workspace);
   const f = items.find((x) => x.id === id);
@@ -85,11 +86,14 @@ export function markFeatureDone(workspace: string, id: string, evidence: string)
   f.status = 'done';
   f.evidence = evidence.trim();
   f.updatedAt = Date.now();
-  saveFeatures(workspace, items);
+  if (!saveFeatures(workspace, items)) {
+    return `✗ 警告：特性 ${id} 的 done 状态写入 feature_list.json 失败（磁盘/权限错误）——未持久化，不得视为已完成`;
+  }
   return null;
 }
 
-/** Set the next step for a feature (also implies it is the active one). */
+/** Set the next step for a feature (also implies it is the active one).
+ *  C3：同 markFeatureDone —— save 失败不静默成功。 */
 export function setFeatureNext(workspace: string, id: string, nextStep: string): string | null {
   const items = loadFeatures(workspace);
   const f = items.find((x) => x.id === id);
@@ -100,6 +104,8 @@ export function setFeatureNext(workspace: string, id: string, nextStep: string):
   f.status = 'in-progress';
   f.nextStep = nextStep || f.nextStep;
   f.updatedAt = Date.now();
-  saveFeatures(workspace, items);
+  if (!saveFeatures(workspace, items)) {
+    return `✗ 警告：特性 ${id} 的 nextStep 写入 feature_list.json 失败（磁盘/权限错误）——未持久化`;
+  }
   return null;
 }
