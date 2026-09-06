@@ -2,7 +2,7 @@
 
 agent: zhaotianang / zhaotianang1
 date:  2026-09-06
-last_updated: 23:15 (commit 80d3f08 push 后追加；提前开工 A+D)
+last_updated: 23:50 (commit 61c2a8e；起草 T1-T3 跑分下发说明)
 
 ## 想做什么（目的）
 
@@ -342,3 +342,53 @@ remote: Powered by GITEE.COM
 | 日志 | 本文件追加段 | — | AGENT-CONTRIBUTION §10.1-B 纪律 |
 | Commit | `80d3f08` | 9 文件 +493 行 | feat(eval): T1-T3 fixture 实体化 |
 | Push | `777e5eb..80d3f08` | — | origin/zhaotianang1 |
+
+### 23:50 起草 T1-T3 跑分下发说明段（commit 61c2a8e）
+
+#### 背景
+
+王浩宇今晚请起草 T1-T3 跑分内容（他的下游接力是 U4：补 T2 `repo/` + 强化 verify.sh / 补 T3 `document.md` + keyword 检查）。我不在 U4 边界内代写实际 repo/document，仅起草"任务说明 + 接手清单 + verify.sh keyword 模板"。
+
+#### 落地
+
+新增 `tasks/T1-T3-RUN-EVAL-OVERVIEW.md`（273 行），覆盖：
+- §0 跑分前置（端点/模型/context/output 目录——4 项等王浩宇确认，标 ⏳）
+- §1 T1：已完结，无王浩宇补全项
+- §2 T2：王浩宇补 `repo/`（5 文件 TS 代码库骨架）+ 替换 verify.sh stub 为三段式实检（add 含 bigint + 调用点 ≥ 3 + bigint 测试 ≥ 2 + tsc + npm test）
+- §3 T3：王浩宇补 `document.md`（5 章中文长文档）+ verify.sh 末尾追加 10 条 keyword check（K1 / P1-P4 / C1-C4 / K5）
+- §4 跑分结果回写约定（R6 schema 必填字段 + 12 次跑分 JSON + SUMMARY.md）
+- §5 王浩宇回传清单（6 项）
+- §6 起草人不越界说明（明确"已起草什么 / 未代写什么 / 未预设什么"）
+
+#### Commit + Push
+
+```
+$ git add tasks/T1-T3-RUN-EVAL-OVERVIEW.md
+$ git commit -m "docs(eval): T1-T3 跑分任务下发说明（王浩宇 U4 补全清单）..."
+[zhaotianang1 61c2a8e] 1 file changed, 273 insertions(+)
+create mode 100644 tasks/T1-T3-RUN-EVAL-OVERVIEW.md
+```
+
+push 待执行（本轮末尾 git push origin zhaotianang1）。
+
+#### 边界（守 U3/U4 切分）
+
+- ✅ 起草：issue 正文 + verify.sh 框架 + repo/document 骨架 + verify.sh keyword check 模板
+- ❌ 未代写：真实 `repo/` 代码、`document.md` 文本、真实 keyword 词表
+- ❌ 未预设：跑分端点、模型 tag、run-eval.mjs 配置（王浩宇 R6 runner 职责）
+
+#### IM 文本（已整理好待发）
+
+起草完用户已确认要 IM 形式下发到王浩宇；已整理成可直接复制粘贴的短文（覆盖 T1/T2/T3 缺失项 + 回传清单）。用户自行发送。
+
+#### TODO（本轮内）
+
+- [ ] `git push origin zhaotianang1`（61c2a8e 上推）
+
+#### 附 C 增补（追加）
+
+| 类型 | 文件 | 行数 | 说明 |
+|---|---|---|---|
+| 下发说明 | `tasks/T1-T3-RUN-EVAL-OVERVIEW.md` | 273 行 | T1-T3 跑分任务下发（王浩宇 U4 接手清单 + 三段式 verify.sh + keyword check 模板） |
+| 日志 | 本文件追加段 | — | AGENT-CONTRIBUTION §10.1-B 纪律 |
+| Commit | `61c2a8e` | 1 文件 +273 行 | docs(eval): T1-T3 跑分任务下发说明 |
