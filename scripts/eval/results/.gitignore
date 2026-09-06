@@ -1,0 +1,7 @@
+# scripts/eval/results/.gitignore
+# 忽略真实评测结果（含真实 openPangu 数据），仅保留 mock 冒烟结果用于 CI。
+*
+!.gitignore
+!.gitkeep
+!mock/
+!mock/*.json
