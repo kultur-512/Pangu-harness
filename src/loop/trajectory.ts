@@ -55,3 +55,110 @@ export function syntheticFailureTrajectory(lastError?: string): Trajectory {
     lastError,
   };
 }
+
+// ── R3: Turn.result 结构化字段提取 ──
+
+/** 文件写入工具名集合 */
+const FILE_WRITE_TOOLS = new Set(['write_file', 'writeFile', 'edit_file', 'editFile']);
+
+/** 验证命令模式（用于识别 bash 验证调用） */
+const VERIFY_CMD_PATTERNS = [
+  /\b(npx\s+tsc\b[^\n]*)/,
+  /\b(npm\s+(test|run\s+test)\b[^\n]*)/,
+  /\b(npx\s+tsx\b[^\n]*)/,
+  /\b(node\s+\S*\.?(test|spec)\.\S*[^\n]*)/,
+  /\b(pytest\b[^\n]*)/,
+  /\b(cargo\s+test\b[^\n]*)/,
+  /\b(go\s+test\b[^\n]*)/,
+  /\b(make\s+test\b[^\n]*)/,
+  /\b(npx\s+vitest\b[^\n]*)/,
+  /\b(npx\s+jest\b[^\n]*)/,
+  /\b(bash\s+\S*verify\S*[^\n]*)/,
+];
+
+/**
+ * 从 trajectory 步骤中提取变更文件集。
+ * 覆盖：write_file/edit_file 的 filePath 参数 + bash 重定向路径（> / >>）。
+ */
+export function extractChangedFiles(steps: TrajectoryStep[]): string[] {
+  const files = new Set<string>();
+
+  for (const step of steps) {
+    const action = step.action;
+    if (!action) continue;
+
+    // 当前格式：ToolCall { toolName, params[] }
+    const toolName = action.toolName || action.name || '';
+    const params = action.params || action.args || [];
+
+    if (FILE_WRITE_TOOLS.has(toolName)) {
+      // filePath 参数（write_file / edit_file）
+      for (const p of params) {
+        if (p.name === 'filePath' || p.name === 'file_path' || p.name === 'path') {
+          const v = String(p.value || '').trim();
+          if (v) files.add(v);
+        }
+      }
+    }
+
+    if (toolName === 'bash' || toolName === 'execute_command') {
+      // bash 重定向提取：> path, >> path, 2> path, &> path
+      const cmd = params.find((p: any) => p.name === 'command' || p.name === 'cmd');
+      if (cmd) {
+        const cmdStr = String(cmd.value || '');
+        const redirects = cmdStr.matchAll(/(?:[12]?&?>>?|>>?>)\s*(\S+)/g);
+        for (const m of redirects) {
+          const p = m[1].replace(/["']/g, '').trim();
+          if (p && !p.startsWith('/dev/') && !p.startsWith('&')) {
+            files.add(p);
+          }
+        }
+      }
+    }
+  }
+
+  return [...files];
+}
+
+/**
+ * 从 trajectory 步骤中提取验证命令。
+ * 识别 bash 调用中的测试/编译/验证命令。
+ */
+export function extractVerifyCommands(steps: TrajectoryStep[]): string[] {
+  const commands = new Set<string>();
+
+  for (const step of steps) {
+    const action = step.action;
+    if (!action) continue;
+
+    const toolName = action.toolName || action.name || '';
+    if (toolName !== 'bash' && toolName !== 'execute_command') continue;
+
+    const params = action.params || action.args || [];
+    const cmd = params.find((p: any) => p.name === 'command' || p.name === 'cmd');
+    if (!cmd) continue;
+
+    const cmdStr = String(cmd.value || '').trim();
+    for (const pat of VERIFY_CMD_PATTERNS) {
+      const m = cmdStr.match(pat);
+      if (m) {
+        commands.add(m[1].trim());
+        break;
+      }
+    }
+  }
+
+  return [...commands];
+}
+
+/**
+ * 从 stopReason 映射到 TurnOutcome 枚举。
+ * 未知值回落 'completed'（保守）。
+ */
+export function mapOutcome(stopReason?: string): import('../cli/repl/types.js').TurnOutcome {
+  const valid = new Set(['completed', 'answered', 'max-steps', 'consecutive-failures', 'aborted', 'no-verification']);
+  if (stopReason && valid.has(stopReason)) {
+    return stopReason as import('../cli/repl/types.js').TurnOutcome;
+  }
+  return 'completed';
+}

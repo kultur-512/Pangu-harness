@@ -14,6 +14,7 @@ import { appendContextSnapshot, appendAgentEvent } from '../cli/repl/rolloutStor
 import { createHash } from 'node:crypto';
 import type { ModelProvider } from '../cli/repl/types.js';
 import { classifyTaskIntent } from '../cli/taskIntent.js';
+import { extractChangedFiles, extractVerifyCommands } from '../loop/trajectory.js';
 
 export interface RunRequest {
   task: string;
@@ -39,6 +40,10 @@ export interface RunResult {
   budgetReport?: any;
   /** aborted 时本步已流出的模型正文（部分结果，宿主落 turn 用）。 */
   partialText?: string;
+  /** R3: 变更文件集（从 trajectory 步骤提取） */
+  changedFiles?: string[];
+  /** R3: 验证命令（从 trajectory bash 步骤提取） */
+  verifyCmd?: string[];
 }
 
 /**
@@ -187,6 +192,11 @@ export async function runAgentTask(
       ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
     }
 
+    // R3: 从 trajectory 提取结构化字段（供宿主落 Turn.result）
+    const trajSteps = result.bestTrajectory?.steps ?? [];
+    const changedFiles = extractChangedFiles(trajSteps);
+    const verifyCmd = extractVerifyCommands(trajSteps);
+
     // aborted 时把已流出正文带给宿主（sseInteractive/Repl 落 turn）
     const partialText = result.bestTrajectory?.partialText as string | undefined;
 
@@ -195,6 +205,8 @@ export async function runAgentTask(
       success,
       stopReason: result.bestTrajectory?.stopReason,
       budgetReport: result.budgetReport,
+      changedFiles,
+      verifyCmd,
       ...(partialText ? { partialText } : {}),
     });
 
@@ -203,6 +215,8 @@ export async function runAgentTask(
       stopReason: result.bestTrajectory?.stopReason,
       durationMs: Date.now() - start,
       budgetReport: result.budgetReport,
+      changedFiles,
+      verifyCmd,
       ...(partialText ? { partialText } : {}),
     };
   } catch (err: any) {

@@ -41,6 +41,7 @@ import AgentsCommand from './commands/AgentsCommand.js';
 import FeatureCommand from './commands/FeatureCommand.js';
 import TreeCommand from './commands/TreeCommand.js';
 import { AgentTree } from './AgentTree.js';
+import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../loop/trajectory.js';
 
 export class Repl {
   private registry = new CommandRegistry();
@@ -523,6 +524,8 @@ export class Repl {
         }
       }
 
+      const bestTraj = (result as any)?.bestTrajectory;
+      const trajSteps = bestTraj?.steps ?? [];
       this.session.addTurn({
         id: Date.now().toString(36),
         timestamp: Date.now(),
@@ -535,6 +538,10 @@ export class Repl {
           summary,
           budgetReport: result.budgetReport,
           stopReason,
+          goal: issue,
+          changedFiles: extractChangedFiles(trajSteps),
+          verifyCmd: extractVerifyCommands(trajSteps),
+          outcome: mapOutcome(stopReason),
         },
       });
       this.saveSession();
@@ -573,7 +580,7 @@ export class Repl {
         tier: this.session.tier,
         durationMs,
         ...(partialText ? { partialText } : {}),
-        result: { success: false, summary: '已中断', stopReason: 'aborted' },
+        result: { success: false, summary: '已中断', stopReason: 'aborted', goal: issue, changedFiles: [], verifyCmd: [], outcome: 'aborted' },
       });
       this.saveSession();
     } catch {}

@@ -25,6 +25,7 @@ import { stringWidth, padByWidth } from './stringWidth.js';
 import { fuzzyFilter, fuzzyScore } from './FuzzyMatcher.js';
 import { buildHelpView } from './commands/HelpCommand.js';
 import type { ModelProvider } from './types.js';
+import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../loop/trajectory.js';
 
 // ---- line 模式渲染纯助手（模块级，便于测试） ----
 const ANSI_DIM = '\x1b[2m';
@@ -1342,7 +1343,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           tier: session.tier,
           durationMs: Date.now() - startedAt,
           ...(partialText ? { partialText } : {}),
-          result: { success: false, summary: '已中断', stopReason: 'aborted' },
+          result: { success: false, summary: '已中断', stopReason: 'aborted', goal: task.split('\n\n【用户插话')[0], changedFiles: [], verifyCmd: [], outcome: 'aborted' },
         };
         try { session.addTurn(abortedTurn); } catch {}
         try { rollout.appendTurn(session.id, abortedTurn); } catch {}
@@ -1368,9 +1369,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
             success: !!r?.success,
             summary,
             budgetReport: r?.budgetReport as any,
+            stopReason,
+            goal: task.split('\n\n【用户插话')[0],
+            changedFiles: (r as any)?.changedFiles ?? [],
+            verifyCmd: (r as any)?.verifyCmd ?? [],
+            outcome: mapOutcome(stopReason),
           },
         };
-        (turn.result as any).stopReason = stopReason;
         try { session.addTurn(turn); } catch {}
         try { rollout.appendTurn(session.id, turn as any); } catch {}
         // answered 时把模型正文呈现给用户（/edit 可取回）

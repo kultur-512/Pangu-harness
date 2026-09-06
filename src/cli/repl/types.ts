@@ -35,6 +35,9 @@ export type StepEvent =
     };
 
 // ==================== Session ====================
+/** R3: 回合结局显式枚举（多级摘要 L1 envelope 聚合用） */
+export type TurnOutcome = 'completed' | 'answered' | 'max-steps' | 'consecutive-failures' | 'aborted' | 'no-verification';
+
 export interface Turn {
   id: string;
   timestamp: number;
@@ -47,6 +50,14 @@ export interface Turn {
     budgetReport?: BudgetReport;
     /** 回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification）。 */
     stopReason?: string;
+    /** R3: 任务目标（userInput 规范化，L1 envelope 目标锚点） */
+    goal?: string;
+    /** R3: 变更文件集（从 trajectory 步骤的 write_file/edit_file/bash 重定向抽取，L2 变更索引） */
+    changedFiles?: string[];
+    /** R3: 验证命令（bash 验证脚本，用于评估"真实验证 vs 形式验证"） */
+    verifyCmd?: string[];
+    /** R3: 回合结局显式枚举（stopReason 的规范化版本，便于聚合） */
+    outcome?: TurnOutcome;
   };
   tier: Tier;
   durationMs?: number;
