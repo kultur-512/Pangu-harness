@@ -25,3 +25,34 @@
 - B1 评审 wanghaoyu1（R3 + eval runner，11 commits）；通知王佐 rebase。
 - kultur 端点恢复 → F6 真机四用例 + R6 真实数据首跑。
 - 迭代3（/model list 通用化 + env 顶层块）——任务卡上仍挂未做。
+
+## 0.7.4 批次（部署陈旧 dist + 中断语义修正 + `?` 透传）
+
+### 想做什么（目的）
+
+控制人实测"提交任务后莫名中断（235ms）"：LM Studio 对 diffusion 模型（openpangu-7b-diffusion-base-i1）chat/completions 返回 200-garbage → EMPTY_RESPONSE → streamChat 回退裸 doComplete 穿透 → chaser 兜底硬编码 `stopReason='aborted'` → 模型错误被伪装成用户中断。同时确认 zhulong 跑的是 00:03 旧 dist（0.7.1 批次 B 中途），0.7.2/0.7.3 修复全不在。方案：`docs/panshalach/PLAN-0.7.4-FOR-CLAUDECODE.md`（控制人下达，Claude Code 执行）。
+
+### 实际干了什么（事实）
+
+- **A 部署**：npm run build 重建；`src/cli.ts` warnIfDistStale()（mtime 对比 + TTY only + headless 静默）。
+- **B 中断语义**：TurnStopReason/TurnOutcome 加性 `'error'`（REFACTOR-ASSESSMENT §4 申报 ⑦，队友需 rebase）；syntheticFailureTrajectory 按 isAbortLikeError 区分 aborted/error；streamChat 三处裸回退收敛为 completeLikeFallback（withRetry + emptyResponse 转空串）；EMPTY_RESPONSE 文案追加 diffusion 指引；UI 四态文案（error → "✗ 任务执行失败" + 端点提示）；abortPromise 死代码删除 + aborted turn 落盘并入统一路径（顺带补齐活路径 partialText 缺口）。
+- **C `?` 透传**：line 主路径 `trimmed === '?'` 截获删除（控制人裁决"输入问号也是给模型的信息"）；/help 与 buildQuickHelpLines 保留；横幅第三行同步。
+- **D hermes 二次对齐**：`docs/panshalach/HERMES-ALIGN-0.7.4.md`——五项判定 4 推迟/拒绝 + 1 最小采纳候选（classic 路径 solveIssue 漏传 windowTokens，0.7.3 窗口预算该路径不生效）。
+- **E 问题 2**：tool schema ≈2K token/请求结论登记 ROADMAP-NEXT §3.2 低优先（intent 过滤 / PANSHA_TOOLS_MODE / description 一行化），不实施。
+
+### 测试与验证
+
+- tsc EXIT=0；全量 716 例：715 pass + 1 skip + 0 fail（基线 664 + 新增 ErrorSemantics 7 / QuestionMarkPassthrough 3 / streamChat 回退重试 2）。
+- check-protected-files PASS；verify-panshalach-cleanup 静态 PASS——0.7 段 continueCount zero refs FAIL 为 R6 域 schema.mjs/smoke-eval.mjs 残留（f9219ee 引入，本轮前已存在，禁越界销项）。
+- rebuild 后 dist 特征 grep 全中（completeLikeFallback/isAbortLikeError/warnIfDistStale；`trimmed === '?'` 归零）。
+
+### 卡点 / 需要别人决定（接口争议）
+
+- R6 schema（TURN_STOP_REASONS）仍是 v0.6.5 方言：含 verification-failed-continue、缺 answered/error——评测 verdict 消费前需王浩宇对齐（0.7.0 的 answered 也没同步，不是本轮新欠）。
+- classic/Repl 路径 windowTokens 漏传（hermes 调研唯一建议采纳项，~40 行）——待排期。
+- continueCount 在 R6 域的残留引用——待赵天昂销项（cleanup 脚本恢复全绿）。
+
+### TODO（明天 / 下一轮）
+
+- 控制人真机复测：换标准自回归 7B（diffusion 模型不被 LM Studio chat 端点支持）+ 四路径。
+- commit + push 后通知队友 rebase（TurnStopReason 加性变更）。

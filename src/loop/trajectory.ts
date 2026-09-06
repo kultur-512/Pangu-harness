@@ -51,9 +51,19 @@ export function syntheticFailureTrajectory(lastError?: string): Trajectory {
     id: 'rollout-all-failed',
     steps: [],
     success: false,
-    stopReason: 'aborted',
+    stopReason: isAbortLikeError(lastError) ? 'aborted' : 'error',
     lastError,
   };
+}
+
+/**
+ * 异常类别判定（0.7.4 任务 B2）：只有"用户/信号主动中止"才算 aborted；
+ * 其余一切异常（EMPTY_RESPONSE、网络、5xx、解析）归入 'error'——
+ * 模型故障不得被伪装成用户中断（"已中断·现场已保留"只为真中断保留）。
+ */
+export function isAbortLikeError(errMsg?: string): boolean {
+  const msg = String(errMsg ?? '');
+  return msg.includes('TASK_ABORTED') || /AbortError/i.test(msg) || /aborted before dispatch/i.test(msg);
 }
 
 // ── R3: Turn.result 结构化字段提取 ──
@@ -156,7 +166,7 @@ export function extractVerifyCommands(steps: TrajectoryStep[]): string[] {
  * 未知值回落 'completed'（保守）。
  */
 export function mapOutcome(stopReason?: string): import('../cli/repl/types.js').TurnOutcome {
-  const valid = new Set(['completed', 'answered', 'max-steps', 'consecutive-failures', 'aborted', 'no-verification']);
+  const valid = new Set(['completed', 'answered', 'max-steps', 'consecutive-failures', 'aborted', 'no-verification', 'error']);
   if (stopReason && valid.has(stopReason)) {
     return stopReason as import('../cli/repl/types.js').TurnOutcome;
   }

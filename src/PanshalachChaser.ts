@@ -428,6 +428,9 @@ export class PanshalachChaser {
       best = traj;
     } catch (e: any) {
       // 空批保护：单 rollout 异常时合成失败轨迹，绝不返回 undefined / 抛给上层。
+      // 0.7.4：syntheticFailureTrajectory 按"真中断 vs 模型异常"区分 stopReason
+      // （TASK_ABORTED/AbortError → aborted；EMPTY_RESPONSE/网络/解析 → error），
+      // 模型故障不再被伪装成用户中断。
       const errMsg = (e as Error)?.message || String(e);
       best = syntheticFailureTrajectory(errMsg);
       budgetNotes.push(`rollout 失败原因：${errMsg}`);

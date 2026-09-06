@@ -102,6 +102,7 @@
 | **0.7.3 登记（L 级）**：subagent 委派 / hooks 总线 / 后台 bash | — | L 级，明确不进本轮（USABLE-PLAN-0.7.3 §一） |
 | **0.7.3 引入边界**：MCP 工具结果无验证尾标（`describeResult` 尾标只覆盖内置 bash/write_file/edit_file/read_file/glob/grep；MCP 调用成功不计 PASS） | `engineAdapter.ts` | 遗留：MCP 结果验证分类策略待定（宁缺毋滥，防 MCP 自述伪装真实验证） |
 | 未采纳（记录在案）：事件 hash-chain、持久化幂等键、auditStatus 完整机制、SummaryNode 全量血缘、`compaction.mode` 四段开关 | — | 9/24 后按需立项 |
+| **0.7.4 登记（低优先，不进本轮）**：6 工具 schema ≈2K token/请求（8K 窗口占 25%），对不支持 native FC 的模型（diffusion/1B 实测）纯开销且有行为牵引 | `engineAdapter.ts:249-319`（BUILTIN_TOOL_SCHEMAS 单点）/ `VerifyCritiqueLoop.ts:313-321`（注入点） | 若做（9/24 评测后按消融需求立项）：①toolSchemas 按 intent 过滤（search 只读三件，chat 已零工具）②`PANSHA_TOOLS_MODE=text\|native\|off` 开关（off=请求体不带 tools，兼评测消融维度）③schema description 一行化。见 PLAN-0.7.4 §5 |
 
 ## 4. 已裁决不做 / 推迟（恢复指针）
 

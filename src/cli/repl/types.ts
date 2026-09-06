@@ -35,8 +35,8 @@ export type StepEvent =
     };
 
 // ==================== Session ====================
-/** R3: 回合结局显式枚举（多级摘要 L1 envelope 聚合用） */
-export type TurnOutcome = 'completed' | 'answered' | 'max-steps' | 'consecutive-failures' | 'aborted' | 'no-verification';
+/** R3: 回合结局显式枚举（多级摘要 L1 envelope 聚合用；0.7.4 加性 'error'） */
+export type TurnOutcome = 'completed' | 'answered' | 'max-steps' | 'consecutive-failures' | 'aborted' | 'no-verification' | 'error';
 
 export interface Turn {
   id: string;
@@ -48,7 +48,7 @@ export interface Turn {
     summary: string;
     trajectoryId?: string;
     budgetReport?: BudgetReport;
-    /** 回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification）。 */
+    /** 回合停止原因（completed/answered/max-steps/consecutive-failures/aborted/no-verification/error）。 */
     stopReason?: string;
     /** R3: 任务目标（userInput 规范化，L1 envelope 目标锚点） */
     goal?: string;
@@ -251,13 +251,15 @@ export interface TaskState {
   updatedAt: number;
 }
 
-// ==================== 接口契约 v4：单层终止语义（2026-09-05 0.7） ====================
+// ==================== 接口契约 v4：单层终止语义（2026-09-05 0.7；0.7.4 加性扩展） ====================
 /**
  * 回合停止原因（单层终止；判官机制已于 0.7 摘除，见 archive/2026-09-05-removals/）：
  * - completed：轨迹含真实验证 PASS（验证通过）；
  * - answered：end_turn（无工具调用）且存在面向用户的正文答复——CC 式自然停即成功，
  *   计入 success 与 UI"已回复"，但【不】作为记忆 success 卡信号（见 refine 收紧）；
- * - max-steps / consecutive-failures / no-verification / aborted：失败系。
+ * - max-steps / consecutive-failures / no-verification / aborted / error：失败系。
+ * - error（0.7.4 加性新增）：模型/网络/解析等运行时异常——与 aborted（用户主动中止）
+ *   严格区分，杜绝"模型故障被伪装成用户中断"（UI 文案不同）。
  * R6 评测 schema 的 verdict 定义依赖本枚举，改动需同步 scripts/eval/results schema。
  */
 export type TurnStopReason =
@@ -266,7 +268,8 @@ export type TurnStopReason =
   | 'max-steps'              // 步数耗尽
   | 'consecutive-failures'   // 连续工具失败保护
   | 'aborted'                // 用户/信号中止
-  | 'no-verification';       // end_turn 但无正文无工具（空白/空转）
+  | 'no-verification'        // end_turn 但无正文无工具（空白/空转）
+  | 'error';                 // 0.7.4：模型/网络/解析异常（非用户中断）
 
 // ==================== Config ====================
 export interface ProviderConfig {

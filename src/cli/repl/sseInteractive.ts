@@ -199,6 +199,7 @@ export function nextStepHint(stopReason?: string): string {
   if (sr === 'completed') return '继续下一个任务 · /memory 查看沉淀';
   if (sr === 'answered') return '继续追问或下达新任务';
   if (sr === 'aborted') return '已中断 · 现场已保留 · 重新描述任务可继续';
+  if (sr === 'error') return '任务执行失败 · 检查模型端点是否为对话模型（diffusion/embedding 不受支持）· 或重试';
   if (sr === 'max-steps') return '步数达上限 · 可拆小任务重试';
   return '模型未完成验证 · 可补充要求重试 · /undo 回退变更';
 }
@@ -242,7 +243,7 @@ export function buildBanner(opts: {
   return [
     `烛龙 Zhulong v${opts.version ?? pkgVersion()}`,
     metaBase + cwd,
-    '  ? 快捷帮助 · /help 全部命令 · Ctrl+C 中断任务/二次退出',
+    '  /help 全部命令 · Ctrl+C 中断任务/二次退出',
   ];
 }
 
@@ -1158,14 +1159,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       try { bridge.setRunning(true); } catch {}
     }
 
-    // Abort support: the engine cannot be hard-killed mid-step today, so we
-    // race the run against an abort promise (same pattern as Repl.ts). Once
-    // aborted, late events are dropped and the prompt returns immediately.
+    // Abort support: signal 贯穿 solveIssue → loop → 模型 fetch / 工具执行，
+    // 中断时 runPromise 以 stopReason='aborted' 正常 settle（见下方 else 分支）。
+    // 0.7.4 B6：移除永不 settle 的 abortPromise 死代码——abortReject 从未被调用，
+    // Promise.race 的 aborted 分支不可达（真中断由 SIGINT → currentAbort.abort() →
+    // loop signal 检查 → stopReason='aborted' 链路承担）。
     const controller = new AbortController();
     currentAbort = controller;
     lastAborted = false;
-    let abortReject: ((reason?: any) => void) | null = null;
-    const abortPromise = new Promise<never>((_, reject) => { abortReject = reject; });
 
     const startedAt = Date.now();
     // 任务边界重取当前模型真实窗口（/model 切换后立即生效）
@@ -1304,59 +1305,23 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
         }
       );
 
-      const raced = await Promise.race([
-        runPromise.then((r) => ({ kind: 'done' as const, result: r })),
-        abortPromise.then(() => ({ kind: 'aborted' as const })).catch(() => ({ kind: 'aborted' as const })),
-      ]);
+      // 0.7.4 B6：abortPromise 已删——中断时 runPromise 以 stopReason='aborted'
+      // settle，统一走下方 else 分支（三态文案 + partialText 落盘）。
+      const raced = { kind: 'done' as const, result: await runPromise };
 
-      if (raced.kind === 'aborted') {
-        try { controller.abort(); } catch {}
-        // abort 已贯穿 solveIssue → loop → 模型 fetch / 工具执行。
-        // 等待底层 promise 真正 settle（signal 已触发，通常在当前 in-flight
-        // 请求中断后立即返回），避免"UI 已返回但网关仍在刷 POST"。
-        // 捕获 settle 结果——aborted 轨迹的 partialText 在这里。
-        let settled: any = null;
-        try { settled = await runPromise; } catch {}
-        // mark this turn as aborted so the queue-drain loop below does NOT
-        // auto-execute the remaining queued tasks (the user keeps them to
-        // rerun deliberately; previously lastAborted was never set → aborted
-        // turns still drained and ran queued tasks automatically).
-        lastAborted = true;
-        // abort semantics: unconsumed steers are dropped (injected ones
-        // cannot be recalled); queued TASKS are kept for the user to rerun.
-        const droppedSteers = queue.consumeSteers();
-        updateQueueCount();
-        const tail = droppedSteers.length > 0 ? `（${droppedSteers.length} 条未注入插话已丢弃；排队任务保留）` : '';
-        // 中断提示合并为一条（SIGINT 处理器不再另发"已请求中断"），
-        // 并带上 aborted 场景的「下一步」建议。
-        const abortMsg = `⏹ 任务已被中断 · 现场已保留 · 重新描述任务可继续${tail}`;
-        if (!useRich) { renderer.writeLine(renderer.color(abortMsg, 'yellow')); recordOutput(abortMsg); }
-        else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: abortMsg, level: 'warn' });
-        // 中断现场落盘：aborted 回合也写 turn（session + rollout
-        // jsonl），携带已流出的部分正文——"现场已保留"从此有数据支撑。
-        const partialText: string | undefined = settled?.partialText;
-        const abortedTurn: any = {
-          id: Date.now().toString(36),
-          timestamp: Date.now(),
-          userInput: task.split('\n\n【用户插话')[0],
-          userInputType: 'task' as const,
-          tier: session.tier,
-          durationMs: Date.now() - startedAt,
-          ...(partialText ? { partialText } : {}),
-          result: { success: false, summary: '已中断', stopReason: 'aborted', goal: task.split('\n\n【用户插话')[0], changedFiles: [], verifyCmd: [], outcome: 'aborted' },
-        };
-        try { session.addTurn(abortedTurn); } catch {}
-        try { rollout.appendTurn(session.id, abortedTurn); } catch {}
-      } else {
-        // persist the completed turn into the session + rollout jsonl
-        // this task's rollouts are done
-        agentTree.markAll('running', 'done');
+      // persist the completed turn into the session + rollout jsonl
+      // this task's rollouts are done
+      agentTree.markAll('running', 'done');
+      {
         const r = raced.result;
         const stopReason = (r as any)?.stopReason;
-        // 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
+        // 中断语义保持：aborted 回合阻断排队任务自动执行（用户保留排队项手动重跑）
+        if (stopReason === 'aborted') lastAborted = true;
+        // 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；error→执行失败；其余→未通过验证
         const summary = stopReason === 'completed' ? '已通过验证'
           : stopReason === 'answered' ? '已回复'
           : stopReason === 'aborted' ? '已中断'
+          : stopReason === 'error' ? '任务执行失败'
           : r?.success ? '已通过验证' : '未通过验证';
         const turn = {
           id: Date.now().toString(36),
@@ -1365,6 +1330,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           userInputType: 'task' as const,
           tier: session.tier,
           durationMs: r?.durationMs ?? (Date.now() - startedAt),
+          ...(stopReason === 'aborted' && (r as any)?.partialText ? { partialText: (r as any).partialText } : {}),
           result: {
             success: !!r?.success,
             summary,
@@ -1526,11 +1492,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     }
     if (t === 'result' || event === 'result') {
       if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      // 三态文案：answered→已回复；aborted→已中断；success→已通过验证；否则未通过验证
+      // 四态文案：answered→已回复；aborted→已中断；error→执行失败；success→已通过验证；否则未通过验证
       const sr2 = data.stopReason;
       const resultText = sr2 === 'answered' ? '已回复' : sr2 === 'aborted' ? '已中断'
+        : sr2 === 'error' ? '任务执行失败'
         : data.success ? '完成（已通过验证）' : '任务未通过验证';
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: resultText, level: sr2 === 'answered' || data.success ? 'success' : 'warn' });
+      const level = sr2 === 'answered' || data.success ? 'success'
+        : (sr2 === 'aborted' || sr2 === 'error') ? 'error' : 'warn';
+      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: resultText, level });
       if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
         if (typeof b.pushBudget === 'function') b.pushBudget(data.budgetReport.usageRatio);
       }
@@ -1753,6 +1722,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           const stateText = sr === 'completed' ? '✓ 已通过验证'
             : sr === 'answered' ? '✓ 已回复'
             : sr === 'aborted' ? '↩ 已中断'
+            : sr === 'error' ? '✗ 任务执行失败'
             : data.success === true ? '✓ 已通过验证' : '✗ 未通过验证';
           const parts: string[] = [stateText];
           if (lineUi.stepCount > 0) parts.push(`${lineUi.stepCount} 步`);
@@ -1761,7 +1731,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
           if (tokens > 0) parts.push(`~${(tokens / 1000).toFixed(1)}k tokens`);
           const ratio = Number(data?.budgetReport?.usageRatio);
           if (Number.isFinite(ratio) && ratio > 0) parts.push(`预算 ${Math.round(ratio * 100)}%`);
-          const lineColor = sr === 'aborted' ? 'yellow'
+          const lineColor = (sr === 'aborted' || sr === 'error') ? 'yellow'
             : (sr === 'completed' || sr === 'answered' || data.success === true) ? 'green' : 'red';
           const summaryLine = parts.join(' · ');
           r.writeLine(r.color(summaryLine, lineColor));
@@ -1999,15 +1969,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       return true;
     }
 
-    if (trimmed === '?') {
-      // 快捷帮助面板 — 常用条目 + dim 尾行指向 /help 全部命令
-      const reg = await getSharedRegistry();
-      const ql = buildQuickHelpLines(reg.list().length);
-      ql.forEach((l, i) => {
-        renderer.writeLine(i === 0 ? renderer.color(l, 'bold') : i === ql.length - 1 ? renderer.color(l, 'gray') : l);
-      });
-      return true;
-    }
+    // 0.7.4 任务 C：`?` 不再截获——输入问号也是给模型的信息（控制人裁决），
+    // `?` 作为普通任务文本透传；帮助只走 /help（buildQuickHelpLines 保留供 /help 复用）。
 
     if (trimmed === '/help' || trimmed === '/h') {
       // 与派发器 / classic 完全一致的分组帮助（HelpCommand 渲染）

@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.7.4 (部署陈旧 dist 修复 + 中断语义修正 + `?` 透传 + hermes 二次对齐调研)
+
+方案：`docs/panshalach/PLAN-0.7.4-FOR-CLAUDECODE.md`（控制人实测驱动）。用户跑的 zhulong 是 **09-06 00:03 的旧 dist**（0.7.1 批次 B 中途构建），0.7.2/0.7.3 全部修复只在 src——"莫名中断""explore/rollout 英文相位线""旧 `?` 输出"三个观测全是旧代码。"提交任务后莫名中断（235ms）"因果链：LM Studio 对 diffusion 模型（openpangu-7b-diffusion-base-i1）chat/completions 报 `Unexpected endpoint or method. Returning 200 anyway` → 200-garbage → `EMPTY_RESPONSE` → streamChat 回退裸 doComplete（无 withRetry/无 emptyResponse 捕获）穿透 → chaser catch 兜底硬编码 `stopReason='aborted'` → UI 渲染"已中断·现场已保留"。**模型错误被伪装成用户中断。**
+
+**任务 A：部署修复**
+- `npm run build` 重建 dist（0.7.1-0.7.3 全部 src 改动生效）。
+- `src/cli.ts` 入口 `warnIfDistStale()`：任一 `src/**/*.ts` mtime 晚于 `dist/cli.js` 且交互模式（stdout TTY + 非 `PANSHA_HEADLESS`）时打一行黄字提醒"⚠ dist 落后于 src，请执行 npm run build"；headless/one-shot/生产无 src 场景静默；检查异常绝不阻塞启动。
+
+**任务 B：中断语义修正（契约加性变更，REFACTOR-ASSESSMENT §4 申报 ⑦）**
+- `src/cli/repl/types.ts`：`TurnStopReason`/`TurnOutcome` **加性新增 `'error'`**（模型/网络/解析异常），旧值语义不变。
+- `src/loop/trajectory.ts`：`syntheticFailureTrajectory` 新增 `isAbortLikeError` 判定——`TASK_ABORTED`/`AbortError`/`aborted before dispatch` → `'aborted'`（真中断语义不变）；其余一切异常 → `'error'`（`lastError` 保留原始错误首行）。
+- `src/model/openai-compatible.ts`：streamChat 三处裸 `doComplete` 回退（传输失败/非 200/流式无 delta）收敛为 `completeLikeFallback`——withRetry 包裹 + `emptyResponse` 重试耗尽转空串，与 `complete()` 同语义，消灭"三连发穿透"；`EMPTY_RESPONSE` 文案追加指引：`若使用 diffusion/embedding 类模型，LM Studio 对其 chat/completions 返回空体——请加载标准自回归对话模型`。
+- UI 四态文案（`sseInteractive.ts` nextStepHint/mapSseToBridge/renderSseEvent、`Repl.ts`、`RunCommand.ts`）：`error` → "✗ 任务执行失败 · <lastError 首行截 120 字> · 下一步: 检查模型端点是否为对话模型（diffusion/embedding 不受支持）· 或重试"；`aborted` 保持"已中断·现场已保留"。
+- `sseInteractive.ts` B6 死代码清理：`abortReject`/`abortPromise`/`Promise.race` aborted 分支整体移除（abortReject 从未被调用 → 分支永不可达）；真中断由 SIGINT → `currentAbort.abort()` → loop signal 检查 → `stopReason='aborted'` 链路承担；aborted turn 落盘并入统一路径，**顺带修复活路径不落 `partialText` 的缺口**。
+- **队友注意**：`TurnStopReason` 枚举加性新增 `'error'`，rebase 后请同步本地认知；R6 schema（`scripts/eval/results/schema.mjs` `TURN_STOP_REASONS`）仍为 v0.6.5 方言（含 verification-failed-continue、缺 answered/error），评测 verdict 消费前需对齐（归 R6 域，本轮未动）。
+
+**任务 C：`?` 行为（控制人裁决："输入问号也是给模型的信息，/help 再显示帮助"）**
+- `sseInteractive.ts` 删除 line 主路径 `trimmed === '?'` 快捷帮助截获——`?` 作为普通任务文本透传给模型（taskIntent 分类为 chat → 单次直答）；`/help` 行为不变；`buildQuickHelpLines` 保留（/help 复用）；横幅第三行同步去掉 `? 快捷帮助` 字样。
+
+**任务 D：hermes 二次对齐调研（纯调研不实施，`docs/panshalach/HERMES-ALIGN-0.7.4.md`）**
+- 上轮未采纳项五项判定：telemetry 单行埋点 **推迟**（rollout jsonl 账本已承载，缺的只是观测粒度）；不对称压缩 **推迟**（须先给 Turn 加角色字段，与 R8 envelope 强耦合）；TurnController 抽取 **推迟**（sseInteractive 2152 行 L 级拆分须测试先行）；会话 append-only 化 **拒绝**（rollout jsonl 已提供崩溃安全，SessionStore 是非权威快照；hermes 自己已反向演进 JSONL→SQLite）；**模型切换计量重置 → 建议采纳最小面**（classic/Repl 路径 `solveIssue` 漏传 `windowTokens`，0.7.3 窗口预算在该路径不生效——遗留为独立小项）。
+
+**问题 2 结论（登记不实施，ROADMAP-NEXT §3.2）**
+- 6 工具 schema ≈2K token/请求（8K 窗口占 25%），对不支持 native FC 的模型（diffusion/1B 实测）纯开销且有行为牵引。低优先三项：toolSchemas 按 intent 过滤（search 只读三件，chat 已零工具）/ `PANSHA_TOOLS_MODE=text|native|off` 开关（兼评测消融维度）/ schema description 一行化。
+
+**验证记录（Windows / Node 22，2026-09-06）**
+- `npx tsc --noEmit` EXIT=0。
+- 全量 `node --test --import tsx --test-concurrency=4 "tests/**/*.test.ts"`：**716 例：715 pass + 1 skip + 0 fail**（0.7.3 基线 664 例 + 新增 ErrorSemantics 7 例 / QuestionMarkPassthrough 3 例 / streamChat 回退重试 2 例；高并发偶发进程级崩溃假象复跑消失，最终一次全绿）。
+- `node verify-panshalach-cleanup.mjs`：静态检查 PASS；0.7 段仅 `continueCount zero refs` FAIL——由 R6 域 `scripts/eval/{results/schema.mjs,smoke-eval.mjs}` 残留引用导致（判官语义字段进评测 schema 是 R6 合入 f9219ee 引入，**本轮 start 前已存在**，归 R6/赵天昂域销项，禁越界）。
+- `node scripts/check-protected-files.mjs` PASS（TurnStopReason 六旧值全在 + 加性值不违约）。
+- `npm run build` EXIT=0；dist 特征 grep：`VERIFICATION: APPLIED`/`buildBanner`/`completeLikeFallback`/`isAbortLikeError`/`warnIfDistStale` 均在，`trimmed === '?'` 为 0。
+
+**真机复测指引（待控制人）**
+- LM Studio 当前加载的 `openpangu-7b-diffusion-base-i1` **不支持 chat/completions**（返回 200-garbage）——请加载标准自回归对话模型后重试。
+- dist 重建后启动横幅应显示 v0.7.3+ 三行（模型/档位/模式）；若 src 有未构建改动会出现"⚠ dist 落后于 src"黄字提醒。
+- 四路径复测：`1` / `你好，回答我你是谁`（单次出正文）；Ctrl+C（网关停 POST）；`hello.txt`（先搜索搜不到询问）。
+
+**Risks**
+- fetch 发出后 abort 只中断读取/连接，网关侧生成可能仍算完（0.7 已知边界，如实声明）。
+- sseInteractive 活路径 aborted turn 现依赖 runPromise settle 后的 `stopReason==='aborted'` 分支落 partialText——若 abort 发生在 runAgentTask 之外的更早窗口（如审批挂起），落盘路径仍走 catch 分支（无 partialText，可接受）。
+- `?` 透传后，弱模型对 `?` 输入的回答质量取决于模型本身（1B 可能返回空泛答复）——语义上"给模型的信息"由模型消化，不再有本地兜底文案。
+
 ## 0.7.3 (主链确定性：真实成功信号入册 + 三入口审批/中断透传 + 窗口预算挂真值 + 中断现场落盘)
 
 方案：`docs/panshalach/USABLE-PLAN-0.7.3.md`（5 份子智能体审查报告收敛——CC / dsh / hermes / oh-my-pi / 红队对抗自审）。红队用可复现探针实测出**两个被 629 例绿灯密封的 P0**：真实工具成功被误判为失败（唯一 PASS 产出方是 smoke mock，真实引擎的 `EXIT_CODE:0`/`WRITE_SUCCESS:` 被判 FAIL，勤奋模型被连败掐死、只说话的模型反而 `answered` 计成功）、completed 真机不可达导致记忆闭环死码；外加文档主验证命令的审批断链（A3）与 classic 假中止（A4）。本轮 13 项三梯队全部落地，回答一个问题：**砍掉什么、修什么，才能让评委/新用户明天拿真实模型跑通一天**。
