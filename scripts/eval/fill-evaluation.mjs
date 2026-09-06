@@ -16,6 +16,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
+import { normalizeFailureTaxonomy } from './results/schema.mjs';
 
 const ROOT = resolve(process.cwd());
 const EVALUATION_PATH = resolve(ROOT, 'docs', 'panshalach', 'EVALUATION.md');
@@ -37,7 +38,8 @@ function formatResultRow(r) {
   const memVerified = (r.memory?.verifiedCardIds || []).length;
   const promptChars = r.prompt?.chars || 0;
   const duration = r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : '?';
-  const failure = r.failureTaxonomy?.primary || '—';
+  const tax = normalizeFailureTaxonomy(r.failureTaxonomy);
+  const failure = tax ? `${tax.primary}${tax.secondary ? ' + ' + tax.secondary : ''}` : '—';
 
   return `| ${taskId} | ${tier} | ${verdict} | ${signal} | ${memInjected}/${memVerified} | ${promptChars} | ${duration} | ${failure} |`;
 }

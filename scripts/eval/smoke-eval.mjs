@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 // scripts/eval/smoke-eval.mjs
 // R6 冒烟测试：mock 模式一键跑通所有 T1-T5，验证 runner 骨架可执行。
-//
-// 与 run-eval.mjs --mock 的区别：
-//   smoke-eval.mjs 是独立的冒烟脚本，硬编码 mock 数据，不依赖任何外部服务。
-//   用于 CI gate 快速验证 eval 基建完整性。
+// 用于 CI gate 快速验证 eval 基建完整性。
 //
 // 用法：
 //   node scripts/eval/smoke-eval.mjs
@@ -14,6 +11,7 @@
 import { resolve, relative } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
+import { validateResult } from './results/schema.mjs';
 
 const ROOT = resolve(process.cwd());
 const MOCK_RESULTS_DIR = resolve(ROOT, 'scripts', 'eval', 'results', 'mock');
@@ -21,11 +19,11 @@ const MOCK_RESULTS_DIR = resolve(ROOT, 'scripts', 'eval', 'results', 'mock');
 // ── Mock 任务 fixture（硬编码，不依赖文件读取） ──
 
 const MOCK_TASKS = [
-  { id: 'T1', tier: 'C', title: '约束任务', prompt: '修改 GerundSpinner.ts 帧率' },
-  { id: 'T2', tier: 'C', title: '跨文件任务', prompt: '重命名 getConfig → getConfigValue' },
-  { id: 'T3', tier: 'C', title: '长文档任务', prompt: '在 sseInteractive.ts 添加日志' },
-  { id: 'T4', tier: 'C', title: 'Resume 任务', prompt: '继续之前未完成的任务' },
-  { id: 'T5', tier: 'C', title: 'Compact 任务', prompt: '创建 tests/example.test.ts' },
+  { id: 'T1', tier: 'C', title: '单文件约束修改', prompt: '修改 GerundSpinner.ts 帧率' },
+  { id: 'T2', tier: 'C', title: '跨文件重构', prompt: '重命名 getConfig → getConfigValue' },
+  { id: 'T3', tier: 'C', title: '长文档理解', prompt: '在 sseInteractive.ts 添加 refined 日志' },
+  { id: 'T4', tier: 'C', title: '会话恢复', prompt: '继续 FeatureTracker.ts 未完成任务' },
+  { id: 'T5', tier: 'C', title: '上下文压缩后执行', prompt: '创建 tests/example.test.ts' },
 ];
 
 // ── Mock 结果生成 ──
@@ -63,48 +61,6 @@ function mockResult(task) {
   };
 }
 
-// ── 校验 ──
-
-/**
- * 校验结果是否符合 R6 合同必含字段。
- * @param {object} result
- * @returns {{ valid: boolean, missing: string[] }}
- */
-function validateResult(result) {
-  const required = [
-    'runId', 'source', 'seedSupport', 'verdict',
-  ];
-  const nested = {
-    verification: ['signal', 'exitCode', 'commands'],
-    memory: ['injectedCardIds', 'verifiedCardIds'],
-    prompt: ['chars', 'estimatedTokens', 'hash'],
-  };
-
-  const missing = [];
-
-  for (const key of required) {
-    if (result[key] === undefined || result[key] === null) {
-      missing.push(key);
-    }
-  }
-
-  for (const [group, keys] of Object.entries(nested)) {
-    if (!result[group]) { missing.push(group); continue; }
-    for (const key of keys) {
-      if (result[group][key] === undefined || result[group][key] === null) {
-        missing.push(`${group}.${key}`);
-      }
-    }
-  }
-
-  // 检查 artifacts（至少有一个产物路径）
-  if (!result.artifacts || Object.keys(result.artifacts).length === 0) {
-    missing.push('artifacts');
-  }
-
-  return { valid: missing.length === 0, missing };
-}
-
 // ── 主入口 ──
 
 async function main() {
@@ -118,7 +74,6 @@ async function main() {
     console.log(`[smoke-eval] 运行 ${task.id} [${task.tier}] ${task.title}...`);
     const result = mockResult(task);
 
-    // 校验 schema
     const { valid, missing } = validateResult(result);
     if (!valid) {
       console.error(`[smoke-eval] ${task.id} schema 校验失败! 缺少: ${missing.join(', ')}`);
@@ -130,12 +85,10 @@ async function main() {
     results.push(result);
   }
 
-  // 汇总
   const passed = results.filter(r => r.verdict === 'pass').length;
   const failed = results.filter(r => r.verdict === 'fail').length;
   console.log(`\n[smoke-eval] 汇总: ${results.length} runs | ${passed} pass | ${failed} fail`);
 
-  // 落盘
   await mkdir(MOCK_RESULTS_DIR, { recursive: true });
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const outPath = resolve(MOCK_RESULTS_DIR, `${dateStr}-mock-smoke.json`);
@@ -145,7 +98,7 @@ async function main() {
       generatedAt: new Date().toISOString(),
       source: 'mock-smoke',
       model: 'mock-7B',
-      runnerVersion: '0.1.0',
+      runnerVersion: '0.2.0',
     },
     summary: {
       summaryId: randomUUID(),
