@@ -392,3 +392,111 @@ push 待执行（本轮末尾 git push origin zhaotianang1）。
 | 下发说明 | `tasks/T1-T3-RUN-EVAL-OVERVIEW.md` | 273 行 | T1-T3 跑分任务下发（王浩宇 U4 接手清单 + 三段式 verify.sh + keyword check 模板） |
 | 日志 | 本文件追加段 | — | AGENT-CONTRIBUTION §10.1-B 纪律 |
 | Commit | `61c2a8e` | 1 文件 +273 行 | docs(eval): T1-T3 跑分任务下发说明 |
+
+---
+
+## 9/7 D1 上午 — pre-flight + Leader 销项指派（commit d3f8eb8）
+
+### 想做什么（目的）
+
+U1 D1 上午按 9/6 日志规划做 pre-flight check（git fetch + 看 PR + 看 Leader 推送）。
+原计划是"看完决定 PR #2 形态"，实际发现 Leader 0.7.4 commit bdcddd4 已**明文指派我销项**——
+continueCount 残留是 0.7.4 R6 域销项，我 9/6 误判为王浩宇 R6 runner 主线活，Leader 已纠正。
+
+### 实际干了什么（事实）
+
+#### 1. pre-flight 发现（9/7 上午首批信息）
+
+```
+$ git fetch origin master develop
+$ git status
+On branch zhaotianang1
+Your branch is up to date with 'origin/zhaotianang1'.
+nothing to commit, working tree clean
+```
+
+- PR #1 状态：通过 `git ls-remote origin 'refs/pull/1/*'` 查 head/MERGE ref 确认 = **MERGED**
+  · head = 13786bc（9/6 23:15 commit）
+  · MERGE ref 存在 + message "Pre Merge pull request !1 from soney/zhaotianang1"
+  · PR #1 包含 777e5eb (embed/cosine + NaN 守卫) + 80d3f08 (T1-T3 fixture) + 13786bc
+- origin/develop HEAD = f9219ee（王浩宇 R6 双轨合流）
+- zhaotianang1 独有 commit：61c2a8e (T1-T3 跑分下发) + 0be2586 (9/6 日志 23:50 段)
+- origin/master 仍 v0.6.4 HEAD（已确认 master 不再是事实源）
+
+#### 2. 0.7.4 + 0.8 立项调研（关键反转）
+
+- **0.7.4 commit bdcddd4**：Leader 9/6 19:52 推送，含部署陈旧 dist 修复 + TurnStopReason 加性 'error' + ? 透传 + hermes 二次对齐。
+  - commit message 明文写："verify-panshalach-cleanup 静态 PASS；0.7 段 continueCount zero-refs FAIL 为 R6 域 schema.mjs/smoke-eval.mjs 残留（f9219ee 引入，本轮前已存在，**禁越界，待赵天昂销项**）"
+  - 我 9/6 日志判断"continueCount 残留是王浩宇 R6 runner 主线活" → **错误**，Leader 正式判给我
+- **0.8 立项 commit 691e59b**：GAP-MATRIX-0.8.md（CC × hermes × 烛龙三方对比）+ PLAN-0.8-FOUNDATION.md（换地基·保语义）
+  - 硬边界 6 条：我的 P4 (embed.ts) 完全在路径外，R6 评测域零交集
+  - M1+M2-2/M2-6 是最小不可分割集；M2-4 (真实 usage) 对 R6 加性收益（与王浩宇协调点）
+
+#### 3. continueCount 销项（指派任务）
+
+**清理范围**（zhaotianang1 分支 working tree）：
+| 文件 | 行 | 性质 |
+|---|---|---|
+| `scripts/eval/results/schema.mjs:190` | 字段定义 | 删 |
+| `scripts/eval/results/schema.mjs:327` | 默认值 | 删 |
+| `scripts/eval/results/schema.mjs:7` | 注释说明 | 改 attemptCount |
+| `scripts/eval/smoke-eval.mjs:108` | mock T4 | 改 attemptCount=2 |
+| `scripts/eval/smoke-eval.mjs:106` | 注释 | 改 attemptCount |
+
+注释引用（trajectory.ts:6 / schema.mjs:7）已由 cleanup 脚本 stripComments 剥离，不算违规。
+
+**改动方案**：
+- schema.mjs：删字段定义 + 默认值；L7 注释 continueCount → attemptCount（v0.6.5 防伪造约束已为单一续跑计数源）
+- smoke-eval.mjs：T4 resume 演示 `r.continueCount = 1` → `r.attemptCount = 2`
+  · 语义对齐 attemptCount minimum:1（schema L199）；续跑一次 = 总尝试 2 次
+
+#### 4. 验证（三件套全绿）
+
+| 检查 | 结果 |
+|---|---|
+| `grep continueCount scripts/ src/ tests/` | ✅ 仅 2 处注释引用（stripComments 剥离）|
+| `node verify-panshalach-cleanup.mjs` | ✅ **0.7 段从 FAIL → PASS**（8/8 CHECK OK）+ 静态段 PASS |
+| `node scripts/eval/smoke-eval.mjs` | ✅ 20/20 通过 schema（A/B/C/C4 × T1-T5 各 5）|
+
+#### 5. Commit + Push
+
+```
+$ git add scripts/eval/results/schema.mjs scripts/eval/smoke-eval.mjs
+$ git commit -m "chore(eval): 0.7.4 R6 域销项——continueCount 死字段删除 + attemptCount 替代"
+[d3f8eb8 2 files changed, 4 insertions(+), 5 deletions(-)]
+$ git push origin zhaotianang1
+0be2586..d3f8eb8  zhaotianang1 -> zhaotianang1
+```
+
+### 卡点 / 需要别人决定（接口争议）
+
+- **无新接口争议**。删除 continueCount 是单向销项，不影响 R6 双层方言兼容（validateResult 对 continueCount 字段无强依赖）。
+- **commit 提交 PR 形态**待定：(a) 直接 PR #2 进 develop / (b) 等 0.8 立项后王浩宇一起合 R6 双轨 / (c) 等 Leader 决定（任务 #2 跟踪）。
+
+### 自查
+
+- [x] PR #1 状态查清（MERGED，refs/pull/1/MERGE 实测）
+- [x] 0.7.4 + 0.8 立项调研完
+- [x] continueCount 销项（3 处代码 + 2 处注释同步）
+- [x] cleanup 0.7 段 PASS（从 FAIL 转 PASS）
+- [x] smoke-eval 仍 20/20 通过 schema
+- [x] tsc --noEmit 未跑（明晚 D1 晚跑）
+- [x] commit + push（d3f8eb8）
+
+### TODO（D1 下午 + 晚上）
+
+- [ ] D1 下午协调（任务 #3）：
+  - @王浩宇：attemptCount 替代 continueCount 方案已落地，王浩宇 R6 schema owner 评审 + M2-4 prompt.realUsageTokens 加性字段协调
+  - @王佐：taskState.ts (c7a1eca) 已落，/task CLI 现在可开工
+- [ ] D1 晚三件套（任务 #4）：tsc + npm test + cleanup PASS 复跑
+- [ ] D2 9/8：61c2a8e + 0be2586 归宿决策（任务 #2）+ handover §4 收口
+
+### 附 D：今日上午交付物清单（追加）
+
+| 类型 | 文件 | 行数 | 说明 |
+|---|---|---|---|
+| 销项 | `scripts/eval/results/schema.mjs` | +3 / -2 | continueCount 字段 + 默认值删除 + L7 注释同步 |
+| 销项 | `scripts/eval/smoke-eval.mjs` | +1 / -1 | T4 resume 演示 attemptCount 替代 |
+| 日志 | 本文件追加段 | — | AGENT-CONTRIBUTION §10.1-B 纪律 |
+| Commit | `d3f8eb8` | 2 文件 +4/-5 | chore(eval): 0.7.4 R6 域销项 |
+| Push | `0be2586..d3f8eb8` | — | origin/zhaotianang1 |

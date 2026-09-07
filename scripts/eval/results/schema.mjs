@@ -136,17 +136,19 @@ export const RESULT_SCHEMA = Object.freeze({
     finishedAt:      { type: 'string', format: 'date-time' },
     durationMs:      { type: 'integer', minimum: 0 },
     /**
-     * verdict（= TurnStopReason）映射规则（0.7 单层终止口径）：
-     * ┌──────────────────────────┬───────────────────────────────────────────┐
-     * │ 条件                      │ verdict                                   │
-     * ├──────────────────────────┼───────────────────────────────────────────┤
-     * │ 真实验证 PASS              │ 'completed'                              │
-     * │ 纯问答 end_turn 有正文      │ 'answered'（信息型成功，不计记忆 success）│
-     * │ 步数耗尽                   │ 'max-steps'                              │
-     * │ 连续工具失败保护            │ 'consecutive-failures'                   │
-     * │ 用户/信号中止              │ 'aborted'                                │
-     * │ end_turn 无正文无工具       │ 'no-verification'（空白/空转）           │
-     * └──────────────────────────┴───────────────────────────────────────────┘
+     * verdict 映射规则（v0.6.4 R0 + v0.6.5 R1/R2 对齐；0.7 判官摘除后修订）：
+     * ┌─────────────────┬────────────────┬──────────────────────────────────┐
+     * │ trajectory.success│ verifiedSteps │ verdict                          │
+     * ├─────────────────┼────────────────┼──────────────────────────────────┤
+     * │ true            │ *              │ 'completed'                      │
+     * │ false + end_turn│ 存在（fail）    │ 'no-verification'（0.7 前为     │
+     * │                 │                │  'verification-failed-continue'，│
+     * │                 │                │  判官摘除后该值不再产生）       │
+     * │ false           │ 不存在         │ 'no-verification'                │
+     * │ false + max-steps│ *              │ 'max-steps'                      │
+     * │ false + aborted │ *              │ 'aborted'                        │
+     * │ false + 缺 attemptCount│ *        │ 'no-verification'（防"一次通过"伪造）│
+     * └─────────────────┴────────────────┴──────────────────────────────────┘
      * R6 runner 方言另用 EVAL_VERDICTS（pass/fail/not_applicable/invalid），
      * 由 validateResult 双方言兼容；U6 ajv 接入后收敛到双层 object。
      *
@@ -189,11 +191,11 @@ export const RESULT_SCHEMA = Object.freeze({
       properties: {
         chars:           { type: 'integer', minimum: 0 },
         estimatedTokens: { type: 'integer', minimum: 0 },
+        // TODO(0.8): realUsageTokens (pending openPangu usage parsing — see PLAN-0.8 M2-4)
         hash:            { type: 'string', description: 'SHA-256 of normalized prompt' },
       },
     },
     stopReason:      { enum: [...TURN_STOP_REASONS] },
-    continueCount:   { type: 'integer', minimum: 0, description: '判官拦截续跑次数（0 = 未续跑）' },
     /**
      * 实际尝试次数（王浩宇 R1/R2 防伪造约束）：
      * - 缺省 / undefined → verifier 不判 'completed'，强制 'no-verification'
@@ -330,7 +332,6 @@ export function newResult(init) {
     verification: { signal: 'NO_VERIFICATION', exitCode: 0, commands: [] },
     memory: { injectedCardIds: [], verifiedCardIds: [] },
     prompt: { chars: 0, estimatedTokens: 0, hash: '' },
-    continueCount: 0,
     failureTaxonomy: 'none',
     artifacts: {},
     tags: [],
