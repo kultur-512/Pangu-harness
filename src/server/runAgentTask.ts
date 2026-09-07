@@ -10,8 +10,8 @@ import { Session } from '../cli/repl/Session.js';
 import { PromptBuilder } from '../cli/repl/PromptBuilder.js';
 import { TierRegistry } from '../tiers/TierConfig.js';
 import { resolveSharedClient } from '../cli/repl/ModelProvider.js';
-import { appendContextSnapshot, appendAgentEvent } from '../cli/repl/rolloutStore.js';
-import { createHash } from 'node:crypto';
+import { appendContextSnapshot, appendAgentEvent, readAgentEvents } from '../cli/repl/rolloutStore.js';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ModelProvider } from '../cli/repl/types.js';
 import { classifyTaskIntent } from '../cli/taskIntent.js';
 import { extractChangedFiles, extractVerifyCommands } from '../loop/trajectory.js';
@@ -30,6 +30,8 @@ export interface RunRequest {
    * built from the flat fields (server / headless compatibility).
    */
   session?: Session;
+  /** Optional stable task identifier for TaskState/event correlation. */
+  taskId?: string;
 }
 
 export interface RunResult {
@@ -95,6 +97,30 @@ export async function runAgentTask(
     if (req.workspace) session.workspace = req.workspace;
     if (req.model) session.model = req.model;
   }
+  session.currentTaskId = req.taskId ?? session.currentTaskId ?? `task-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+
+  // U2: explicit task requirement event; never infer events from model text.
+  appendAgentEvent(session.id, {
+    id: `evt-${randomUUID()}`,
+    ts: Date.now(),
+    kind: 'requirement',
+    topic: 'task',
+    summary: req.task.slice(0, 120),
+    sessionId: session.id,
+    taskId: session.currentTaskId,
+  });
+
+  // Create the control-plane state before PromptBuilder runs so the first
+  // prompt can carry the task anchor. Existing state is preserved on resume.
+  try {
+    const { TaskStateStore } = await import('../memory/taskState.js');
+    const taskStore = new TaskStateStore(session.workspace);
+    if (!taskStore.get(session.currentTaskId)) {
+      taskStore.create(session.currentTaskId, req.task);
+    }
+  } catch {
+    // State persistence is best-effort; the task itself must still run.
+  }
 
   // 进程级共享实例上的分层 provider 解析。
   // Explicit provider (caller) → shared provider → one hot-reload retry.
@@ -145,6 +171,7 @@ export async function runAgentTask(
         summary: `本次任务注入 ${injected.length} 张记忆卡`,
         refs: injected,
         sessionId: session.id,
+        taskId: session.currentTaskId,
       });
     }
   } catch {} // 审计账本 best-effort，绝不阻塞任务
@@ -182,6 +209,35 @@ export async function runAgentTask(
     });
 
     success = !!result.success;
+
+    // U2: record only the explicit terminal signal from the engine.
+    appendAgentEvent(session.id, {
+      id: `evt-${randomUUID()}`,
+      ts: Date.now(),
+      kind: result.bestTrajectory?.stopReason === 'completed' ? 'verified' : 'failure',
+      topic: result.bestTrajectory?.stopReason === 'completed' ? 'verification' : 'task',
+      summary: result.bestTrajectory?.stopReason === 'completed'
+        ? '任务通过真实验证'
+        : `任务未完成：${result.bestTrajectory?.stopReason ?? result.error ?? 'unknown'}`.slice(0, 120),
+      sessionId: session.id,
+      taskId: session.currentTaskId,
+      refs: result.bestTrajectory?.stopReason === 'completed'
+        ? extractChangedFiles(result.bestTrajectory?.steps ?? [])
+        : undefined,
+    });
+
+    try {
+      const { TaskStateStore } = await import('../memory/taskState.js');
+      const stateStore = new TaskStateStore(session.workspace);
+      // Fold the same explicit terminal event into the control-plane state.
+      // The event ledger remains the source of truth; folding is best-effort.
+      const events = readAgentEvents(session.id)
+        .filter((e) => e.taskId === session.currentTaskId)
+        .slice(-1);
+      if (events.length > 0) stateStore.applyEvents(session.currentTaskId, events);
+    } catch {
+      // A state-fold failure must not change the task result.
+    }
 
     // 记忆落定（单一落定点）——仅 completed（真实验证通过）触发
     // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不

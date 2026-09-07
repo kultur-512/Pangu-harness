@@ -46,6 +46,14 @@
 **Tests**: `npx tsc --noEmit` EXIT=0；`node --test --import tsx --test-concurrency=4 "tests/**/*.test.ts"` **663 例：662 pass + 1 skip + 0 fail**（2026-09-06，Windows/Node 22）。新增 5 个测试文件：`tests/integration/realEngineLoop.test.ts`、`tests/loop/RealSignal.test.ts`、`tests/loop/Resilience073.test.ts`、`tests/model/openai-compatible.073.test.ts`、`tests/server/Resilience073.test.ts`；`tests/loop/CritiqueContext.test.ts`（T2#9 新契约：>4000 才剪 + 头尾保留断言）与 `tests/repl/ModelProviderEnv.test.ts`（未知回落 32768）随契约更新
 **Risks**: 真机四用例待端点（LM Studio 恢复后按 F6 纪律执行，禁止预填 PASS）；记忆闭环本版仅 runAgentTask 路径（SSE/server/headless）生效，Repl 直调 PanshalachChaser 三口 finalize 待统一执行器收口；MCP 工具结果无验证尾标（尾标只覆盖内置工具，MCP 调用不参与 PASS 判定）；fetch 发出后 abort 网关侧生成可能仍算完（0.7 既有边界）
 
+## 0.6.5 (R4+R5：事件查询层 + TaskState 持久化，王佐 U1-U2)
+
+王佐 U1-U2 落地（存储层；/task CLI 为赵天昂 R5 另半，依赖本层）：
+- **R4 MemoryEventStore**：新增 `src/memory/events.ts`——在 rolloutStore 底座（`appendAgentEvent`/`readAgentEvents`，df7a119）之上提供 kind/topic/session/taskId/时间窗的有界查询 + `latest`/`countByKind`/`activeTaskIds`/`topicStats`/`taskSummaries`；只读、损坏行/缺会话容错、不绕过底座自行读 JSONL（测试 5 例）
+- **R5 TaskState 持久化**：新增 `src/memory/taskState.ts`——`TaskStateStore`（create/get/update/applyEvents）+ `rebuildFromEvents`/`foldEvent`；履约 R5 落地合同：`originalRequirement` 不可漂移、version 乐观锁（冲突抛错）、原子写盘（tmp→rename 无残留）、事件折叠幂等（foldedEventIds 记账去重）
+- `types.ts`：`TaskState` 增可选 `foldedEventIds`（幂等记账，向后兼容）
+- 测试：R5 10 例；全套 557（556 pass + 1 skip + 0 fail）
+
 ## 0.7.2 (反思迭代：意图分类前移接线 + 记忆落定主线版 + 集成测试锁死 + 提交物定稿)
 
 反思审查（`docs/panshalach/REFLECTION-0.7.2.md`，8 维度）核心结论：**主线空心化**——0.7/0.7.1 在集成线上完成了终止语义与 UI 工程，但意图分类在富化文本上分类致 chat/search 恒不可达（0.7 宣称的修复运行时未生效）、记忆闭环 4 环只真 1 环（refine/markVerified 生产调用点为零）；625 例全绿里没有一条入口级意图路由或记忆落定的集成断言。本轮消灭前两个（commit ff6dce9）。
@@ -145,6 +153,7 @@
 **验证边界（如实记录）**：openpangu-embedded-1b-i1 的 chat template 不支持 tool use（`tool_choice:required` 亦无法诱导 tool_calls）；文本协议 + few-shot 下可完成简单写文件任务（hello.txt 实测落盘、RBW/UNKNOWN_TOOL 反馈回路工作），但成功率与示例遵循度受 1B 能力限制。端到端验收建议使用支持 tool use / 指令遵循更强的模型（openPangu 7B+）。
 
 全套 545 例通过（另：node --test 全量高并发在 Windows 下有进程级崩溃假象，单文件或 `--test-concurrency=4` 均绿）。
+>>>>>>> origin/develop
 
 ## 0.6.4 (R0：双层终止语义 + 三先决修复)
 

@@ -379,6 +379,40 @@ export class PromptBuilder {
       this.tryInject('anchor-note', '\n（锚点将在探索阶段按档位自动选取关键文件与目录，用于上下文稳定）', lines);
     }
 
+    // === TaskState control-plane injection (U3) ===
+    // Keep this block immediately before recent-context: the task state is a
+    // stable, task-scoped prefix while recent turns remain the volatile tail.
+    if (this.session.currentTaskId) {
+      try {
+        const { TaskStateStore } = await import('../../memory/taskState.js');
+        const state = new TaskStateStore(this.session.workspace).get(this.session.currentTaskId);
+        if (state) {
+          const linesForState: string[] = [
+            '\n【任务状态】',
+            `任务编号：${state.taskId}`,
+            `原始需求：${state.originalRequirement}`,
+          ];
+          if (state.currentGoal) linesForState.push(`当前目标：${state.currentGoal}`);
+          if (state.decisions.length > 0) {
+            linesForState.push('已做决定：', ...state.decisions.map((d) => `- ${d.what}${d.why ? `（原因：${d.why}）` : ''}`));
+          }
+          if (state.milestones.length > 0) {
+            linesForState.push('里程碑：', ...state.milestones.map((m) => `- [${m.done ? 'x' : ' '}] ${m.title}${m.evidence ? `（${m.evidence}）` : ''}`));
+          }
+          if (state.verified.length > 0) {
+            linesForState.push('已验证：', ...state.verified.map((v) => `- ${v.what}`));
+          }
+          if (state.risks.length > 0) {
+            linesForState.push('风险：', ...state.risks.map((r) => `- ${r.risk}${r.mitigation ? `（应对：${r.mitigation}）` : ''}`));
+          }
+          if (state.nextStep) linesForState.push(`下一步：${state.nextStep}`);
+          this.tryInject('task-state', linesForState, lines);
+        }
+      } catch {
+        // TaskState is best-effort; a missing/corrupt state file must not break prompts.
+      }
+    }
+
     // === Recent context (compact) — dedup ===
     const recent = this.getRecentContext(3);
     if (recent) {

@@ -36,6 +36,7 @@ export class Session {
   public tier: Tier;
   public workspace: string;
   public model: string;
+  public currentTaskId?: string;
   public provider?: ModelProvider; // injected provider for model resolution
   // approval state (readonly is the safe default, day one)
   public approvalMode: SessionApprovalMode;
@@ -53,6 +54,7 @@ export class Session {
     this.tier = (init?.tier ?? 'high') as Tier;
     this.workspace = init?.workspace ?? process.cwd();
     this.model = init?.model ?? 'default';
+    this.currentTaskId = (init as any)?.currentTaskId;
     this.provider = (init as any)?.provider;
     this.approvalMode = ((init as any)?.approvalMode ?? 'readonly') as SessionApprovalMode;
     // 会话启动时把项目配置持久化的 'a' 决策并入放行清单
@@ -127,6 +129,7 @@ export class Session {
       tier: this.tier,
       workspace: this.workspace,
       model: this.model,
+      currentTaskId: this.currentTaskId,
       approvalMode: this.approvalMode,
       sessionApprovalAllowlist: [...this.sessionApprovalAllowlist],
       turns: this.turns,
