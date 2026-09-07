@@ -101,12 +101,18 @@ const command: Command = {
       });
 
       const duration = Date.now() - start;
-      // 三态文案：completed→已通过验证；answered→已回复；其余→未通过验证
+      // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = (result as any)?.bestTrajectory?.stopReason;
       const summary = stopReason === 'completed' ? '已通过验证'
         : stopReason === 'answered' ? '已回复'
+        : stopReason === 'error' ? '任务执行失败'
         : result.success ? '已通过验证' : '未通过验证';
-      ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
+      if (stopReason === 'error') {
+        const errLine = String((result as any)?.bestTrajectory?.lastError || '').split('\n')[0].slice(0, 120);
+        ctx.renderer.error(`完成 (${duration}ms) · ${summary}${errLine ? ' · ' + errLine : ''}`);
+      } else {
+        ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
+      }
 
       // answered 时把模型正文呈现给用户
       if (stopReason === 'answered') {

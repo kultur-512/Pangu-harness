@@ -146,6 +146,13 @@
 > - 契约影响（如实申报）：`Trajectory`/`Turn`/`RunResult`/`ModelClientOutput`/`CommandContext` 增**可选**字段（`partialText`/`truncated`/`approvalBridge`/`signal`/`windowTokens`）——全部加性，旧消费者不受影响；`solveIssue` 返回形状不变；`TurnStopReason` 枚举未变。
 > - 验收证据：CHANGELOG「0.7.3」段——`npx tsc --noEmit` EXIT=0；`node --test --import tsx --test-concurrency=4 "tests/**/*.test.ts"` **663 例：662 pass + 1 skip + 0 fail**（2026-09-06，Windows/Node 22）。
 > - 遗留（如实申报）：真机四用例待端点（F6，禁止预填 PASS）；Repl 直调三口 finalize 待统一执行器；MCP 工具结果无验证尾标；L 级六项（消息数组协议 / sseInteractive 拆分 / 会话树指针化 / subagent / hooks / 后台 bash）明确不进本轮——均登记 ROADMAP-NEXT §3.2。
+>
+> **⑦ 0.7.4——部署陈旧 dist 修复 + 中断语义修正 + `?` 透传（方案 `docs/panshalach/PLAN-0.7.4-FOR-CLAUDECODE.md`）**
+> - 改动摘要：`TurnStopReason`/`TurnOutcome` **加性新增 `'error'`**（模型/网络/解析异常），旧值语义不变；`syntheticFailureTrajectory` 按"真中断 vs 模型异常"区分（`isAbortLikeError`：TASK_ABORTED/AbortError → aborted，其余 → error + lastError 带出）——修复"LM Studio diffusion 端点 EMPTY_RESPONSE 被伪装成用户中断（已中断·现场已保留）"；streamChat 三处裸 doComplete 回退收敛为 `completeLikeFallback`（withRetry + emptyResponse 转空串，与 complete 同语义）；EMPTY_RESPONSE 文案追加 diffusion/embedding 指引；UI 四态文案（error → "✗ 任务执行失败" + 端点检查提示，nextStepHint/mapSseToBridge/renderSseEvent/Repl/RunCommand）；sseInteractive abortPromise 死代码删除（abortReject 从未被调用，race aborted 分支不可达——真中断由 signal 贯穿链路承担，aborted turn 落盘并入统一路径且补齐 partialText）；line 模式 `?` 截获移除（`?` 作为普通任务透传，控制人裁决；`/help` 与 buildQuickHelpLines 保留）；`src/cli.ts` dist-fresh mtime 检查（交互模式灰字提醒，headless/one-shot 静默）。
+> - 理由：控制人实测"提交任务后莫名中断（235ms）"——LM Studio 对 diffusion 模型（openpangu-7b-diffusion-base-i1）chat/completions 返回 200-garbage → EMPTY_RESPONSE → streamChat 回退裸调用穿透 → chaser 兜底硬编码 aborted。模型故障与用户中断必须语义分离。
+> - 影响面：`src/cli/repl/types.ts`（TurnStopReason 枚举加性新增——禁区再次触碰，**队友需 rebase 同步**；R6 schema `scripts/eval/results/schema.mjs` TURN_STOP_REASONS 为 v0.6.5 方言暂未同步 answered/error，评测 verdict 消费前需对齐）、`src/loop/trajectory.ts`、`src/PanshalachChaser.ts`（catch 注释，solveIssue 返回形状不变）、`src/model/openai-compatible.ts`（OpenAICompatClient 接口加性新增 completeLikeFallback）、`src/cli/repl/sseInteractive.ts`（B6 死代码 + C 截获移除 + 四态文案）、`Repl.ts`/`RunCommand.ts`（error 文案）、`src/cli.ts`（dist-fresh）；测试新增 ErrorSemantics（7 例）/QuestionMarkPassthrough（3 例）/streamChat 回退重试（2 例）。
+> - 验收证据：CHANGELOG「0.7.4」段——`npx tsc --noEmit` EXIT=0；全量 node --test 全绿（基线 664 例 + 新增 12 例）；`verify-panshalach-cleanup.mjs` + `scripts/check-protected-files.mjs` PASS；`npm run build` 后 dist 特征 grep。
+> - 遗留（如实申报）：hermes 二次对齐调研 `docs/panshalach/HERMES-ALIGN-0.7.4.md`（五项判定：4 推迟/拒绝 + 1 最小采纳候选——classic 路径 windowTokens 透传缺失）；tool schema 开销登记 ROADMAP-NEXT §3.2 低优先（intent 过滤 / PANSHA_TOOLS_MODE / description 一行化）。
 
 > 本期已执行 A/B/C/D（见 REFACTOR 计划）；下述 P1–P6 为后续里程碑。
 

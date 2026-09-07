@@ -2,7 +2,7 @@
 
 > 命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 产品：烛龙（Zhulong）· 内部代号 Panshalach（盤沙拉克）
-> 版本基线：v0.7.3（终止语义重构 + 意图前移 + 记忆落定主线版 + 主链确定性修复已落地）
+> 版本基线：v0.7.4（终止语义重构 + 意图前移 + 记忆落定主线版 + 主链确定性修复 + 中断语义修正——模型故障与用户中断严格分离）
 > 配套文档：[ARCHITECTURE.md](ARCHITECTURE.md)（架构）· [MEMORY-DESIGN.md](MEMORY-DESIGN.md)（记忆子系统）· [DEPLOY-CN.md](DEPLOY-CN.md)（部署）· [EVALUATION.md](EVALUATION.md)（评测，数据位为诚实占位）
 > 事实纪律：本文只声明已在代码中落地的能力；未完成项与待验证项显式标注，评测数据一律以真实 openPangu 运行回填（见 §6）。
 
@@ -29,7 +29,7 @@
 3. **压缩血统账本**（`compactService`，已落地）：`CompactResult` 携带 `generation(turnCount,lastTurnId)` / `coveredTurnIds` / `syntheticTurn`，apply 按覆盖账本安全合并（修复压缩期间新增轮静默丢失）；rewind 导致血统断开时拒绝 apply；压缩被移除轮次中的验证成功信号确定性补提为 success 卡（hash 去重）——压缩成为记忆沉淀入口而非信息黑洞。
 4. **回合三态终止语义**（0.7 重构，已落地）：`completed`（真实验证 PASS，喂记忆成功卡）/ `answered`（end_turn 有正文，计成功并呈现正文但不进记忆成功卡——UI 成功 ≠ 记忆成功）/ `no-verification`（空白空转，失败）；外置判官与 TestTimeOrchestrator 已摘除，回合上界压回单次 `maxSteps`（弱模型伪工具调用下续跑×N 不收敛的实测教训）。
 5. **意图分类前置**（`src/cli/taskIntent.ts`，已落地）：入口原文分类 chat/search/task/meta——问答不再被灌格式教学与工具 schema 空转，找文件类输入只读搜索、搜不到反问用户而非乱建文件；`PANSHA_INTENT_GATE=0` 逃生门。
-6. **AbortSignal 贯穿**（0.7，已落地）：`runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，Ctrl+C 真正中止任务（回合记 `aborted`），UI 等待底层 settle；0.7.3 起 one-shot/classic/simulate 三入口透传审批与中断信号，aborted 回合现场落盘（保留已流出正文）。已知边界如实声明：fetch 已发出后 abort 中断读取/连接，网关侧生成可能仍在后台算完；bash 子进程强杀已落地（0.7.1 tree-kill）。
+6. **AbortSignal 贯穿**（0.7，已落地）：`runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，Ctrl+C 真正中止任务（回合记 `aborted`），UI 等待底层 settle；0.7.3 起 one-shot/classic/simulate 三入口透传审批与中断信号，aborted 回合现场落盘（保留已流出正文）。0.7.4 中断语义修正：模型/网络/解析异常落独立 `error` 终态（UI"任务执行失败" + 端点检查提示），与用户中断严格分离；streamChat 非流式回退具备与 complete 一致的 withRetry/空响应保护。已知边界如实声明：fetch 已发出后 abort 中断读取/连接，网关侧生成可能仍在后台算完；bash 子进程强杀已落地（0.7.1 tree-kill）。
 7. **记忆写入闭环（任务自动产卡）**：主线已接线（0.7.2 `finalizeTaskMemory` 单一落定点）——completed 任务自动 `refine`（信号收紧为 `stopReason==='completed'` 或用户正向反馈）→ `save` → 投影失效重建，注入卡被真实写集触碰时自动 `markVerified`；0.7.3 真实成功信号入册后 completed 真机可达。覆盖 SSE/server/headless 路径（Repl 直调三口待统一执行器）；**尚未完成端到端真机验证，不以"已全面验证"口径声明**。压缩补漏提炼与用户显式 `/memory remember` 两条写入源已实现。
 8. **双通道工具协议 + 零依赖国产亲和**：原生 function calling 请求侧透传（tools + tool_choice:auto 随每次请求下发，抓包实证）与文本协议三路自适应解析（OpenAI JSON/文本/`<>` XML）——弱格式遵循小模型可用；`dependencies: {}` 零运行时依赖，Node ≥18 即可部署（详见 [DEPLOY-CN.md](DEPLOY-CN.md)）。
 

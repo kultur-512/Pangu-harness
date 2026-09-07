@@ -1,7 +1,7 @@
 # Panshalach 使用手册（烛龙 Zhulong）
 
 > 烛龙（Zhulong）· 内部代号盤沙拉克 Panshalach：基于 openPangu 的记忆增强长程上下文智能体。
-> 本手册对齐 **0.6.5 部署落地 + 0.7.0 终止语义重构 + 0.7.1–0.7.3 迭代**（意图前移 / 记忆落定 / 审批全入口透传 / 窗口预算挂真值 / 中断现场保留）。
+> 本手册对齐 **0.6.5 部署落地 + 0.7.0 终止语义重构 + 0.7.1–0.7.4 迭代**（意图前移 / 记忆落定 / 审批全入口透传 / 窗口预算挂真值 / 中断现场保留 / 中断与错误语义分离 / `?` 透传）。
 
 ## 1. 环境要求
 - Node ≥ 18（含全局 fetch；开发实测 Node 22）；TypeScript 5.6（构建）。
@@ -83,14 +83,17 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 | `meta` | `/命令`、`r 任务`、`s 任务` 前缀 | 不进 agent（本地命令处理） |
 
 - 逃生门：`PANSHA_INTENT_GATE=0` 关闭分类，全部按 execution 走完整循环。
-- **回合结局三态**：`completed`（真实验证 PASS → UI"已通过验证"，喂记忆成功卡）/ `answered`（end_turn 有面向用户正文 → UI"已回复"并显示正文，**不**喂成功卡）/ `no-verification`（空白空转 → UI"未通过验证"）；另有 `max-steps`/`consecutive-failures`/`aborted`。
+- **回合结局四态**：`completed`（真实验证 PASS → UI"已通过验证"，喂记忆成功卡）/ `answered`（end_turn 有面向用户正文 → UI"已回复"并显示正文，**不**喂成功卡）/ `no-verification`（空白空转 → UI"未通过验证"）/ `error`（0.7.4：模型/网络/解析异常 → UI"✗ 任务执行失败"并提示检查端点——**与用户中断严格区分**，模型故障不再伪装成"已中断"）；另有 `max-steps`/`consecutive-failures`/`aborted`（真中断，保持"已中断·现场已保留"）。
   - 0.7.3 起 `completed` **真机可达**：执行引擎对真实成功的工具结果（bash `EXIT_CODE:0` 尾行、写/改成功）确定性追加 `VERIFICATION: PASS` 规范尾标，验证信号不再只认 smoke mock；截断响应（`finish_reason=length`）禁判 answered，execution 意图下"只说话不动手"首次会被注入格式提醒重试一步。
+  - 0.7.4 起模型端点异常不再空转或伪装中断：EMPTY_RESPONSE/网络错误经重试后仍失败 → 回合落 `error`，UI 显示错误首行 + 端点检查提示（diffusion/embedding 类模型不被 LM Studio chat 端点支持）。
 
-## 6. Ctrl+C 与中断（0.7 AbortSignal 贯穿）
+## 6. Ctrl+C 与中断（0.7 AbortSignal 贯穿 + 0.7.4 语义分离）
 
 - 运行中 Ctrl+C **真正中止任务**：信号贯穿 `runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，回合记 `stopReason='aborted'`，UI 显示"已中断"并等待底层 settle——不再"提示符回来了、网关还在刷 POST"（0.7.3 起 classic REPL 路径同样贯穿，不再假中止）。
+- **中断 vs 错误（0.7.4）**：只有用户/信号主动中止才显示"已中断·现场已保留"；模型/网络/解析异常落 `stopReason='error'`，显示"✗ 任务执行失败 · <错误首行> · 检查模型端点是否为对话模型（diffusion/embedding 不受支持）· 或重试"。
 - 已知边界（如实声明）：fetch 已发出后 abort 中断的是读取/连接，网关侧生成可能仍在后台算完；bash 子进程强杀已落地（0.7.1 tree-kill：Windows `taskkill /T /F`，POSIX `kill(-pid)`）。
 - 会话安全（0.7.3 起**现场保留有数据支撑**）：中断的回合写入 session 与 rollout jsonl（可 `/rewind`/`--resume` 续接），并保留中断时已流出的部分正文（turn 的 `partialText` 字段）；中断前已解析未执行的工具调用补合成结果保持 call/result 成对；已写盘文件可用 `/undo` 撤销。
+- **dist-fresh 提醒（0.7.4）**：npm link 的全局 bin 指向 dist/——若 src 有比 dist 更新的改动，交互模式启动时会出现"⚠ dist 落后于 src，请执行 npm run build"黄字提醒（headless/一次性执行不打扰）。
 
 ## 7. 命令总表（REPL 内 `/` 前缀）
 

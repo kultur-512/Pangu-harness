@@ -2,7 +2,7 @@
 
 > 内部代号 盤沙拉克 Panshalach（包名/类名/存储/env）/ 外部产品 烛龙 Zhulong（CLI/欢迎/身份串/对外文档）。
 > 命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》。场景：软件工程长期维护。
-> 当前版本 **v0.7.3**：0.7.0 摘除判官/TestTimeOrchestrator（单层终止 + 单次 loop.run）；0.7.2 意图前移接线（4/4 入口）+ 记忆落定主线版（finalizeTaskMemory）；0.7.3 主链确定性——真实成功信号入册（completed 真机可达）、三入口审批/中断透传、窗口预算挂真值（未知回落 32768）、中断现场落盘（partialText）。打分体系与性能叙事装置已全部摘除（archive/2026-09-05-*），成败唯一由验证信号判定。
+> 当前版本 **v0.7.4**：0.7.0 摘除判官/TestTimeOrchestrator（单层终止 + 单次 loop.run）；0.7.2 意图前移接线（4/4 入口）+ 记忆落定主线版（finalizeTaskMemory）；0.7.3 主链确定性——真实成功信号入册（completed 真机可达）、三入口审批/中断透传、窗口预算挂真值（未知回落 32768）、中断现场落盘（partialText）；0.7.4 部署陈旧 dist 修复（dist-fresh 提醒）+ 中断语义修正（TurnStopReason 加性 'error'，模型故障不再伪装用户中断）+ `?` 透传 + hermes 二次对齐调研（HERMES-ALIGN-0.7.4.md）。打分体系与性能叙事装置已全部摘除（archive/2026-09-05-*），成败唯一由验证信号判定。
 > 交付时间盒：`WORK-PLAN-2DAY-UNITS.md`（U1-U9，9/24 交付）。技术审查基线：`docs/agent/handover/feature-zhaiyuanhao-long-context-memory-review.md`。
 
 ## 0. 当前执行管线（已定型）
@@ -59,10 +59,10 @@
 | **R0 双层终止 + 三先决** | ~~终止语义双层化（end_turn 自然停 + 判官有界续跑）~~ **0.7 修订**：判官已摘除（弱模型伪工具调用下续跑×3 不收敛，实测 905s），收缩为**单层终止**（end_turn 自然停 + maxSteps/连错上限）；TurnStopReason 契约（completed/answered/max-steps/consecutive-failures/aborted/no-verification）；count 翻倍修复 + withRetry/空批保护 + streamChat 透传 | Leader | 测试：Termination/taskIntent/retry/count 回归全绿（✅ 0.6.4 落地、0.7 重构）；**判官 + TestTimeOrchestrator 摘除（0.7.0 已落，archive/2026-09-05-removals/，回合上界=单次 maxSteps）** | U1-U2（✅） |
 | **R1 回合写闭环**（**最紧要**） | 任务落定统一 hook：`refine({trajectory, taskStyle, attemptCount, userFeedback})` → `save()` → `invalidateProjection()`；接 `Repl.executeTask`/`runAgentTask`/`sseInteractive` 三入口；正向 = 正向反馈 OR `trajectory.success` | 王浩宇 | 连续 3 个同风格任务后 `/memory list` 自动出现教训/成功卡（无需 /remember） | U1-U2（✅ 0.7.2 主线版已落：`finalizeTaskMemory` 单一落定点，completed 时 refine→save；**仅 runAgentTask 路径**（SSE/server/headless），Repl 直调三口待统一执行器） |
 | **R2 markVerified 信号源** | 任务落定取"本任务工具写入/验证过的文件集 ∩ 卡.referencedFiles"→ `markVerified(cardIds)`；`runAgentTask` 已持 lastBuildMeta.injectedCardIds | 王浩宇 | 卡被真实复用后 lastUsedAt/count 刷新（单测） | U2（✅ 0.7.2 主线版已落：`injectedCardIds ∩ 轨迹写集` → markVerified，随 finalizeTaskMemory） |
-| **R3 Turn 结构化最小集** | `Turn.result` 增 `goal/changedFiles/verifyCmd`（summary 保留兼容）——多级摘要 envelope 的前置 | 王浩宇 | 落盘字段存在 + 旧格式兼容读 | U2 |
-| **R4 MemoryEventStore** | `src/memory/events.ts`：在 rolloutStore 之上做 kind/topic/session 查询（有界）；任务落定/审批/验证/用户声明等**显式写入点**产事件（禁止 NLP 抽取） | 王佐 | `tests/memory/EventStore.test.ts` 绿 | U1-U3 |
-| **R5 TaskState** | `src/memory/taskState.ts`（显式事件折叠、可重建、originalRequirement 锚定）；持久化；PromptBuilder 注入槽位（env/feature 之后、recent-context 之前，KV-cache 友好）；`/task status\|risks\|next\|decide`（赵天昂） | 王佐+赵天昂 | `tests/repl/TaskState.test.ts` 绿；注入块【任务状态】可见 | U2-U4 |
-| **R6 评测基建**（**9/24 证据链唯一来源**） | `scripts/eval/{run-eval,smoke-eval,fill-evaluation}.mjs` + `tasks/T1-T5` + results schema；A/B/C(+C4) 消融；A 档窗口必须真溢出；A/B prompt-diff 展品脚本；T4 评分 rubric | 王浩宇+赵天昂 | U4 末 mock smoke 一键跑通 exit 0；U6 真实 openPangu 出 `results/<date>.json` | U4-U6 |
+| **R3 Turn 结构化最小集** | `Turn.result` 增 `goal/changedFiles/verifyCmd`（summary 保留兼容）——多级摘要 envelope 的前置 | 王浩宇 | 落盘字段存在 + 旧格式兼容读 | U2（分支已落：`origin/wanghaoyu1` c139528 Turn.result 结构化 + outcome，**已 rebase 至 0.7.3 主线，待评审合入**） |
+| **R4 MemoryEventStore** | `src/memory/events.ts`：在 rolloutStore 之上做 kind/topic/session 查询（有界）；任务落定/审批/验证/用户声明等**显式写入点**产事件（禁止 NLP 抽取） | 王佐 | `tests/memory/EventStore.test.ts` 绿 | U1-U3（分支已落：`origin/wangzuo1` 7b946f0 查询层 + 5 项单测；**✅ 9/6 已 rebase 吸收 develop 0.7.3（merge 273cd67）——待评审合入**） |
+| **R5 TaskState** | `src/memory/taskState.ts`（显式事件折叠、可重建、originalRequirement 锚定）；持久化；PromptBuilder 注入槽位（env/feature 之后、recent-context 之前，KV-cache 友好）；`/task status\|risks\|next\|decide`（赵天昂） | 王佐+赵天昂 | `tests/repl/TaskState.test.ts` 绿；注入块【任务状态】可见 | U2-U4（持久化层分支已落：`origin/wangzuo1` c7a1eca 版本乐观锁 + originalRequirement 锚定 + 事件重建 + foldedEventIds 可选字段；**✅ 9/6 已 rebase 吸收 develop 0.7.3（merge 273cd67）**；注入槽位与 /task CLI 未落） |
+| **R6 评测基建**（**9/24 证据链唯一来源**） | `scripts/eval/{run-eval,smoke-eval,fill-evaluation}.mjs` + `tasks/T1-T5` + results schema；A/B/C(+C4) 消融；A 档窗口必须真溢出；A/B prompt-diff 展品脚本；T4 评分 rubric | 王浩宇+赵天昂 | U4 末 mock smoke 一键跑通 exit 0；U6 真实 openPangu 出 `results/<date>.json` | U4-U6（**已合入 develop 并推进**：`origin/zhaotianang1` 6d09528 merge develop 后实体化 T1-T3 fixture（issue+verify.sh）+ embed/cosine 单测 + **T1-T3 跑分下发说明（61c2a8e，9/6）**；`origin/wanghaoyu1` 70a5c7c/c8bdec1 eval runner 完整骨架（schema+spawn+消融控制）+ PANSHA_NO_MEMORY 注入开关 + **T2/T3 fixture 实体化补全（5c282da，9/6：T2 repo/代码库+verify.sh 强化、T3 document.md 长文档+keyword 召回检查、Windows npx.cmd 兼容 14233e9）**——两人已互 merge 对齐（7a45850）；合并日分工边界仍需 Leader 确认） |
 | **R7 语义检索 C4** | `src/memory/embed.ts` n-gram 稀疏向量 v0；只跑 7B × T2/T3，正负结果都进 EVALUATION.md | 赵天昂 | C4 vs C 增量数据（或如实写"词面检索已饱和"） | U5-U6 |
 | **R8 多级摘要 L1/L2** | 前置 R3：L1 中期结构化摘要（envelope：goal/decisions/files/verification/blockers/next）+ L2 长期粗粒度；generation/coveredTurnIds 沿用 v3 账本 | 赵天昂 | `tests/repl/MultiLevelCompact.test.ts` 绿；envelope 触发率进评测过程指标 | U4-U5 |
 | **R9 提交物定稿** | SUBMISSION.md 终稿 + EVALUATION §4 真实数据回填 + DEPLOY-CN.md + ARCHITECTURE §5 资源实测表 | Leader+全员 | U8-U9 清单 | U8-U9 |
@@ -99,9 +99,13 @@
 | **0.7.2 遗留**：Repl 直调 PanshalachChaser 三口未接 finalizeTaskMemory（记忆落定仅覆盖 runAgentTask 路径） | `Repl.ts` | 待统一执行器收口（与 R1"单一 finalizeTask 服务"同一纪律） |
 | **0.7.3 登记不进本轮（L 级）**：消息数组协议重构（complete/streamChat 仅 prompt 字符串单入口，无 messages 数组通道） | `openai-compatible.ts` / `VerifyCritiqueLoop.ts` | L 级跨文件手术，与"明天跑通一天"无直接因果；按需立项（USABLE-PLAN-0.7.3 §一） |
 | **0.7.3 登记（L 级）**：sseInteractive 巨函数拆分（现 2147 行，单函数占比过高、巨函数体覆盖薄弱） | `sseInteractive.ts` | L 级；拆分须测试先行 |
-| **0.7.3 登记（L 级）**：subagent 委派 / hooks 总线 / 后台 bash | — | L 级，明确不进本轮（USABLE-PLAN-0.7.3 §一） |
+| **0.7.3 登记（L 级）**：subagent 委派 / hooks 总线 / 后台 bash | — | L 级，明确不进 0.7 本轮（USABLE-PLAN-0.7.3 §一）；**0.8 立项部分解锁**——巨函数拆分与消息数组协议进 PLAN-0.8-FOUNDATION M1（依据 GAP-MATRIX-0.8.md），subagent/hooks 仍推 0.9+ |
+| **0.8 立项（2026-09-06，GAP-MATRIX-0.8 交叉对比驱动）**：M1 地基（sseInteractive 拆分 TurnController + messages 数组通道）+ M2 执行层七项（并行分段/卡死硬闸/结果落盘/usage 计量/错误分类/敏感路径/Turn.role） | `sseInteractive.ts` / `openai-compatible.ts` / `VerifyCritiqueLoop.ts` / `engineAdapter.ts` | 方案 `docs/panshalach/PLAN-0.8-FOUNDATION.md`；硬边界=三态语义/R6 契约/记忆信号/审批安全不变；M1+M2-2/M2-6 为最小不可分割集 |
 | **0.7.3 引入边界**：MCP 工具结果无验证尾标（`describeResult` 尾标只覆盖内置 bash/write_file/edit_file/read_file/glob/grep；MCP 调用成功不计 PASS） | `engineAdapter.ts` | 遗留：MCP 结果验证分类策略待定（宁缺毋滥，防 MCP 自述伪装真实验证） |
+| **0.7.4 契约漂移（R6 域销项）**：`scripts/eval/results/schema.mjs` TURN_STOP_REASONS 仍是 v0.6.5 方言（含 `verification-failed-continue`、缺 `answered`/`error`），且 `continueCount` 字段引用致 `verify-panshalach-cleanup.mjs` 0.7 段 FAIL | `scripts/eval/results/schema.mjs:29-37,190,327` / `scripts/eval/smoke-eval.mjs:106-110` | 待王浩宇（R6 schema owner）对齐 0.7 四态契约（answered/error 加性）+ 删除 continueCount 死字段（判官已摘除，恒 0）；销项后 cleanup 脚本恢复全绿 |
+| **0.7.4 hermes 调研唯一建议采纳项**：classic/Repl 路径 `solveIssue` 漏传 `windowTokens`（0.7.3 窗口预算在 classic/`--headless` 单条命令路径不生效） | `Repl.ts:427`（对照 `runAgentTask.ts:173`） | ~40 行小改，待排期（HERMES-ALIGN-0.7.4.md §5） |
 | 未采纳（记录在案）：事件 hash-chain、持久化幂等键、auditStatus 完整机制、SummaryNode 全量血缘、`compaction.mode` 四段开关 | — | 9/24 后按需立项 |
+| **0.7.4 登记（低优先，不进本轮）**：6 工具 schema ≈2K token/请求（8K 窗口占 25%），对不支持 native FC 的模型（diffusion/1B 实测）纯开销且有行为牵引 | `engineAdapter.ts:249-319`（BUILTIN_TOOL_SCHEMAS 单点）/ `VerifyCritiqueLoop.ts:313-321`（注入点） | 若做（9/24 评测后按消融需求立项）：①toolSchemas 按 intent 过滤（search 只读三件，chat 已零工具）②`PANSHA_TOOLS_MODE=text\|native\|off` 开关（off=请求体不带 tools，兼评测消融维度）③schema description 一行化。见 PLAN-0.7.4 §5 |
 
 ## 4. 已裁决不做 / 推迟（恢复指针）
 

@@ -162,4 +162,73 @@ describe('openai-compatible streamChat', () => {
     const text = chunks.filter(c => c.type === 'text').map(c => c.text).join('');
     assert.equal(text, '正在写入');
   });
+
+  // ── 0.7.4 任务 B4：streamChat 回退走 withRetry + emptyResponse 转空串 ──
+
+  it('0.7.4 B4: fallback doComplete is wrapped in withRetry (≥2 requests on transient failure)', async () => {
+    // 第一次流式请求返回 400 → 回退路径；回退后第一次 complete 返回 500（可重试），
+    // 第二次返回 200 有效 body。裸调用时代码在这里会直接抛 complete failed: 500。
+    let streamRequests = 0;
+    let completeRequests = 0;
+    const { port, close } = await startSseServer((req, res) => {
+      let body = '';
+      req.on('data', (c: any) => { body += String(c); });
+      req.on('end', () => {
+        const parsed = JSON.parse(body || '{}');
+        if (parsed.stream === true) {
+          streamRequests++;
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'stream unsupported' }));
+          return;
+        }
+        completeRequests++;
+        if (completeRequests === 1) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('transient');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { content: '回退重试成功' } }] }));
+      });
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const chunks: any[] = [];
+    for await (const c of client.streamChat!('q')) chunks.push(c as any);
+    assert.equal(completeRequests, 2, '回退 doComplete 必须经 withRetry 重试');
+    assert.equal(chunks.length, 1);
+    assert.equal(chunks[0].type, 'text');
+    assert.equal(chunks[0].text, '回退重试成功');
+  });
+
+  it('0.7.4 B4: fallback EMPTY_RESPONSE exhausted → yields empty text chunk (no throw-through)', async () => {
+    // LM Studio diffusion 实测形状：200 + 非 completions body（无 choices）。
+    // 回退路径 EMPTY_RESPONSE 重试耗尽 → 转空串（与 complete 同语义），不再穿透。
+    let requests = 0;
+    const { port, close } = await startSseServer((req, res) => {
+      let body = '';
+      req.on('data', (c: any) => { body += String(c); });
+      req.on('end', () => {
+        requests++;
+        const parsed = JSON.parse(body || '{}');
+        if (parsed.stream === true) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'no stream' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('Unexpected endpoint or method. Returning 200 anyway.');
+      });
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const chunks: any[] = [];
+    for await (const c of client.streamChat!('q')) chunks.push(c as any);
+    assert.ok(requests >= 7, `1 次流式 + ≥6 次 withRetry（EMPTY_RESPONSE 可重试），got ${requests}`);
+    assert.equal(chunks.length, 1, '重试耗尽返回单个空 text chunk');
+    assert.equal(chunks[0].type, 'text');
+    assert.equal(chunks[0].text, '', 'emptyResponse 耗尽转空串，不抛穿透');
+  });
 });

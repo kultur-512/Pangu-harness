@@ -14,6 +14,40 @@
 
 const rawArgs = process.argv.slice(2);
 
+/**
+ * dist-fresh 启动检查（0.7.4 任务 A2）：npm link 的全局 bin 指向 dist/cli.js，
+ * 若 src 有比 dist 更新的改动而未重建，用户实际跑的是旧代码（0.7.4 实测事故：
+ * dist 停在 0.7.1 批次 B 中途，0.7.2/0.7.3 修复全部不在）。只在交互模式
+ * （args 为空、stdout 为 TTY、非 headless）下打一行灰字提醒，不阻塞启动。
+ */
+function warnIfDistStale(): void {
+  try {
+    if (process.stdout.isTTY !== true || process.env.PANSHA_HEADLESS === '1') return;
+    const fs = require('node:fs');
+    const path = require('node:path');
+    // 本文件位于 dist/cli.js（tsc 产物，rootDir=src）；src 目录 = 本文件目录的上级
+    const distEntry = __filename;
+    const srcDir = path.join(path.dirname(__filename), '..', 'src');
+    if (!fs.existsSync(srcDir)) return; // 生产安装包可能不带 src
+    const distMtime = fs.statSync(distEntry).mtimeMs;
+    let stale = false;
+    const walk = (dir: string): void => {
+      if (stale) return;
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) { walk(p); if (stale) return; continue; }
+        if (!ent.name.endsWith('.ts')) continue;
+        if (fs.statSync(p).mtimeMs > distMtime) { stale = true; return; }
+      }
+    };
+    walk(srcDir);
+    if (stale) {
+      console.warn('\x1b[33m⚠ dist 落后于 src，请执行 npm run build 后再使用（当前运行的是旧构建）\x1b[0m');
+    }
+  } catch {} // 检查绝不阻塞启动
+}
+warnIfDistStale();
+
 // Support forcing classic line mode explicitly (for users who prefer the old REPL or for diagnostics).
 // Accepted: --classic, -C, --line
 let forceClassic = false;

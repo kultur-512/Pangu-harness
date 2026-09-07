@@ -11,6 +11,11 @@
 // - Otherwise fall back to a clean structured line terminal driven by the same
 //   event stream ("通道升级"), with prompt restore + Ctrl+C abort.
 // - Non-TTY silently downgrades to the classic REPL (smoke tests stay green).
+//
+// M1-TurnController（0.8 第 1 步，测试先行）：startSseInteractive 内约 20 个闭包
+// 共享的巨状态收拢为单一可传递对象 TurnContext，闭包改为「模块级函数 + ctx」。
+// 纯机械搬家 + 状态显式化，运行时行为逐字节等价（runAgentTask 仍走真实动态
+// import；ctx.loadRunAgentTask 仅供行为锁定测试注入 fake）。
 
 import readline from 'readline';
 import { readFileSync } from 'node:fs';
@@ -199,6 +204,7 @@ export function nextStepHint(stopReason?: string): string {
   if (sr === 'completed') return '继续下一个任务 · /memory 查看沉淀';
   if (sr === 'answered') return '继续追问或下达新任务';
   if (sr === 'aborted') return '已中断 · 现场已保留 · 重新描述任务可继续';
+  if (sr === 'error') return '任务执行失败 · 检查模型端点是否为对话模型（diffusion/embedding 不受支持）· 或重试';
   if (sr === 'max-steps') return '步数达上限 · 可拆小任务重试';
   return '模型未完成验证 · 可补充要求重试 · /undo 回退变更';
 }
@@ -242,7 +248,7 @@ export function buildBanner(opts: {
   return [
     `烛龙 Zhulong v${opts.version ?? pkgVersion()}`,
     metaBase + cwd,
-    '  ? 快捷帮助 · /help 全部命令 · Ctrl+C 中断任务/二次退出',
+    '  /help 全部命令 · Ctrl+C 中断任务/二次退出',
   ];
 }
 
@@ -385,35 +391,32 @@ export function shouldShowStartupTip(turns: number, resumed: boolean, rand: numb
   return turns === 0 && !resumed && rand < 0.5;
 }
 
-export interface SseInteractiveOptions {
-  provider?: ModelProvider;
-  defaultTier?: string;
-  defaultWorkspace?: string;
-  /** resume an existing session instead of starting fresh */
-  session?: Session;
+// ==================== M1-TurnController 测试缝：TurnContext 巨状态显式化 ====================
+// 巨状态单一可传递对象 + 「模块级函数 + ctx」形态。字段名与原闭包变量一一对应，
+// 只显式化、不改语义；运行时默认路径与改造前逐字节等价。
+
+export type OutputRendererLike = ReturnType<typeof createOutputRenderer>;
+
+export interface LineUiState {
+  inlineLine: null | 'gerund' | 'thinking';
+  messageStreaming: boolean;
+  streamedAnswerChars: number;
+  verbose: boolean;
+  thinkingStart: number;
+  thinkingBuf: string;
+  thinkingPrinted: boolean;
+  taskStartedAt: number;
+  taskEndedAt: number;
+  ghostIgnored: boolean;
+  stepCount: number;
+  lastSigintAt: number;
+  idleCtrlCAt: number;
+  toolStack: Array<{ tool: string; params: Record<string, string> }>;
+  pendingTool: { tool: string; summary: string; doing: string; at: number } | null;
 }
 
-export async function startSseInteractive(opts: SseInteractiveOptions = {}): Promise<void> {
-  // ---- line 模式输出纪律 + 流式状态 ----
-  // inlineLine：当前"活行"的占用者（gerund 标签 / thinking 单行滚动）。
-  // 任何正式输出前必须先 \r\x1b[K 清行（防 gerund 运行标签残留污染正式输出的单一纪律点）。
-  const lineUi: {
-    inlineLine: null | 'gerund' | 'thinking';
-    messageStreaming: boolean;
-    streamedAnswerChars: number;
-    verbose: boolean;
-    thinkingStart: number;
-    thinkingBuf: string;
-    thinkingPrinted: boolean;
-    taskStartedAt: number;
-    taskEndedAt: number;
-    ghostIgnored: boolean;
-    stepCount: number;
-    lastSigintAt: number;
-    idleCtrlCAt: number;
-    toolStack: Array<{ tool: string; params: Record<string, string> }>;
-    pendingTool: { tool: string; summary: string; doing: string; at: number } | null;
-  } = {
+export function createLineUiState(): LineUiState {
+  return {
     inlineLine: null,
     messageStreaming: false,
     streamedAnswerChars: 0,
@@ -430,30 +433,1450 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     toolStack: [],
     pendingTool: null,
   };
+}
 
-  function clearInlineLine() {
-    if (lineUi.inlineLine) {
-      try { process.stdout.write('\r\x1b[K'); } catch {}
-      lineUi.inlineLine = null;
-    }
+/** in-flight background compaction 句柄（compactService.startBackgroundCompact 返回形状）。 */
+export interface BgCompactHandle { isReady(): boolean; result(): any; cancel(): void }
+
+export interface TurnContext {
+  session: Session;
+  /** 显式注入的 provider（opts.provider；缺省时运行时 resolveSharedClient 兜底）。 */
+  provider?: ModelProvider;
+  /** 清活行纪律包装后的 renderer（所有正式输出前先 \r\x1b[K）。 */
+  renderer: OutputRendererLike;
+  /** rich UI bridge（Ink 未启动时 current=null）。ref 形态保证初始 lambda 见到更新。 */
+  bridgeRef: { current: any };
+  lineUi: LineUiState;
+  queue: InputQueue;
+  agentTree: AgentTree;
+  modeRing: ModeRing;
+  ctxWindowTokens: number;
+  ctxUsedChars: number;
+  /** line 模式主 readline（rich 路径恒 null）。 */
+  lineRl: readline.Interface | null;
+  lineSetPrompt: () => void;
+  /** 待定命令建议：只在 line 空闲态由「未知命令」分支置位；回车确认执行，Esc/其他输入取消。 */
+  pendingSuggestion: string | null;
+  modeBadgePending: boolean;
+  tipGate: ReturnType<typeof createTipGate>;
+  lastOutput: string;
+  currentAbort: AbortController | null;
+  lastInjectedSteers: string[];
+  lastAborted: boolean;
+  bgCompact: BgCompactHandle | null;
+  treeTaskStart: number;
+  mcpClients: Map<string, any>;
+  mcpToolsReady: any[];
+  mcpInitDone: boolean;
+  sharedRegistry: any;
+  /**
+   * 测试注入缝（M1-TurnController 行为锁定）：默认未设置 → runTaskViaSse 走真实
+   * `import('../../server/runAgentTask.js')`，运行时行为不变。
+   */
+  loadRunAgentTask?: () => Promise<{ runAgentTask: typeof import('../../server/runAgentTask.js')['runAgentTask'] }>;
+}
+
+export function createTurnContext(init: {
+  session: Session;
+  provider?: ModelProvider;
+  renderer?: OutputRendererLike;
+}): TurnContext {
+  return {
+    session: init.session,
+    provider: init.provider,
+    renderer: init.renderer ?? createOutputRenderer(),
+    bridgeRef: { current: null },
+    lineUi: createLineUiState(),
+    queue: new InputQueue(),
+    agentTree: new AgentTree(),
+    modeRing: null as unknown as ModeRing, // startSseInteractive / createModeRing 接线
+    ctxWindowTokens: 32768,
+    ctxUsedChars: 0,
+    lineRl: null,
+    lineSetPrompt: () => {},
+    pendingSuggestion: null,
+    modeBadgePending: true,
+    tipGate: createTipGate(2),
+    lastOutput: '',
+    currentAbort: null,
+    lastInjectedSteers: [],
+    lastAborted: false,
+    bgCompact: null,
+    treeTaskStart: 0,
+    mcpClients: new Map(),
+    mcpToolsReady: [],
+    mcpInitDone: false,
+    sharedRegistry: null,
+  };
+}
+
+// ---- 模块级函数（原 startSseInteractive 闭包，body 逐字节保持） ----
+
+function clearInlineLine(ctx: TurnContext) {
+  if (ctx.lineUi.inlineLine) {
+    try { process.stdout.write('\r\x1b[K'); } catch {}
+    ctx.lineUi.inlineLine = null;
   }
+}
 
-  // renderer 包装器 — 所有正式输出（writeLine/success/warn/…）前先清活行。
-  // gerund/thinking 的原地重绘不经过这里（直接 stdout + 记 inlineLine），
-  // 因此清行纪律只有这一个入口。
-  const rawRenderer = createOutputRenderer();
-  const CLEAR_ON_WRITE = new Set(['writeLine', 'write', 'stream', 'success', 'warn', 'error', 'info', 'table', 'codeBlock']);
-  const renderer = new Proxy(rawRenderer, {
+const CLEAR_ON_WRITE = new Set(['writeLine', 'write', 'stream', 'success', 'warn', 'error', 'info', 'table', 'codeBlock']);
+/**
+ * renderer 包装器 — 所有正式输出（writeLine/success/warn/…）前先清活行。
+ * gerund/thinking 的原地重绘不经过这里（直接 stdout + 记 inlineLine），
+ * 因此清行纪律只有这一个入口。
+ */
+export function createClearingRenderer(rawRenderer: OutputRendererLike, clearInline: () => void): OutputRendererLike {
+  return new Proxy(rawRenderer, {
     get(target: any, prop: string | symbol) {
       const v = Reflect.get(target, prop, target);
       if (typeof v !== 'function') return v;
       if (CLEAR_ON_WRITE.has(String(prop))) {
-        return (...args: any[]) => { clearInlineLine(); return v.apply(target, args); };
+        return (...args: any[]) => { clearInline(); return v.apply(target, args); };
       }
       return v.bind(target);
     },
-  }) as ReturnType<typeof createOutputRenderer>;
+  }) as OutputRendererLike;
+}
 
+function resolveCtxWindowTokens(ctx: TurnContext): number {
+  const env = Number(process.env.PANSHA_CTX_WINDOW || 0);
+  if (Number.isFinite(env) && env > 0) return env;
+  try {
+    const p = (ctx.provider ?? (ctx.session as any).provider) as any;
+    const n = Number(p?.getModelContextLength?.(ctx.session.model));
+    if (Number.isFinite(n) && n > 0 && n !== 256000) return n;
+  } catch {}
+  return 32768;
+}
+
+function bumpCtx(ctx: TurnContext, text: any) {
+  if (typeof text === 'string') ctx.ctxUsedChars += text.length;
+}
+
+function isRunning(ctx: TurnContext): boolean {
+  return ctx.currentAbort !== null;
+}
+
+function recordOutput(ctx: TurnContext, text: string) {
+  if (text && text.trim()) ctx.lastOutput = text.trim();
+}
+
+function getLastOutput(ctx: TurnContext): string { return ctx.lastOutput; }
+
+function updateQueueCount(ctx: TurnContext) {
+  if (typeof (ctx.bridgeRef as any).current?.setQueueCount === 'function') {
+    try { ctx.bridgeRef.current.setQueueCount(ctx.queue.size, ctx.queue.taskCount, ctx.queue.steerCount); } catch {}
+  }
+}
+
+/** mode ring — shift+tab cycles; plan floors approval to readonly,
+ *  leaving plan restores the ring-mapped approval mode.
+ *  切换回执为 `已切换: <模式> · <后果>`；徽标行置 pending，
+ *  下一次空闲提示符上方输出一次（避免刷屏）。 */
+export function createModeRing(ctx: TurnContext): ModeRing {
+  return new ModeRing('default', (m) => {
+    if (m === 'plan') {
+      ctx.session.setPlanMode(true);
+    } else {
+      ctx.session.planMode = false;
+      ctx.session.approvalMode = m === 'auto-accept' ? 'full' : m === 'full' ? 'full' : 'default';
+    }
+    try { rollout.appendApprovalChange(ctx.session); } catch {}
+    ctx.modeBadgePending = true;
+    emitFeed(ctx, modeSwitchReceipt(m), 'info');
+  });
+}
+
+function pushRichModeBadge(ctx: TurnContext, m: string) {
+  if (typeof (ctx.bridgeRef as any).current?.setTop === 'function') {
+    try { ctx.bridgeRef.current.setTop({ modeBadge: m === 'plan' ? 'PLAN' : m === 'auto-accept' ? 'AUTO' : m === 'full' ? 'FULL' : '' }); } catch {}
+  }
+}
+
+function cycleMode(ctx: TurnContext): string {
+  const m = ctx.modeRing.cycle();
+  pushRichModeBadge(ctx, m);
+  return m;
+}
+
+function setMode(ctx: TurnContext, m: any) {
+  // 旧实现 set(m) 后又 cycleMode() —— cycle 会把模式再推进一格，
+  // `/mode plan` 实际落在 default。set 只需同步 rich 徽标，不再 cycle。
+  ctx.modeRing.set(m);
+  pushRichModeBadge(ctx, String(m));
+}
+
+export function emitFeed(ctx: TurnContext, text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
+  if (typeof (ctx.bridgeRef as any).current?.pushFeed === 'function') {
+    try { ctx.bridgeRef.current.pushFeed({ type: 'text', text, level }); } catch {}
+  } else {
+    ctx.renderer.writeLine(ctx.renderer.color(text, level === 'warn' ? 'yellow' : level === 'error' ? 'red' : 'gray'));
+  }
+}
+
+/** MCP stdio servers from .panshalach.json mcpServers (append-only config).
+ *  Clients spawn lazily at first task; closed on process exit (hang discipline). */
+async function initMcpServers(ctx: TurnContext): Promise<void> {
+  if (ctx.mcpInitDone) return;
+  ctx.mcpInitDone = true;
+  try {
+    const { ConfigManager } = await import('./ConfigManager.js');
+    const cfg: any = (new ConfigManager(ctx.session.workspace || process.cwd())).getAll?.() ?? {};
+    const servers: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> =
+      (cfg as any).mcpServers || {};
+    const { McpClient } = await import('../../tools/mcpClient.js');
+    for (const [name, s] of Object.entries(servers)) {
+      if (!s?.command) continue;
+      try {
+        const client = new McpClient({ command: s.command, args: s.args || [], env: s.env });
+        await client.initialize();
+        const tools = await client.listTools();
+        ctx.mcpClients.set(name, client);
+        for (const t of tools) {
+          ctx.mcpToolsReady.push({
+            server: name,
+            name: `mcp_${name}_${t.name}`,
+            description: t.description || '',
+            call: (args: Record<string, unknown>) => client.callTool(t.name, args),
+          });
+        }
+      } catch {
+        // failed server → skip (tools simply unavailable), never crash startup
+      }
+    }
+  } catch {
+    // config missing / unreadable → no MCP
+  }
+}
+
+// unified synchronous compaction — client resolution, success/
+// failure feedback and TopBar meter reset live HERE (was duplicated at
+// /compact and the critical sync-fallback).
+async function runSyncCompact(ctx: TurnContext, reasonPrefix = ''): Promise<any> {
+  const { compactSession, estimateSessionTokens } = await import('./compactService.js');
+  const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
+  const rich = !!ctx.bridgeRef.current; // same semantics as runTaskViaSse's useRich
+  let client: any = null;
+  try { client = (await resolveSharedClient(ctx.session.model, ctx.provider as any)).client; } catch {}
+  const r = await compactSession(ctx.session, client);
+  if (r.ok) {
+    ctx.ctxUsedChars = estimateSessionTokens(ctx.session) * 4;
+    const msg = reasonPrefix + r.message;
+    if (rich && typeof ctx.bridgeRef.current.pushFeed === 'function') ctx.bridgeRef.current.pushFeed({ type: 'text', text: msg, level: reasonPrefix ? 'warn' : 'success' });
+    else if (reasonPrefix) ctx.renderer.warn(msg);
+    else ctx.renderer.success(msg);
+    if (rich && typeof ctx.bridgeRef.current.setTop === 'function') {
+      const nr = Math.min(1, (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens);
+      try { ctx.bridgeRef.current.setTop({ ctxRatio: nr }); } catch {}
+    }
+  } else {
+    if (rich && typeof ctx.bridgeRef.current.pushFeed === 'function') ctx.bridgeRef.current.pushFeed({ type: 'text', text: r.message, level: 'warn' });
+    else ctx.renderer.warn(r.message);
+  }
+  return r;
+}
+
+/**
+ * route a user line according to running state.
+ * - idle:   normal task flow
+ * - running: '/' → immediate local command; '!' → steer; else → queued task
+ */
+export async function handleUserLine(ctx: TurnContext, text: string, bridge?: any) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return;
+
+  if (!isRunning(ctx)) {
+    await runTaskViaSse(ctx, trimmed, bridge);
+    return;
+  }
+
+  const routed = classifyRunningInput(trimmed);
+  if (routed.kind === 'command') {
+    // slash commands execute immediately, never queued
+    await runTaskViaSse(ctx, routed.payload, bridge);
+    return;
+  }
+  if (routed.kind === 'steer') {
+    if (!routed.payload) return;
+    ctx.queue.enqueueSteer(routed.payload);
+    emitFeed(ctx, `steered ×${ctx.queue.steerCount}（下一轮注入）：${routed.payload}`, 'info');
+  } else {
+    ctx.queue.enqueueTask(routed.payload);
+    emitFeed(ctx, `queued ×${ctx.queue.taskCount}：${routed.payload}`, 'info');
+  }
+  updateQueueCount(ctx);
+}
+
+// 与 classic（Repl.ts）完全同序的 26 命令注册表 —
+// /help 的分组渲染、/resume 的委托执行都以它为数据源，三处输出一致。
+async function getSharedRegistry(ctx: TurnContext): Promise<any> {
+  if (ctx.sharedRegistry) return ctx.sharedRegistry;
+  const { CommandRegistry } = await import('./CommandRegistry.js');
+  const reg = new CommandRegistry();
+  const mods = await Promise.all([
+    import('./commands/HelpCommand.js'),
+    import('./commands/ExitCommand.js'),
+    import('./commands/ClearCommand.js'),
+    import('./commands/StatusCommand.js'),
+    import('./commands/TierCommand.js'),
+    import('./commands/WorkspaceCommand.js'),
+    import('./commands/ModelCommand.js'),
+    import('./commands/HistoryCommand.js'),
+    import('./commands/RunCommand.js'),
+    import('./commands/SimulateCommand.js'),
+    import('./commands/ReviewCommand.js'),
+    import('./commands/MemoryCommand.js'),
+    import('./commands/TraceCommand.js'),
+    import('./commands/ConfigCommand.js'),
+    import('./commands/SessionCommand.js'),
+    import('./commands/InitCommand.js'),
+    import('./commands/ServeCommand.js'),
+    import('./commands/ApprovalsCommand.js'),
+    import('./commands/UndoCommand.js'),
+    import('./commands/CompactCommand.js'),
+    import('./commands/UsageCommand.js'),
+    import('./commands/ResumeCommand.js'),
+    import('./commands/RewindCommand.js'),
+    import('./commands/AgentsCommand.js'),
+    import('./commands/FeatureCommand.js'),
+    import('./commands/TreeCommand.js'),
+  ]);
+  for (const m of mods) reg.register((m as any).default);
+  ctx.sharedRegistry = reg;
+  return reg;
+}
+
+export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any) {
+  if (!task || !task.trim()) return;
+
+  const trimmed = task.trim();
+  const useRich = !!bridge;
+
+  // Unified /edit (P1): pull last significant output back into input for edit/resubmit.
+  if (trimmed === '/edit' || trimmed === '/e') {
+    const prev = getLastOutput(ctx);
+    if (!prev) {
+      if (!useRich) ctx.renderer.warn('暂无上次输出可编辑');
+      else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: '暂无上次输出可编辑', level: 'warn' });
+      return;
+    }
+    if (useRich) {
+      try {
+        if (typeof bridge.updateInput === 'function') bridge.updateInput(prev);
+        if (typeof bridge.pushFeed === 'function') {
+          bridge.pushFeed({ type: 'text', text: '(已载入上次输出到输入区，可编辑后提交)', level: 'info' });
+        }
+      } catch {}
+    } else {
+      // Line mode prefill
+      try {
+        if (ctx.lineRl) {
+          (ctx.lineRl as any).line = prev;
+          (ctx.lineRl as any).cursor = prev.length;
+          if (typeof (ctx.lineRl as any)._refreshLine === 'function') (ctx.lineRl as any)._refreshLine();
+          ctx.renderer.writeLine(ctx.renderer.color('(已载入上次输出，可编辑后回车提交)', 'gray'));
+        } else {
+          ctx.renderer.writeLine('--- 上次输出 ---');
+          ctx.renderer.writeLine(prev);
+        }
+      } catch {
+        ctx.renderer.writeLine('--- 上次输出 ---');
+        ctx.renderer.writeLine(prev);
+      }
+    }
+    return;
+  }
+
+  // local commands shared by rich + line paths
+  // (/undo now; /approvals + /usage + /compact land with their batches)
+  if (trimmed.startsWith('/')) {
+    const sp = trimmed.indexOf(' ');
+    const cmd = (sp === -1 ? trimmed : trimmed.slice(0, sp)).toLowerCase();
+    const arg = sp === -1 ? '' : trimmed.slice(sp + 1).trim();
+
+    const emit = (text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') => {
+      if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text, level });
+      else if (level === 'warn') ctx.renderer.warn(text);
+      else if (level === 'error') ctx.renderer.error(text);
+      else if (level === 'success') ctx.renderer.success(text);
+      else ctx.renderer.writeLine(text);
+    };
+
+    if (cmd === '/agents') {
+      // sub-agent rollout tree (serial progress list — honest)
+      const nodes = ctx.agentTree.snapshot();
+      const feedOrLine = (text: string, color?: 'bold' | 'gray') => {
+        if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text, level: 'info' });
+        else ctx.renderer.writeLine(color ? ctx.renderer.color(text, color) : text);
+      };
+      if (arg) {
+        const n = ctx.agentTree.get(arg.trim());
+        if (!n) { feedOrLine(`未找到 rollout: ${arg}`); return; }
+        feedOrLine(`rollout ${n.id}（${localizeRolloutStatus(n.status)}）`, 'bold');
+        feedOrLine(`  步数: ${n.stepCount} · 耗时: ${(n.durationMs / 1000).toFixed(1)}s · 最近阶段: ${n.lastPhase ?? '-'}`);
+        return;
+      }
+      if (nodes.length === 0) { feedOrLine('尚无 rollout 数据（跑一个任务后出现）'); return; }
+      const done = nodes.filter((n) => n.status === 'done').length;
+      const running = nodes.filter((n) => n.status === 'running').length;
+      const failed = nodes.filter((n) => n.status === 'failed').length;
+      const pending = nodes.filter((n) => n.status === 'pending').length;
+      const totalMs = nodes.reduce((a, n) => a + n.durationMs, 0);
+      // 统计行中文化
+      feedOrLine(`共 ${nodes.length} rollouts · 完成 ${done} · 进行中 ${running} · 等待 ${pending} · 失败 ${failed} · 总耗时 ${(totalMs / 1000).toFixed(1)}s`, 'bold');
+      for (const n of nodes) {
+        const glyph = n.status === 'running' ? '▶' : n.status === 'done' ? '✓' : n.status === 'failed' ? '✗' : '·';
+        const dur = n.durationMs >= 1000 ? `${(n.durationMs / 1000).toFixed(1)}s` : `${n.durationMs}ms`;
+        feedOrLine(`  ${glyph} ${n.id} · ${localizeRolloutStatus(n.status)} · ${n.stepCount} 步 · ${dur}${n.lastPhase ? ` · ${n.lastPhase}` : ''}`);
+      }
+      // graph edges (dep/rollback/approval) annotated
+      try {
+        const edges = ctx.agentTree.edges();
+        if (edges.length > 0) {
+          feedOrLine('边:', 'gray');
+          for (const e of edges) feedOrLine(`  ${e.from} --[${e.kind}]--> ${e.to}`, 'gray');
+        }
+      } catch {}
+      // 文案清漂：删除"并行 rollout"表述——引擎恒单 rollout
+      // 串行执行（Promise.allSettled 多 rollout 编排已随判官机制摘除），
+      // 文案必须与运行时一致。
+      feedOrLine('（当前为单 rollout 串行执行；rollout 列表记录任务内步骤进度）', 'gray');
+      return;
+    }
+
+    if (cmd === '/rewind') {
+      // turn-level rewind lives in the classic command set
+      // (registered RewindCommand); rich-mode panel wiring is deferred.
+      // line 模式不静默 no-op——提示真实可用路径并按已处理返回
+      //（false 会把命令当任务发给引擎）。
+      emit('rewind 目前在经典模式可用：先 /classic 进入，或使用 /undo 回退最近变更', 'info');
+      return true;
+    }
+
+    if (cmd === '/mode') {
+      // hidden alias for keyboard-less environments (also the
+      // testable entry point of ModeRing).
+      const a = arg.toLowerCase();
+      if (['plan', 'default', 'auto-accept', 'full'].includes(a)) {
+        setMode(ctx, a);
+      } else {
+        cycleMode(ctx);
+      }
+      return;
+    }
+
+    if (cmd === '/verbose') {
+      // thinking 展示开关（内存标志；PANSHA_VERBOSE=1 初始为开）
+      ctx.lineUi.verbose = !ctx.lineUi.verbose;
+      emit(`思考显示: ${ctx.lineUi.verbose ? '全文多行（verbose）' : '单行滚动（默认）'}`, 'info');
+      return;
+    }
+
+    if (cmd === '/undo') {
+      const { undoLatest } = await import('../../tools/fileHistory.js');
+      const r = undoLatest(ctx.session.workspace || process.cwd(), arg || undefined);
+      emit(r.message, r.ok ? 'success' : 'warn');
+      if (r.ok && r.diff && r.diff.length > 0) {
+        for (const h of r.diff.slice(0, 40)) {
+          const line = `${h.type === 'add' ? '+' : h.type === 'del' ? '−' : ' '} ${h.text}`;
+          emit(line, h.type === 'add' ? 'success' : h.type === 'del' ? 'error' : 'info');
+        }
+        if (r.diff.length > 40) emit(`… ${r.diff.length - 40} 行省略 …`, 'info');
+      }
+      return;
+    }
+
+    if (cmd === '/approvals') {
+      const a = arg.toLowerCase();
+      if (a === 'clear') {
+        ctx.session.clearApprovalAllowlist();
+        emit('本会话放行清单已清空。', 'success');
+      } else if (['readonly', 'default', 'full'].includes(a)) {
+        ctx.session.updateApprovalMode(a as any);
+        emit(`审批模式已切换为 ${a}。`, 'success');
+      } else {
+        emit(`审批模式: ${ctx.session.approvalMode}；放行清单: ${[...ctx.session.sessionApprovalAllowlist].join(', ') || '(空)'}`, 'info');
+        emit('用法: /approvals readonly|default|full|clear', 'info');
+      }
+      try { rollout.appendApprovalChange(ctx.session); } catch {}
+      return;
+    }
+
+    if (cmd === '/usage') {
+      const { collectUsage, loadPricesFromConfig } = await import('./usageService.js');
+      const prices = await loadPricesFromConfig(ctx.session.workspace || process.cwd());
+      const r = collectUsage(ctx.session, prices);
+      for (const line of r.lines) emit(line, 'info');
+      return;
+    }
+
+    if (cmd === '/compact') {
+      // unified via runSyncCompact (client resolve + feedback + meter)
+      const r = await runSyncCompact(ctx);
+      if (r.ok) {
+        const preview = r.summary.length > 300 ? r.summary.slice(0, 300) + '…' : r.summary;
+        emit('摘要预览: ' + preview, 'info');
+      }
+      return;
+    }
+
+    if (cmd === '/model') {
+      // /model must be handled LOCALLY, not fall through
+      // to the engine as a coding task (that produced the confusing
+      // "No model client available" error).
+      const sub = arg.trim();
+      if (!sub || sub === 'list' || sub === 'ls') {
+        emit(`当前模型: ${ctx.session.model}`, 'info');
+        try {
+          const { createDefaultModelProvider } = await import('../../cli/repl/ModelProvider.js');
+          const p = ctx.provider as any ?? createDefaultModelProvider();
+          const names = (typeof p.listModels === 'function' ? p.listModels() : []).join(', ');
+          emit(`已注册/可用入口: ${names}`, 'info');
+          if (sub === 'list' || sub === 'ls') {
+            // remote model list for the CURRENT provider (best-effort)
+            const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
+            try {
+              const { provider: pr } = await resolveSharedClient(ctx.session.model, ctx.provider as any);
+              const remote = await pr.listProviderModels?.(ctx.session.model.includes(':') ? ctx.session.model.split(':')[0] : 'scnet');
+              if (remote && remote.length) emit(`远程模型(${ctx.session.model.split(':')[0] || 'scnet'}): ${remote.slice(0, 30).join(', ')}`, 'info');
+            } catch {}
+          }
+        } catch {}
+        return;
+      }
+      // /model <name> → switch session.model (validated on next task)
+      ctx.session.model = sub;
+      // 切换模型后旧模型的上下文计量失效——
+      // ctxUsedChars 清零 + 窗口立即重取（下次任务边界也会再取一次兜底）。
+      ctx.ctxUsedChars = 0;
+      ctx.ctxWindowTokens = resolveCtxWindowTokens(ctx);
+      emit(`模型已切换: ${sub}（下次任务生效）`, 'success');
+      return;
+    }
+
+    // rich mode slash commands MUST resolve
+    // locally — /help /status /clear /tier and any unknown slash command are
+    // handled here; a slash-prefixed line is NEVER submitted to the engine
+    // as a coding task (iron rule).
+    if (cmd === '/help' || cmd === '/h') {
+      // 三处（classic/line/派发器）统一走 HelpCommand 分组渲染
+      const reg = await getSharedRegistry(ctx);
+      const view = buildHelpView(reg.list(), arg ? [arg.split(/\s+/)[0]] : []);
+      for (const l of view.lines) emit(useRich ? l.text : (l.style ? ctx.renderer.color(l.text, l.style) : l.text), 'info');
+      if (view.message) emit(view.message, 'warn');
+      return;
+    }
+    if (cmd === '/memory') {
+      // 快捷帮助收录了 /memory — line 模式给非交互直通
+      //（默认 list；无参数时 classic 的交互子菜单依赖 ctx.input，line 没有）
+      const { runMemoryCommand } = await import('../MemoryCommand.js');
+      try {
+        const result = await runMemoryCommand(arg ? arg.split(/\s+/) : ['list'], ctx.session.workspace || process.cwd());
+        emit(result || '(无输出)', 'info');
+      } catch (e: any) {
+        emit('Memory 命令失败: ' + (e?.message || e), 'error');
+      }
+      return;
+    }
+    if (cmd === '/resume') {
+      // 委托注册表里的 ResumeCommand（只依赖 renderer）
+      const reg = await getSharedRegistry(ctx);
+      const rctx: any = {
+        session: ctx.session,
+        registry: reg,
+        renderer: useRich ? { writeLine: (t: string) => emit(t, 'info'), color: (t: string) => t, warn: (t: string) => emit(t, 'warn'), error: (t: string) => emit(t, 'error'), success: (t: string) => emit(t, 'success'), info: (t: string) => emit(t, 'info') } : ctx.renderer,
+        input: null,
+        repl: null,
+        provider: (ctx.session as any).provider,
+        // sseInteractive 的 CommandContext 注册点——
+        // 注入与当前路径一致的现成审批桥 + 在途任务的 abort signal，使经此
+        // 派发的 registry 命令与主任务路径共享审批/中断语义。
+        approvalBridge: useRich
+          ? (req: { tool: string; description: string; danger: boolean }) => (ctx.bridgeRef.current.setConfirm(req) as Promise<string>)
+          : createCliApprovalBridge(),
+        signal: ctx.currentAbort?.signal,
+      };
+      const res = await reg.execute(rctx, 'resume', arg ? arg.split(/\s+/) : []);
+      if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
+      return;
+    }
+    if (cmd === '/clear') {
+      if (useRich && typeof bridge.clearScreen === 'function') { try { bridge.clearScreen(); } catch {} }
+      else ctx.renderer.clearScreen();
+      return;
+    }
+    if (cmd === '/tier' || cmd === '/t') {
+      const t = arg.trim().toLowerCase();
+      const TIERS = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
+      if (t && TIERS.includes(t)) {
+        ctx.session.tier = t as any;
+        emit(`档位已切换: ${t}（下次任务生效）`, 'success');
+      } else {
+        emit(`当前档位: ${ctx.session.tier}；可用: ${TIERS.join(', ')}`, 'info');
+      }
+      return;
+    }
+    if (cmd === '/status') {
+      const pct = Math.min(100, Math.floor((ctx.ctxUsedChars / 4 / ctx.ctxWindowTokens) * 100));
+      emit(`模式 ${ctx.session.approvalMode} · 档位 ${ctx.session.tier} · 模型 ${ctx.session.model} · 上下文 ~${pct}% · 队列 ${ctx.queue.taskCount} 任务 / ${ctx.queue.steerCount} 插话`, 'info');
+      return;
+    }
+    if (cmd === '/tree') {
+      // session tree (origin + branch nodes); /tree <id> → resume path
+      try {
+        const { listSessionTree, renderSessionTree } = await import('./rolloutStore.js');
+        const current = (ctx.session as any).sessionId || '';
+        const target = arg.trim() || current;
+        const tree = listSessionTree(target);
+        emit('会话树:', 'info');
+        for (const line of renderSessionTree(tree, current)) emit('  ' + line, 'info');
+        if (arg.trim() && arg.trim() !== current) emit(`切到节点 ${arg.trim()} 续写: /resume ${arg.trim()}`, 'success');
+        else emit('分支: /rewind 创建；节点续写: /tree <id> 后 /resume <id>', 'info');
+      } catch (e: any) {
+        emit('会话树读取失败: ' + (e?.message || e), 'error');
+      }
+      return;
+    }
+    if (cmd === '/feature') {
+      // /feature list|add|done|next (rich-local mirror of FeatureCommand)
+      const { loadFeatures, activeFeature, addFeature, markFeatureDone, setFeatureNext } = await import('./FeatureTracker.js');
+      const ws = ctx.session.workspace || process.cwd();
+      const sub = (arg.split(/\s+/)[0] || 'list').toLowerCase();
+      const rest = arg.split(/\s+/).slice(1);
+      if (sub === 'list' || sub === 'ls') {
+        const items = loadFeatures(ws);
+        if (items.length === 0) { emit('特性列表为空（/feature add <标题> 开始）', 'info'); return; }
+        for (const f of items) {
+          const mark = f.status === 'in-progress' ? '▶' : f.status === 'done' ? '✓' : f.status === 'blocked' ? '✗' : '·';
+          emit(`  ${mark} ${f.id} ${f.title} [${f.status}]${f.evidence ? ' · ✓ ' + f.evidence : ''}`, 'info');
+        }
+        return;
+      }
+      if (sub === 'add') {
+        const title = rest.join(' ').trim();
+        const item = title ? addFeature(ws, title) : null;
+        emit(item ? `已添加并激活: ${item.id} ${item.title}` : '用法: /feature add <标题>', item ? 'success' : 'warn');
+        return;
+      }
+      if (sub === 'done') {
+        const err = markFeatureDone(ws, rest[0] || '', rest.slice(1).join(' ').trim());
+        emit(err ?? `已标记 done: ${rest[0]}`, err ? 'warn' : 'success');
+        return;
+      }
+      if (sub === 'next') {
+        const err = setFeatureNext(ws, rest[0] || '', rest.slice(1).join(' ').trim());
+        emit(err ?? `已设为 active: ${rest[0]}`, err ? 'warn' : 'success');
+        return;
+      }
+      emit('用法: /feature list|add <标题>|done <id> <证据>|next <id>', 'warn');
+      return;
+    }
+    if (cmd === '/init') {
+      // rich-local /init — probe workspace + write
+      // .panshalach/AGENTS.md + feature_list.json. B-dual: reuses the SAME
+      // probe/build logic as the registry InitCommand (the old inline
+      // simplified copy diverged in output — now unified).
+      try {
+        const { probeWorkspace, buildAgentsMd } = await import('./commands/InitCommand.js');
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const ws = ctx.session.workspace || process.cwd();
+        const probe = probeWorkspace(ws);
+        const agents = buildAgentsMd(ws, probe);
+        const agentsPath = path.join(ws, '.panshalach', 'AGENTS.md');
+        const existed = fs.existsSync(agentsPath);
+        if (existed && arg !== '--force' && arg !== '-f') { emit('AGENTS.md 已存在（/init --force 覆盖）', 'warn'); return; }
+        fs.mkdirSync(path.join(ws, '.panshalach'), { recursive: true });
+        fs.writeFileSync(agentsPath, agents, 'utf-8');
+        const { saveFeatures, featureListPath } = await import('./FeatureTracker.js');
+        if (!fs.existsSync(featureListPath(ws))) saveFeatures(ws, []);
+        const cmds = [probe.buildCmd, probe.testCmd, probe.lintCmd].filter(Boolean).join(' | ') || '未探测到';
+        emit(`已生成 ${agentsPath}（验证命令: ${cmds}）`, 'success');
+      } catch (e: any) {
+        emit('初始化失败: ' + (e?.message || e), 'error');
+      }
+      return;
+    }
+
+    // iron rule: unknown slash commands never reach the engine.
+    // 加模糊建议 — line 空闲态置待定命令（回车确认执行，
+    // Esc/其他输入取消）；rich / 运行中只提示建议。
+    // 建议不能指向命令本身（自指：确认后又落"未知命令"无限循环），
+    // 且待定命令确认路径会先过 handleLocalCommand（/exit /clear 只在那注册）。
+    {
+      const sug = suggestCommand(cmd);
+      if (sug && ('/' + sug) !== cmd) {
+        if (!useRich && !isRunning(ctx)) {
+          ctx.pendingSuggestion = '/' + sug;
+          emit(`未知命令 ${cmd} · 你是不是想要 /${sug}？（回车确认执行，Esc/其他输入取消）`, 'warn');
+        } else {
+          emit(`未知命令 ${cmd} · 你是不是想要 /${sug}？（输入 /help 查看全部命令）`, 'warn');
+        }
+      } else {
+        emit(`未知命令: ${cmd}（输入 /help 查看可用命令；斜杠命令均本地执行）`, 'warn');
+      }
+    }
+    return;
+  }
+
+  // auto-compact pre-flight (CC-style) — background-first, applied at
+  // task boundary, never blocks input. Sync fallback only when critical.
+  {
+    const ratioNow = Math.min(1, (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens);
+    const cs = await import('./compactService.js');
+    if (cs.shouldAutoCompact(ctx.session, ratioNow)) {
+      const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
+      let client: any = null;
+      try { client = (await resolveSharedClient(ctx.session.model, ctx.provider as any)).client; } catch {}
+
+      // A ready background result → apply with zero wait
+      if (ctx.bgCompact && ctx.bgCompact.isReady()) {
+        const res = ctx.bgCompact.result();
+        ctx.bgCompact = null;
+        if (res && res.ok) {
+          const applied = cs.applyCompactResult(ctx.session, res);
+          ctx.ctxUsedChars = cs.estimateSessionTokens(ctx.session) * 4;
+          const msg = `${applied.message}`;
+          // 拒绝/失败以 warn 呈现（盘故障不该与普通回执同级）
+          if (!applied.ok) {
+            if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'warn' });
+            else ctx.renderer.warn(msg);
+          } else {
+            if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'info' });
+            else ctx.renderer.info(msg);
+          }
+          if (useRich && typeof bridge.setTop === 'function') {
+            const nr = Math.min(1, (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens);
+            try { bridge.setTop({ ctxRatio: nr }); } catch {}
+          }
+        }
+      } else if (!ctx.bgCompact) {
+        // Nothing running yet → kick off a background compaction (non-blocking).
+        const h = cs.startBackgroundCompact(ctx.session, client);
+        if (h) {
+          ctx.bgCompact = h;
+          emitFeed(ctx, '⏳ 已在后台预压缩历史（阈值为 ≥85% 上下文）……', 'warn');
+        } else if (ratioNow >= 0.95) {
+          // Critical: stream is about to blow up — do a sync fallback.
+          // unified via runSyncCompact (feedback + meter reset)
+          await runSyncCompact(ctx, '⏳ auto-compact 同步兜底：');
+        }
+      }
+    }
+  }
+
+  // steering injection — unconsumed steers join THIS round's prompt,
+  // then are consumed immediately (injected ones cannot be recalled).
+  const pendingSteers = ctx.queue.consumeSteers();
+  if (pendingSteers.length > 0) {
+    task = task + formatSteerInjection(pendingSteers);
+    ctx.lastInjectedSteers = pendingSteers;
+    emitFeed(ctx, `本轮已注入 ${pendingSteers.length} 条插话`, 'info');
+    updateQueueCount(ctx);
+  }
+
+  if (!useRich) {
+    ctx.renderer.writeLine(ctx.renderer.color(`\n[提交任务] ${task.split('\n\n【用户插话')[0]}`, 'cyan'));
+  } else if (typeof bridge.setRunning === 'function') {
+    try { bridge.setRunning(true); } catch {}
+  }
+
+  // Abort support: signal 贯穿 solveIssue → loop → 模型 fetch / 工具执行，
+  // 中断时 runPromise 以 stopReason='aborted' 正常 settle（见下方 else 分支）。
+  // 0.7.4 B6：移除永不 settle 的 abortPromise 死代码——abortReject 从未被调用，
+  // Promise.race 的 aborted 分支不可达（真中断由 SIGINT → currentAbort.abort() →
+  // loop signal 检查 → stopReason='aborted' 链路承担）。
+  const controller = new AbortController();
+  ctx.currentAbort = controller;
+  ctx.lastAborted = false;
+
+  const startedAt = Date.now();
+  // 任务边界重取当前模型真实窗口（/model 切换后立即生效）
+  ctx.ctxWindowTokens = resolveCtxWindowTokens(ctx);
+  // 任务边界重置 line 模式流式/卡片状态
+  ctx.lineUi.taskStartedAt = startedAt;
+  ctx.lineUi.taskEndedAt = 0;
+  ctx.lineUi.ghostIgnored = false;
+  ctx.lineUi.stepCount = 0;
+  ctx.lineUi.streamedAnswerChars = 0;
+  ctx.lineUi.thinkingStart = 0;
+  ctx.lineUi.thinkingBuf = '';
+  ctx.lineUi.thinkingPrinted = false;
+  ctx.lineUi.messageStreaming = false;
+  ctx.lineUi.toolStack = [];
+  ctx.lineUi.pendingTool = null;
+  // gerund interval handle (declared here so the finally can clear it)
+  let gerundTimer: NodeJS.Timeout | null = null;
+  // new task boundary — settle previous rollouts, start a fresh clock
+  ctx.agentTree.markAll('running', 'done');
+  ctx.treeTaskStart = startedAt;
+
+  try {
+    // ensure MCP servers are initialized (lazy, once) before the run
+    await initMcpServers(ctx);
+    const { runAgentTask } = ctx.loadRunAgentTask
+      ? await ctx.loadRunAgentTask()
+      : await import('../../server/runAgentTask.js');
+
+    // real approval bridges.
+    // - rich path → bridge.setConfirm(request) → ConfirmBar (y/n/a/Esc)
+    // - line path → readline question bridge (60s silence → n)
+    const approvalBridge = useRich
+      ? (req: { tool: string; description: string; danger: boolean }) =>
+          (ctx.bridgeRef.current.setConfirm(req) as Promise<'y' | 'n' | 'a'>)
+      : createCliApprovalBridge();
+
+    // 主 readline 不再全程 pause（那样会让任务运行中的 Ctrl+C
+    // 无人接、输入缓冲成幽灵 ^C）。stdin 所有权只在审批 question 挂起时
+    // 经 setApprovalActivityListener（line 段注册）临时交接。
+
+    // gerund running label — line-mode inline updates every 4s.
+    // Timer unref'd (non-deadline timers must not hold the
+    // process) and always cleared in the finally below.
+    // 重绘统一走本函数（清活行 → 原地写 → 记 inlineLine）。
+    // 审批挂起时暂停；正文流式期间暂停。
+    if (!useRich) {
+      try {
+        const { nextGerund, formatRunningLabel } = await import('./GerundSpinner.js');
+        const gStart = startedAt;
+        const paint = () => {
+          // thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
+          if (isApprovalActive() || ctx.lineUi.messageStreaming || ctx.lineUi.inlineLine === 'thinking') return;
+          try {
+            // 任务运行超 30s → 一次性等待 tip（受全局 ≤2 节流）
+            if (Date.now() - gStart > 30000 && ctx.tipGate.canShow('wait')) {
+              ctx.tipGate.markShown('wait');
+              clearInlineLine(ctx);
+              process.stdout.write(`${ANSI_DIM}Tip: 长时间无进展可 Ctrl+C 中断，补充上下文后再试${ANSI_RESET}\n`);
+            }
+            clearInlineLine(ctx);
+            let label: string;
+            const pt = ctx.lineUi.pendingTool;
+            if (pt && Date.now() - pt.at > 3000) {
+              // pre 后 3s 未 post → 进行时工具标签
+              label = `${pt.doing} ${pt.summary}… ⏱ ${Math.floor((Date.now() - gStart) / 1000)}s`;
+            } else {
+              label = formatRunningLabel(Date.now() - gStart, nextGerund());
+            }
+            process.stdout.write('\r' + label + '   ');
+            ctx.lineUi.inlineLine = 'gerund';
+          } catch {}
+        };
+        paint();
+        gerundTimer = setInterval(paint, 4000);
+        gerundTimer.unref();
+      } catch {}
+    }
+
+    const runPromise = runAgentTask(
+      {
+        task,
+        // the task must run against the LIVE session state — /tier and
+        // /workspace switches take effect immediately, and the session's
+        // turns feed "最近 N 轮上下文" on the default path.
+        tier: ctx.session.tier,
+        workspace: ctx.session.workspace,
+        model: ctx.session.model,
+        simulate: false,
+        session: ctx.session,
+      },
+      {
+        provider: ctx.provider,
+        signal: controller.signal,
+        approvalMode: ctx.session.approvalMode,
+        sessionAllowlist: ctx.session.sessionApprovalAllowlist,
+        approvalBridge,
+        planMode: ctx.session.planMode,
+        mcpTools: ctx.mcpToolsReady,
+        onEvent: (ev: any) => {
+          if (controller.signal.aborted) return;
+
+          // feed the agent tree from rolloutId-carrying events
+          if (ev && (ev.type === 'step' || ev.type === 'critique') && ev.rolloutId) {
+            ctx.agentTree.upsert({
+              id: String(ev.rolloutId),
+              parent: null,
+              status: 'running',
+              stepCount: Number(ev.stepNumber ?? 1),
+              durationMs: ctx.treeTaskStart ? Date.now() - ctx.treeTaskStart : 0,
+              lastPhase: ev.type,
+            });
+          }
+
+          // heuristic context meter (chars/4) from reasoning/plan/result/critique
+          if (ev && ev.type === 'step') {
+            bumpCtx(ctx, ev.thinking); bumpCtx(ctx, ev.plan);
+            bumpCtx(ctx, typeof ev.result === 'string' ? ev.result : '');
+            if (Array.isArray(ev.toolCalls)) {
+              for (const tc of ev.toolCalls) {
+                bumpCtx(ctx, tc?.rawBlock); bumpCtx(ctx, tc?.argsSummary);
+              }
+            }
+            if (useRich && typeof bridge.setTop === 'function') {
+              const ratio = Math.min(1, (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens);
+              try { bridge.setTop({ ctxRatio: ratio }); } catch {}
+            }
+          } else if (ev && ev.type === 'critique') {
+            bumpCtx(ctx, ev.critique);
+          }
+
+          if (useRich) {
+            mapSseToBridge(ev.type || 'event', ev, bridge);
+          } else {
+            renderSseEvent(ctx, ev.type || 'event', ev, ctx.renderer);
+          }
+        },
+      }
+    );
+
+    // 0.7.4 B6：abortPromise 已删——中断时 runPromise 以 stopReason='aborted'
+    // settle，统一走下方 else 分支（三态文案 + partialText 落盘）。
+    const raced = { kind: 'done' as const, result: await runPromise };
+
+    // persist the completed turn into the session + rollout jsonl
+    // this task's rollouts are done
+    ctx.agentTree.markAll('running', 'done');
+    {
+      const r = raced.result;
+      const stopReason = (r as any)?.stopReason;
+      // 中断语义保持：aborted 回合阻断排队任务自动执行（用户保留排队项手动重跑）
+      if (stopReason === 'aborted') ctx.lastAborted = true;
+      // 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；error→执行失败；其余→未通过验证
+      const summary = stopReason === 'completed' ? '已通过验证'
+        : stopReason === 'answered' ? '已回复'
+        : stopReason === 'aborted' ? '已中断'
+        : stopReason === 'error' ? '任务执行失败'
+        : r?.success ? '已通过验证' : '未通过验证';
+      const turn = {
+        id: Date.now().toString(36),
+        timestamp: Date.now(),
+        userInput: task.split('\n\n【用户插话')[0],
+        userInputType: 'task' as const,
+        tier: ctx.session.tier,
+        durationMs: r?.durationMs ?? (Date.now() - startedAt),
+        ...(stopReason === 'aborted' && (r as any)?.partialText ? { partialText: (r as any).partialText } : {}),
+        result: {
+          success: !!r?.success,
+          summary,
+          budgetReport: r?.budgetReport as any,
+          stopReason,
+          goal: task.split('\n\n【用户插话')[0],
+          changedFiles: (r as any)?.changedFiles ?? [],
+          verifyCmd: (r as any)?.verifyCmd ?? [],
+          outcome: mapOutcome(stopReason),
+        },
+      };
+      try { ctx.session.addTurn(turn); } catch {}
+      try { rollout.appendTurn(ctx.session.id, turn as any); } catch {}
+      // answered 时把模型正文呈现给用户（/edit 可取回）
+      // 正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
+      // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。
+      if (stopReason === 'answered' && r) {
+        const traj = (r as any).bestTrajectory;
+        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        if (answerText && useRich && typeof bridge.pushFeed === 'function') {
+          bridge.pushFeed({ type: 'markdown', content: answerText });
+        } else if (answerText && !useRich && ctx.lineUi.streamedAnswerChars < String(answerText).length) {
+          // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
+          const rest = String(answerText).slice(ctx.lineUi.streamedAnswerChars);
+          if (rest) {
+            ctx.renderer.writeLine(ctx.renderer.color(rest, 'white'));
+            recordOutput(ctx, rest);
+          }
+        }
+      }
+      recordOutput(ctx, summary);
+    }
+  } catch (err: any) {
+    const msg = '任务执行失败: ' + (err?.message || err);
+    if (!useRich) ctx.renderer.error(msg);
+    else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'error' });
+  } finally {
+    ctx.currentAbort = null;
+    void startedAt;
+    if (gerundTimer) { try { clearInterval(gerundTimer); } catch {} }
+    gerundTimer = null;
+    // 清活行（gerund/thinking 残留）；正文流式收尾换行
+    clearInlineLine(ctx);
+    if (ctx.lineUi.messageStreaming) { try { process.stdout.write('\n'); } catch {} }
+    ctx.lineUi.messageStreaming = false;
+    ctx.lineUi.pendingTool = null;
+    ctx.lineUi.toolStack = [];
+    // 幽灵 ^C 窗口 — 任务刚结束的 1.5s 内缓冲的 Ctrl+C 只忽略一次
+    ctx.lineUi.taskEndedAt = Date.now();
+    ctx.lineUi.ghostIgnored = false;
+    // 上下文占用 >75% → 一次性 tip（启发式 chars/4 估算，
+    // 与 auto-compact 的 ratioNow 同源；受全局 ≤2 节流）
+    if (!useRich) {
+      const ratio = (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens;
+      if (ratio > 0.75 && ctx.tipGate.canShow('ctx')) {
+        ctx.tipGate.markShown('ctx');
+        try { ctx.renderer.writeLine(ctx.renderer.color(`Tip: 上下文占用约 ${Math.round(ratio * 100)}% · /compact 可立即压缩`, 'gray')); } catch {}
+      }
+    }
+    if (useRich && typeof bridge.setRunning === 'function') {
+      try { bridge.setRunning(false); } catch {}
+    } else {
+      // Line path: restore prompt so the user can type the next task.
+      if (ctx.lineRl) { try { ctx.lineRl.resume(); } catch {} }
+      try { ctx.lineSetPrompt(); } catch {}
+      if (ctx.lineRl) { try { ctx.lineRl.prompt(); } catch {} }
+    }
+  }
+
+  // drain queued tasks once the turn settles (FIFO, one by one).
+  // An aborted turn stops the drain — the user keeps the remaining queue.
+  while (ctx.queue.taskCount > 0 && !ctx.lastAborted) {
+    const next = ctx.queue.drainTasks();
+    updateQueueCount(ctx);
+    for (const t of next) {
+      if (ctx.lastAborted) break;
+      emitFeed(ctx, `▶ 执行排队任务：${t.slice(0, 80)}`, 'info');
+      await runTaskViaSse(ctx, t, bridge);
+    }
+  }
+}
+
+// Map normalized SSE events (from agentServer) to the rich bridge (Ink UI).
+function mapSseToBridge(event: string, data: any, b: any) {
+  if (!b) return;
+  const t = (data && data.type) || event;
+
+  if (t === 'start' || event === 'start') {
+    if (typeof b.setRunning === 'function') { try { b.setRunning(true); } catch {} }
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `开始执行: ${data.task || ''}`, level: 'info' });
+    return;
+  }
+  if (t === 'phase' || event === 'phase') {
+    const ph = localizePhase(data.phase || data);
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'phase', phase: ph });
+    if (typeof b.setTop === 'function') b.setTop({ phase: ph });
+    return;
+  }
+  if (t === 'thinking.start' || event === 'thinking.start') {
+    // New thinking segment: clear only the thinking buffer (P1.4)
+    if (typeof b.resetStream === 'function') { try { b.resetStream('thinking'); } catch {} }
+    return;
+  }
+  if (t === 'message.start' || event === 'message.start') {
+    // New message segment: clear only the message buffer (💭 stays visible)
+    if (typeof b.resetStream === 'function') { try { b.resetStream('message'); } catch {} }
+    return;
+  }
+  if (t === 'thinking.delta' || event === 'thinking.delta') {
+    if (typeof b.appendStream === 'function') b.appendStream('thinking', data.text || '');
+    return;
+  }
+  if (t === 'message.delta' || event === 'message.delta') {
+    if (typeof b.appendStream === 'function') b.appendStream('message', data.text || '');
+    return;
+  }
+  if (t === 'step' || event === 'step') {
+    // Turn segment settled → clear live zone before the step card lands
+    if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
+    if (typeof b.pushStep === 'function') b.pushStep(data);
+    if (Array.isArray(data.toolCalls) && typeof b.pushTool === 'function') {
+      for (const tc of data.toolCalls) b.pushTool(tc);
+    }
+    return;
+  }
+  if (t === 'critique' || event === 'critique') {
+    if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
+    if (typeof b.pushCritique === 'function') b.pushCritique(data);
+    return;
+  }
+  if (t === 'tool' || event === 'tool') {
+    if (typeof b.pushTool === 'function') b.pushTool(data);
+    return;
+  }
+  if (t === 'budget' || t === 'softLimit' || event === 'budget' || event === 'softLimit') {
+    const ratio = typeof data.usedRatio === 'number' ? data.usedRatio : (typeof data.ratio === 'number' ? data.ratio : 0);
+    if (typeof b.pushBudget === 'function') b.pushBudget(ratio);
+    return;
+  }
+  if (t === 'degradation' || event === 'degradation') {
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `⚠ 行为降级: ${data.reason || 'soft-limit'}`, level: 'warn' });
+    return;
+  }
+  if (t === 'markdown' || event === 'markdown') {
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'markdown', content: data.content || '' });
+    return;
+  }
+  if (t === 'thought' || event === 'thought') {
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'thought', short: data.short || '', full: data.full || data.thinking || '' });
+    return;
+  }
+  if (t === 'progress' || event === 'progress') {
+    // lightweight; surface as phase hint if numeric step present
+    if (typeof data.step === 'number' || typeof data.stepNumber === 'number') {
+      const n = data.step ?? data.stepNumber;
+      if (typeof b.setTop === 'function') { try { b.setTop({ phase: `step ${n}` }); } catch {} }
+    }
+    return;
+  }
+  if (t === 'result' || event === 'result') {
+    if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
+    // 四态文案：answered→已回复；aborted→已中断；error→执行失败；success→已通过验证；否则未通过验证
+    const sr2 = data.stopReason;
+    const resultText = sr2 === 'answered' ? '已回复' : sr2 === 'aborted' ? '已中断'
+      : sr2 === 'error' ? '任务执行失败'
+      : data.success ? '完成（已通过验证）' : '任务未通过验证';
+    const level = sr2 === 'answered' || data.success ? 'success'
+      : (sr2 === 'aborted' || sr2 === 'error') ? 'error' : 'warn';
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: resultText, level });
+    if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
+      if (typeof b.pushBudget === 'function') b.pushBudget(data.budgetReport.usageRatio);
+    }
+    if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
+    return;
+  }
+  if (t === 'done' || event === 'done') {
+    if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
+    if (data && data.durationMs && typeof b.pushFeed === 'function') {
+      // "Cooked for" style tail note (CC-inspired)
+      b.pushFeed({ type: 'text', text: `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`, level: 'info' });
+    }
+    if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
+    return;
+  }
+  if (t === 'error' || event === 'error') {
+    if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
+    const msg = data && (data.message || JSON.stringify(data));
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: '错误: ' + msg, level: 'error' });
+    if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
+    return;
+  }
+  // Fallback generic
+  if (typeof b.pushFeed === 'function') {
+    if (data && typeof data === 'object' && data.type) b.pushFeed(data);
+    else b.pushFeed({ type: 'text', text: JSON.stringify(data), level: 'info' });
+  }
+}
+
+// Line-mode renderer for SSE events (used when rich UI is not active).
+// line 模式接住 version 2 流式增量 —
+//   thinking.delta → 默认单行滚动（dim 斜体 ∴ + 最新行截断），verbose 开启时全文多行；
+//   message.delta  → 正文逐 delta 直接写 stdout（无前缀），回合结束补换行。
+function endThinkingBlock(ctx: TurnContext, r: ReturnType<typeof createOutputRenderer>) {
+  const started = ctx.lineUi.thinkingStart > 0;
+  if (ctx.lineUi.verbose) {
+    if (ctx.lineUi.thinkingBuf) {
+      const carry = ctx.lineUi.thinkingBuf;
+      ctx.lineUi.thinkingBuf = '';
+      printVerboseThinkingLine(ctx, carry, r);
+    }
+  } else if (started) {
+    clearInlineLine(ctx);
+    const secs = Math.max(1, Math.round((Date.now() - ctx.lineUi.thinkingStart) / 1000));
+    try { r.writeLine(r.color(`∴ 已思考 ${secs}s`, 'gray')); } catch {}
+  }
+  ctx.lineUi.thinkingStart = 0;
+  ctx.lineUi.thinkingBuf = '';
+  ctx.lineUi.thinkingPrinted = false;
+}
+
+function printVerboseThinkingLine(ctx: TurnContext, line: string, r: ReturnType<typeof createOutputRenderer>) {
+  void r;
+  const text = String(line ?? '').replace(/\t/g, '  ');
+  if (!text.trim()) return;
+  clearInlineLine(ctx); // gerund 标签可能还占着当前行（清行纪律）
+  const w = Math.max(20, termWidth() - 4);
+  for (const chunk of wrapByWidth(text, w)) {
+    try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}  ${chunk}${ANSI_RESET}\n`); } catch {}
+    ctx.lineUi.thinkingPrinted = true;
+  }
+}
+
+function endMessageStream(ctx: TurnContext) {
+  if (ctx.lineUi.messageStreaming) {
+    ctx.lineUi.messageStreaming = false;
+    try { process.stdout.write('\n'); } catch {}
+  }
+}
+
+function renderSseEvent(ctx: TurnContext, event: string, data: any, r: ReturnType<typeof createOutputRenderer>) {
+  switch (event) {
+    case 'thinking.start':
+      // 新思考段 — 记起点（首个 thinking.delta 也兜底记）；
+      // 上一段若还有正文流式未收尾，先补换行
+      endMessageStream(ctx);
+      ctx.lineUi.thinkingStart = Date.now();
+      ctx.lineUi.thinkingBuf = '';
+      ctx.lineUi.thinkingPrinted = false;
+      return;
+    case 'thinking.delta': {
+      // 接住思考增量（旧 line 模式直接忽略）
+      const text = String(data.text || '');
+      if (!text) return;
+      if (!ctx.lineUi.thinkingStart) ctx.lineUi.thinkingStart = Date.now();
+      if (ctx.lineUi.verbose) {
+        // 全文多行 — 按完整行宽度折行 + 2 空格缩进（增量按行 flush）
+        ctx.lineUi.thinkingBuf += text;
+        let nl: number;
+        while ((nl = ctx.lineUi.thinkingBuf.indexOf('\n')) !== -1) {
+          const ready = ctx.lineUi.thinkingBuf.slice(0, nl);
+          ctx.lineUi.thinkingBuf = ctx.lineUi.thinkingBuf.slice(nl + 1);
+          printVerboseThinkingLine(ctx, ready, r);
+        }
+        return;
+      }
+      // 默认：单行滚动 — 取最新一行，dim 斜体 ∴ 前缀，截到终端宽度-4
+      ctx.lineUi.thinkingBuf += text;
+      const parts = ctx.lineUi.thinkingBuf.split('\n');
+      let last = '';
+      for (let i = parts.length - 1; i >= 0; i--) {
+        if (parts[i].trim()) { last = parts[i]; break; }
+      }
+      if (!last) return;
+      clearInlineLine(ctx);
+      const shown = truncateByWidth(last.replace(/\t/g, '  '), Math.max(10, termWidth() - 4));
+      try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}∴ ${shown}${ANSI_RESET}`); } catch {}
+      ctx.lineUi.inlineLine = 'thinking';
+      return;
+    }
+    case 'message.start':
+      // thinking 结束（收到 message.start → 折叠为灰字统计）
+      endThinkingBlock(ctx, r);
+      return;
+    case 'message.delta': {
+      // 正文流式 — 逐 delta 直接写 stdout（正文本体，无前缀）；
+      // gerund 重绘在 messageStreaming 期间暂停（paint 回调里检查）。
+      const text = String(data.text || '');
+      if (!text) return;
+      clearInlineLine(ctx);
+      try { process.stdout.write(text); } catch {}
+      ctx.lineUi.messageStreaming = true;
+      ctx.lineUi.streamedAnswerChars += text.length;
+      return;
+    }
+    case 'start':
+      r.writeLine(r.color(`开始执行: ${data.task || ''}`, 'cyan'));
+      break;
+    case 'phase':
+      // phase 值本地化（渲染层映射，不改事件值）
+      r.writeLine(r.color(`── ${localizePhase(String(data.phase || data))} ──`, 'gray'));
+      break;
+    case 'step': {
+      // 流式段收尾：thinking 折叠为统计行、正文流补换行
+      endThinkingBlock(ctx, r);
+      endMessageStream(ctx);
+      const n = Number(data.stepNumber);
+      if (Number.isFinite(n) && n > 0) ctx.lineUi.stepCount = n; // 步数（Chaser 末尾 lastStep = 总步数）
+      const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
+      r.writeLine(r.color(msg, 'white'));
+      // 旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；
+      // step 只剩 thinking 汇总；verificationResult 维持现有渲染（无单独渲染）。
+      break;
+    }
+    case 'tools/pre-execute': {
+      // 工具实时卡片头行 `▸ <工具名青色> <参数摘要>`
+      endMessageStream(ctx); // 模型正文若刚流式完，先补换行再出卡片
+      const tool = String(data.tool || 'tool');
+      const params = (data.params && typeof data.params === 'object') ? data.params : {};
+      const summary = summarizeToolParams(tool, params);
+      ctx.lineUi.toolStack.push({ tool, params });
+      ctx.lineUi.pendingTool = { tool, summary, doing: doingVerb(tool), at: Date.now() };
+      clearInlineLine(ctx);
+      r.writeLine(`${ANSI_DIM}▸${ANSI_RESET} ${r.color(tool, 'cyan')} ${r.color(summary, 'gray')}`);
+      break;
+    }
+    case 'tools/post-execute': {
+      // 结果行 `  ⎿ <动词句>`（从最近工具栈取回 pre 参数）
+      let preParams: any = null;
+      for (let i = ctx.lineUi.toolStack.length - 1; i >= 0; i--) {
+        if (ctx.lineUi.toolStack[i].tool === String(data.tool || '')) {
+          preParams = ctx.lineUi.toolStack.splice(i, 1)[0].params;
+          break;
+        }
+      }
+      if (preParams === null && ctx.lineUi.toolStack.length > 0) preParams = ctx.lineUi.toolStack.pop()!.params;
+      ctx.lineUi.pendingTool = null;
+      clearInlineLine(ctx);
+      r.writeLine('  ⎿ ' + toolResultLine(data, preParams));
+      break;
+    }
+    case 'critique':
+      // 删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
+      r.writeLine(r.color(String(data.critique || data), 'yellow'));
+      break;
+    case 'tool':
+      r.writeLine(r.color(`⚙ ${data.tool || ''} ${data.target || ''} [${data.status || ''}]`, 'cyan'));
+      if (data.result) {
+        const preview = String(data.result).slice(0, 200);
+        r.writeLine(r.color('   ' + preview, 'gray'));
+      }
+      break;
+    case 'budget':
+    case 'softLimit':
+      const pct = Math.floor(((data.usedRatio || 0) * 100));
+      const color = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green';
+      r.writeLine(r.color(`[预算 ${pct}%]`, color));
+      break;
+    case 'degradation':
+      r.writeLine(r.color(`⚠ 行为降级: ${data.reason || 'soft-limit'}`, 'yellow'));
+      break;
+    case 'progress':
+      r.writeLine(r.color(`… 进度 step ${data.step || data.stepNumber || ''}`, 'gray'));
+      break;
+    case 'markdown':
+      // In line mode, render a compact preview
+      {
+        const content = String(data.content || '').trim();
+        if (content) {
+          const preview = content.length > 240 ? content.slice(0, 237) + '…' : content;
+          r.writeLine(r.color(preview, 'white'));
+        }
+      }
+      break;
+    case 'thought':
+      {
+        const s = data.short || data.thinking || '';
+        r.writeLine(r.color(`💭 ${s}`, 'magenta'));
+      }
+      break;
+    case 'result':
+      {
+        // 流式段收尾
+        endThinkingBlock(ctx, r);
+        endMessageStream(ctx);
+        // 结束总结块 — `✓ 已通过验证 · N 步 · Xs · ~Yk tokens · 预算 Z%`
+        // + 第二行灰字「下一步」按 stopReason 分支。[最终预算] 并入总结行。
+        const sr = String(data.stopReason || '');
+        const elapsedMs = ctx.lineUi.taskStartedAt ? Date.now() - ctx.lineUi.taskStartedAt : 0;
+        const stateText = sr === 'completed' ? '✓ 已通过验证'
+          : sr === 'answered' ? '✓ 已回复'
+          : sr === 'aborted' ? '↩ 已中断'
+          : sr === 'error' ? '✗ 任务执行失败'
+          : data.success === true ? '✓ 已通过验证' : '✗ 未通过验证';
+        const parts: string[] = [stateText];
+        if (ctx.lineUi.stepCount > 0) parts.push(`${ctx.lineUi.stepCount} 步`);
+        if (elapsedMs > 0) parts.push(fmtMs(elapsedMs));
+        const tokens = Number(data?.budgetReport?.estimatedUsedTokens) || 0;
+        if (tokens > 0) parts.push(`~${(tokens / 1000).toFixed(1)}k tokens`);
+        const ratio = Number(data?.budgetReport?.usageRatio);
+        if (Number.isFinite(ratio) && ratio > 0) parts.push(`预算 ${Math.round(ratio * 100)}%`);
+        const lineColor = (sr === 'aborted' || sr === 'error') ? 'yellow'
+          : (sr === 'completed' || sr === 'answered' || data.success === true) ? 'green' : 'red';
+        const summaryLine = parts.join(' · ');
+        r.writeLine(r.color(summaryLine, lineColor));
+        r.writeLine(r.color(`  下一步: ${nextStepHint(sr)}`, 'gray'));
+        recordOutput(ctx, summaryLine);
+      }
+      break;
+    case 'done':
+      if (data.durationMs) {
+        // "Cooked for" style tail note (CC-inspired)
+        const t = `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`;
+        r.writeLine(r.color(t, 'gray'));
+        recordOutput(ctx, t);
+      }
+      break;
+    case 'error':
+      r.error(data.message || JSON.stringify(data));
+      break;
+    default:
+      if (data && typeof data === 'object' && data.type) {
+        renderSseEvent(ctx, data.type, data, r);
+      } else {
+        r.writeLine(JSON.stringify(data));
+      }
+  }
+}
+
+// --- Simple command handling (local for now, can be proxied later)
+export async function handleLocalCommand(ctx: TurnContext, line: string): Promise<boolean> {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+
+  if (trimmed === '/exit' || trimmed === '/quit' || trimmed === '/q') {
+    ctx.lineRl?.close();
+    return true;
+  }
+
+  // 0.7.4 任务 C：`?` 不再截获——输入问号也是给模型的信息（控制人裁决），
+  // `?` 作为普通任务文本透传；帮助只走 /help（buildQuickHelpLines 保留供 /help 复用）。
+
+  if (trimmed === '/help' || trimmed === '/h') {
+    // 与派发器 / classic 完全一致的分组帮助（HelpCommand 渲染）
+    const reg = await getSharedRegistry(ctx);
+    const view = buildHelpView(reg.list());
+    for (const l of view.lines) ctx.renderer.writeLine(l.style ? ctx.renderer.color(l.text, l.style) : l.text);
+    if (view.message) ctx.renderer.warn(view.message);
+    return true;
+  }
+
+  if (trimmed === '/status') {
+    const pct = Math.min(100, Math.floor((ctx.ctxUsedChars / 4 / ctx.ctxWindowTokens) * 100));
+    ctx.renderer.writeLine('传输: 进程内直连（in-process events，无端口）。远程 UI 可用 /serve 启动 SSE 服务。');
+    ctx.renderer.writeLine(`上下文估算: ~${pct}% of ${ctx.ctxWindowTokens} tokens（启发式）`);
+    ctx.renderer.writeLine(`队列: ${ctx.queue.taskCount} 个排队任务；未注入插话: ${ctx.queue.steerCount}`);
+    try {
+      const { isBranch } = await import('../../cli/repl/rolloutStore.js');
+      const origin = isBranch(ctx.session.id);
+      if (origin) ctx.renderer.writeLine(`分支: branch of ${origin}（/resume 可回原会话）`);
+    } catch {}
+    if (ctx.lastInjectedSteers.length > 0) {
+      ctx.renderer.writeLine(`最近注入的插话: ${ctx.lastInjectedSteers.join(' / ')}`);
+    }
+    return true;
+  }
+
+  if (trimmed === '/clear') {
+    ctx.renderer.clearScreen();
+    return true;
+  }
+
+  if (trimmed === '/edit' || trimmed === '/e') {
+    const prev = getLastOutput(ctx);
+    if (!prev) {
+      ctx.renderer.warn('暂无上次输出可编辑');
+      return true;
+    }
+    // Prefill for quick edit/resubmit in line mode
+    try {
+      (ctx.lineRl as any).line = prev;
+      (ctx.lineRl as any).cursor = prev.length;
+      if (typeof (ctx.lineRl as any)._refreshLine === 'function') (ctx.lineRl as any)._refreshLine();
+      ctx.renderer.writeLine(ctx.renderer.color('(已载入上次输出，可编辑后回车提交)', 'gray'));
+    } catch {
+      ctx.renderer.writeLine('--- 上次输出 ---');
+      ctx.renderer.writeLine(prev);
+      ctx.renderer.writeLine('--- 直接提交以重用 ---');
+      (ctx.lineRl as any)?.prompt?.();
+    }
+    return true;
+  }
+
+  return false; // not a local command, treat as task
+}
+
+// ==================== TurnController 接线（M1-TurnController） ====================
+
+export interface TurnControllerApi {
+  /** 提交任务/命令（runTaskViaSse 入口：斜杠命令本地执行，任务文本走全链）。 */
+  runTask: (task: string, bridge?: any) => Promise<void>;
+  /** 运行态感知的用户输入路由（idle→任务；running→命令/插话/排队）。 */
+  handleLine: (text: string, bridge?: any) => Promise<void>;
+  isRunning: () => boolean;
+}
+
+export function createTurnController(ctx: TurnContext): TurnControllerApi {
+  return {
+    runTask: async (task: string, bridge?: any) => { await runTaskViaSse(ctx, task, bridge); },
+    handleLine: async (text: string, bridge?: any) => { await handleUserLine(ctx, text, bridge); },
+    isRunning: () => isRunning(ctx),
+  };
+}
+
+export interface SseInteractiveOptions {
+  provider?: ModelProvider;
+  defaultTier?: string;
+  defaultWorkspace?: string;
+  /** resume an existing session instead of starting fresh */
+  session?: Session;
+}
+
+export async function startSseInteractive(opts: SseInteractiveOptions = {}): Promise<void> {
   // Check basic TTY capability. If not TTY, fall back to classic immediately.
   const isInteractiveTty =
     process.stdout.isTTY &&
@@ -480,1321 +1903,25 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // resumed sessions already carry __resumed marker from repl.ts
   const resumedInfo = (session as any).__resumed as { from: string; turns: number } | undefined;
 
-  // MCP stdio servers from .panshalach.json mcpServers (append-only config).
-  // Clients spawn lazily at first task; closed on process exit (hang discipline).
-  const mcpClients = new Map<string, any>();
-  let mcpToolsReady: any[] = [];
-  let mcpInitDone = false;
+  // ---- 会话壳：构造 TurnContext + 清活行 renderer ----
+  const ctx = createTurnContext({ session, provider: opts.provider });
+  const rawRenderer = createOutputRenderer();
+  ctx.renderer = createClearingRenderer(rawRenderer, () => clearInlineLine(ctx));
 
-  async function initMcpServers(): Promise<void> {
-    if (mcpInitDone) return;
-    mcpInitDone = true;
-    try {
-      const { ConfigManager } = await import('./ConfigManager.js');
-      const cfg: any = (new ConfigManager(session.workspace || process.cwd())).getAll?.() ?? {};
-      const servers: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> =
-        (cfg as any).mcpServers || {};
-      const { McpClient } = await import('../../tools/mcpClient.js');
-      for (const [name, s] of Object.entries(servers)) {
-        if (!s?.command) continue;
-        try {
-          const client = new McpClient({ command: s.command, args: s.args || [], env: s.env });
-          await client.initialize();
-          const tools = await client.listTools();
-          mcpClients.set(name, client);
-          for (const t of tools) {
-            mcpToolsReady.push({
-              server: name,
-              name: `mcp_${name}_${t.name}`,
-              description: t.description || '',
-              call: (args: Record<string, unknown>) => client.callTool(t.name, args),
-            });
-          }
-        } catch {
-          // failed server → skip (tools simply unavailable), never crash startup
-        }
-      }
-    } catch {
-      // config missing / unreadable → no MCP
-    }
-  }
-
+  // MCP stdio clients closed on process exit (hang discipline).
   process.once('exit', () => {
-    for (const c of mcpClients.values()) { try { c.close(); } catch {} }
+    for (const c of ctx.mcpClients.values()) { try { c.close(); } catch {} }
   });
 
-  // 上下文窗口挂真值——不再用 const 常量
-  // `PANSHA_CTX_WINDOW||128000` 与所连模型零耦合；改为每个任务边界调
-  // provider.getModelContextLength(session.model) 重取（CTX_WINDOW_TOKENS 去
-  // const 化）。≤0 或遗留 256000 哨兵视为 unknown → 32768 保守值（只多压缩，
-  // 不会让 8K 模型爆窗）。PANSHA_CTX_WINDOW 环境变量保留为显式覆盖。
-  let ctxWindowTokens = 32768;
-  function resolveCtxWindowTokens(): number {
-    const env = Number(process.env.PANSHA_CTX_WINDOW || 0);
-    if (Number.isFinite(env) && env > 0) return env;
-    try {
-      const p = (opts.provider ?? (session as any).provider) as any;
-      const n = Number(p?.getModelContextLength?.(session.model));
-      if (Number.isFinite(n) && n > 0 && n !== 256000) return n;
-    } catch {}
-    return 32768;
-  }
-  let ctxUsedChars = 0;
-  function bumpCtx(text: any) {
-    if (typeof text === 'string') ctxUsedChars += text.length;
-  }
-
-  // Holders for line-mode prompt restore (populated only in the !rich line fallback path).
-  // The unified runTaskViaSse (defined below) references these in its !bridge finally to restore the prompt.
-  let lineRl: readline.Interface | null = null;
-  let lineSetPrompt: () => void = () => {};
-
-  // 待定命令建议 / 模式徽标待打印 / 情境 tip 节流。
-  // pendingSuggestion 只在 line 空闲态由「未知命令」分支置位；回车确认执行，
-  // Esc / 任何其他输入取消。
-  let pendingSuggestion: string | null = null;
-  let modeBadgePending = true; // 启动时输出一次，此后仅模式变化后再输出
-  const sessionTipGate = createTipGate(2);
-
-  // For /edit: remember last meaningful surfaced content (result text, big markdown/thought)
-  // so user can pull it back into the input area to edit/resubmit or refine.
-  let lastOutput = '';
-  function recordOutput(text: string) {
-    if (text && text.trim()) lastOutput = text.trim();
-  }
-  function getLastOutput() { return lastOutput; }
-
-  // Abort flag for the current task (used by runTaskViaSse + SIGINT in line mode)
-  let currentAbort: AbortController | null = null;
-  const isRunning = () => currentAbort !== null;
-
-  // queued messages + steering inbox
-  const queue = new InputQueue();
-  let lastInjectedSteers: string[] = [];
-  let lastAborted = false;
   // in-flight background compaction (cancelled on session exit)
-  let bgCompact: { isReady(): boolean; result(): any; cancel(): void } | null = null;
-  process.once('exit', () => { if (bgCompact) { try { bgCompact.cancel(); } catch {} } });
+  process.once('exit', () => { if (ctx.bgCompact) { try { ctx.bgCompact.cancel(); } catch {} } });
 
-  // sub-agent rollout tree (fed by onEvent step/critique rolloutId).
-  // Engine runs rollouts SERIALLY → honest serial progress list.
-  const agentTree = new AgentTree();
-  let treeTaskStart = 0;
-  function updateQueueCount() {
-    if (typeof (bridgeRef as any).current?.setQueueCount === 'function') {
-      try { bridgeRef.current.setQueueCount(queue.size, queue.taskCount, queue.steerCount); } catch {}
-    }
-  }
-
-  // mode ring — shift+tab cycles; plan floors approval to readonly,
-  // leaving plan restores the ring-mapped approval mode.
-  // 切换回执为 `已切换: <模式> · <后果>`；徽标行置 pending，
-  // 下一次空闲提示符上方输出一次（避免刷屏）。
-  const modeRing = new ModeRing('default', (m) => {
-    if (m === 'plan') {
-      session.setPlanMode(true);
-    } else {
-      session.planMode = false;
-      session.approvalMode = m === 'auto-accept' ? 'full' : m === 'full' ? 'full' : 'default';
-    }
-    try { rollout.appendApprovalChange(session); } catch {}
-    modeBadgePending = true;
-    emitFeed(modeSwitchReceipt(m), 'info');
-  });
-  function pushRichModeBadge(m: string) {
-    if (typeof (bridgeRef as any).current?.setTop === 'function') {
-      try { bridgeRef.current.setTop({ modeBadge: m === 'plan' ? 'PLAN' : m === 'auto-accept' ? 'AUTO' : m === 'full' ? 'FULL' : '' }); } catch {}
-    }
-  }
-  function cycleMode(): string {
-    const m = modeRing.cycle();
-    pushRichModeBadge(m);
-    return m;
-  }
-  function setMode(m: any) {
-    // 旧实现 set(m) 后又 cycleMode() —— cycle 会把模式再推进一格，
-    // `/mode plan` 实际落在 default。set 只需同步 rich 徽标，不再 cycle。
-    modeRing.set(m);
-    pushRichModeBadge(String(m));
-  }
-  function emitFeed(text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
-    if (typeof (bridgeRef as any).current?.pushFeed === 'function') {
-      try { bridgeRef.current.pushFeed({ type: 'text', text, level }); } catch {}
-    } else {
-      renderer.writeLine(renderer.color(text, level === 'warn' ? 'yellow' : level === 'error' ? 'red' : 'gray'));
-    }
-  }
-
-  // unified synchronous compaction — client resolution, success/
-  // failure feedback and TopBar meter reset live HERE (was duplicated at
-  // /compact and the critical sync-fallback).
-  async function runSyncCompact(reasonPrefix = ''): Promise<any> {
-    const { compactSession, estimateSessionTokens } = await import('./compactService.js');
-    const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
-    const rich = !!bridge; // same semantics as runTaskViaSse's useRich
-    let client: any = null;
-    try { client = (await resolveSharedClient(session.model, opts.provider as any)).client; } catch {}
-    const r = await compactSession(session, client);
-    if (r.ok) {
-      ctxUsedChars = estimateSessionTokens(session) * 4;
-      const msg = reasonPrefix + r.message;
-      if (rich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: reasonPrefix ? 'warn' : 'success' });
-      else if (reasonPrefix) renderer.warn(msg);
-      else renderer.success(msg);
-      if (rich && typeof bridge.setTop === 'function') {
-        const nr = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
-        try { bridge.setTop({ ctxRatio: nr }); } catch {}
-      }
-    } else {
-      if (rich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: r.message, level: 'warn' });
-      else renderer.warn(r.message);
-    }
-    return r;
-  }
-
-  /**
-   * route a user line according to running state.
-   * - idle:   normal task flow
-   * - running: '/' → immediate local command; '!' → steer; else → queued task
-   */
-  async function handleUserLine(text: string, bridge?: any) {
-    const trimmed = String(text || '').trim();
-    if (!trimmed) return;
-
-    if (!isRunning()) {
-      await runTaskViaSse(trimmed, bridge);
-      return;
-    }
-
-    const routed = classifyRunningInput(trimmed);
-    if (routed.kind === 'command') {
-      // slash commands execute immediately, never queued
-      await runTaskViaSse(routed.payload, bridge);
-      return;
-    }
-    if (routed.kind === 'steer') {
-      if (!routed.payload) return;
-      queue.enqueueSteer(routed.payload);
-      emitFeed(`steered ×${queue.steerCount}（下一轮注入）：${routed.payload}`, 'info');
-    } else {
-      queue.enqueueTask(routed.payload);
-      emitFeed(`queued ×${queue.taskCount}：${routed.payload}`, 'info');
-    }
-    updateQueueCount();
-  }
-
-  // 与 classic（Repl.ts）完全同序的 26 命令注册表 —
-  // /help 的分组渲染、/resume 的委托执行都以它为数据源，三处输出一致。
-  let sharedRegistry: any = null;
-  async function getSharedRegistry(): Promise<any> {
-    if (sharedRegistry) return sharedRegistry;
-    const { CommandRegistry } = await import('./CommandRegistry.js');
-    const reg = new CommandRegistry();
-    const mods = await Promise.all([
-      import('./commands/HelpCommand.js'),
-      import('./commands/ExitCommand.js'),
-      import('./commands/ClearCommand.js'),
-      import('./commands/StatusCommand.js'),
-      import('./commands/TierCommand.js'),
-      import('./commands/WorkspaceCommand.js'),
-      import('./commands/ModelCommand.js'),
-      import('./commands/HistoryCommand.js'),
-      import('./commands/RunCommand.js'),
-      import('./commands/SimulateCommand.js'),
-      import('./commands/ReviewCommand.js'),
-      import('./commands/MemoryCommand.js'),
-      import('./commands/TraceCommand.js'),
-      import('./commands/ConfigCommand.js'),
-      import('./commands/SessionCommand.js'),
-      import('./commands/InitCommand.js'),
-      import('./commands/ServeCommand.js'),
-      import('./commands/ApprovalsCommand.js'),
-      import('./commands/UndoCommand.js'),
-      import('./commands/CompactCommand.js'),
-      import('./commands/UsageCommand.js'),
-      import('./commands/ResumeCommand.js'),
-      import('./commands/RewindCommand.js'),
-      import('./commands/AgentsCommand.js'),
-      import('./commands/FeatureCommand.js'),
-      import('./commands/TreeCommand.js'),
-    ]);
-    for (const m of mods) reg.register((m as any).default);
-    sharedRegistry = reg;
-    return reg;
-  }
-
-  async function runTaskViaSse(task: string, bridge?: any) {
-    if (!task || !task.trim()) return;
-
-    const trimmed = task.trim();
-    const useRich = !!bridge;
-
-    // Unified /edit (P1): pull last significant output back into input for edit/resubmit.
-    if (trimmed === '/edit' || trimmed === '/e') {
-      const prev = getLastOutput();
-      if (!prev) {
-        if (!useRich) renderer.warn('暂无上次输出可编辑');
-        else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: '暂无上次输出可编辑', level: 'warn' });
-        return;
-      }
-      if (useRich) {
-        try {
-          if (typeof bridge.updateInput === 'function') bridge.updateInput(prev);
-          if (typeof bridge.pushFeed === 'function') {
-            bridge.pushFeed({ type: 'text', text: '(已载入上次输出到输入区，可编辑后提交)', level: 'info' });
-          }
-        } catch {}
-      } else {
-        // Line mode prefill
-        try {
-          if (lineRl) {
-            (lineRl as any).line = prev;
-            (lineRl as any).cursor = prev.length;
-            if (typeof (lineRl as any)._refreshLine === 'function') (lineRl as any)._refreshLine();
-            renderer.writeLine(renderer.color('(已载入上次输出，可编辑后回车提交)', 'gray'));
-          } else {
-            renderer.writeLine('--- 上次输出 ---');
-            renderer.writeLine(prev);
-          }
-        } catch {
-          renderer.writeLine('--- 上次输出 ---');
-          renderer.writeLine(prev);
-        }
-      }
-      return;
-    }
-
-    // local commands shared by rich + line paths
-    // (/undo now; /approvals + /usage + /compact land with their batches)
-    if (trimmed.startsWith('/')) {
-      const sp = trimmed.indexOf(' ');
-      const cmd = (sp === -1 ? trimmed : trimmed.slice(0, sp)).toLowerCase();
-      const arg = sp === -1 ? '' : trimmed.slice(sp + 1).trim();
-
-      const emit = (text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') => {
-        if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text, level });
-        else if (level === 'warn') renderer.warn(text);
-        else if (level === 'error') renderer.error(text);
-        else if (level === 'success') renderer.success(text);
-        else renderer.writeLine(text);
-      };
-
-      if (cmd === '/agents') {
-        // sub-agent rollout tree (serial progress list — honest)
-        const nodes = agentTree.snapshot();
-        const feedOrLine = (text: string, color?: 'bold' | 'gray') => {
-          if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text, level: 'info' });
-          else renderer.writeLine(color ? renderer.color(text, color) : text);
-        };
-        if (arg) {
-          const n = agentTree.get(arg.trim());
-          if (!n) { feedOrLine(`未找到 rollout: ${arg}`); return; }
-          feedOrLine(`rollout ${n.id}（${localizeRolloutStatus(n.status)}）`, 'bold');
-          feedOrLine(`  步数: ${n.stepCount} · 耗时: ${(n.durationMs / 1000).toFixed(1)}s · 最近阶段: ${n.lastPhase ?? '-'}`);
-          return;
-        }
-        if (nodes.length === 0) { feedOrLine('尚无 rollout 数据（跑一个任务后出现）'); return; }
-        const done = nodes.filter((n) => n.status === 'done').length;
-        const running = nodes.filter((n) => n.status === 'running').length;
-        const failed = nodes.filter((n) => n.status === 'failed').length;
-        const pending = nodes.filter((n) => n.status === 'pending').length;
-        const totalMs = nodes.reduce((a, n) => a + n.durationMs, 0);
-        // 统计行中文化
-        feedOrLine(`共 ${nodes.length} rollouts · 完成 ${done} · 进行中 ${running} · 等待 ${pending} · 失败 ${failed} · 总耗时 ${(totalMs / 1000).toFixed(1)}s`, 'bold');
-        for (const n of nodes) {
-          const glyph = n.status === 'running' ? '▶' : n.status === 'done' ? '✓' : n.status === 'failed' ? '✗' : '·';
-          const dur = n.durationMs >= 1000 ? `${(n.durationMs / 1000).toFixed(1)}s` : `${n.durationMs}ms`;
-          feedOrLine(`  ${glyph} ${n.id} · ${localizeRolloutStatus(n.status)} · ${n.stepCount} 步 · ${dur}${n.lastPhase ? ` · ${n.lastPhase}` : ''}`);
-        }
-        // graph edges (dep/rollback/approval) annotated
-        try {
-          const edges = agentTree.edges();
-          if (edges.length > 0) {
-            feedOrLine('边:', 'gray');
-            for (const e of edges) feedOrLine(`  ${e.from} --[${e.kind}]--> ${e.to}`, 'gray');
-          }
-        } catch {}
-        // 文案清漂：删除"并行 rollout"表述——引擎恒单 rollout
-        // 串行执行（Promise.allSettled 多 rollout 编排已随判官机制摘除），
-        // 文案必须与运行时一致。
-        feedOrLine('（当前为单 rollout 串行执行；rollout 列表记录任务内步骤进度）', 'gray');
-        return;
-      }
-
-      if (cmd === '/rewind') {
-        // turn-level rewind lives in the classic command set
-        // (registered RewindCommand); rich-mode panel wiring is deferred.
-        // line 模式不静默 no-op——提示真实可用路径并按已处理返回
-        //（false 会把命令当任务发给引擎）。
-        emit('rewind 目前在经典模式可用：先 /classic 进入，或使用 /undo 回退最近变更', 'info');
-        return true;
-      }
-
-      if (cmd === '/mode') {
-        // hidden alias for keyboard-less environments (also the
-        // testable entry point of ModeRing).
-        const a = arg.toLowerCase();
-        if (['plan', 'default', 'auto-accept', 'full'].includes(a)) {
-          setMode(a);
-        } else {
-          cycleMode();
-        }
-        return;
-      }
-
-      if (cmd === '/verbose') {
-        // thinking 展示开关（内存标志；PANSHA_VERBOSE=1 初始为开）
-        lineUi.verbose = !lineUi.verbose;
-        emit(`思考显示: ${lineUi.verbose ? '全文多行（verbose）' : '单行滚动（默认）'}`, 'info');
-        return;
-      }
-
-      if (cmd === '/undo') {
-        const { undoLatest } = await import('../../tools/fileHistory.js');
-        const r = undoLatest(session.workspace || process.cwd(), arg || undefined);
-        emit(r.message, r.ok ? 'success' : 'warn');
-        if (r.ok && r.diff && r.diff.length > 0) {
-          for (const h of r.diff.slice(0, 40)) {
-            const line = `${h.type === 'add' ? '+' : h.type === 'del' ? '−' : ' '} ${h.text}`;
-            emit(line, h.type === 'add' ? 'success' : h.type === 'del' ? 'error' : 'info');
-          }
-          if (r.diff.length > 40) emit(`… ${r.diff.length - 40} 行省略 …`, 'info');
-        }
-        return;
-      }
-
-      if (cmd === '/approvals') {
-        const a = arg.toLowerCase();
-        if (a === 'clear') {
-          session.clearApprovalAllowlist();
-          emit('本会话放行清单已清空。', 'success');
-        } else if (['readonly', 'default', 'full'].includes(a)) {
-          session.updateApprovalMode(a as any);
-          emit(`审批模式已切换为 ${a}。`, 'success');
-        } else {
-          emit(`审批模式: ${session.approvalMode}；放行清单: ${[...session.sessionApprovalAllowlist].join(', ') || '(空)'}`, 'info');
-          emit('用法: /approvals readonly|default|full|clear', 'info');
-        }
-        try { rollout.appendApprovalChange(session); } catch {}
-        return;
-      }
-
-      if (cmd === '/usage') {
-        const { collectUsage, loadPricesFromConfig } = await import('./usageService.js');
-        const prices = await loadPricesFromConfig(session.workspace || process.cwd());
-        const r = collectUsage(session, prices);
-        for (const line of r.lines) emit(line, 'info');
-        return;
-      }
-
-      if (cmd === '/compact') {
-        // unified via runSyncCompact (client resolve + feedback + meter)
-        const r = await runSyncCompact();
-        if (r.ok) {
-          const preview = r.summary.length > 300 ? r.summary.slice(0, 300) + '…' : r.summary;
-          emit('摘要预览: ' + preview, 'info');
-        }
-        return;
-      }
-
-      if (cmd === '/model') {
-        // /model must be handled LOCALLY, not fall through
-        // to the engine as a coding task (that produced the confusing
-        // "No model client available" error).
-        const sub = arg.trim();
-        if (!sub || sub === 'list' || sub === 'ls') {
-          emit(`当前模型: ${session.model}`, 'info');
-          try {
-            const { createDefaultModelProvider } = await import('../../cli/repl/ModelProvider.js');
-            const p = opts.provider as any ?? createDefaultModelProvider();
-            const names = (typeof p.listModels === 'function' ? p.listModels() : []).join(', ');
-            emit(`已注册/可用入口: ${names}`, 'info');
-            if (sub === 'list' || sub === 'ls') {
-              // remote model list for the CURRENT provider (best-effort)
-              const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
-              try {
-                const { provider: pr } = await resolveSharedClient(session.model, opts.provider as any);
-                const remote = await pr.listProviderModels?.(session.model.includes(':') ? session.model.split(':')[0] : 'scnet');
-                if (remote && remote.length) emit(`远程模型(${session.model.split(':')[0] || 'scnet'}): ${remote.slice(0, 30).join(', ')}`, 'info');
-              } catch {}
-            }
-          } catch {}
-          return;
-        }
-        // /model <name> → switch session.model (validated on next task)
-        session.model = sub;
-        // 切换模型后旧模型的上下文计量失效——
-        // ctxUsedChars 清零 + 窗口立即重取（下次任务边界也会再取一次兜底）。
-        ctxUsedChars = 0;
-        ctxWindowTokens = resolveCtxWindowTokens();
-        emit(`模型已切换: ${sub}（下次任务生效）`, 'success');
-        return;
-      }
-
-      // rich mode slash commands MUST resolve
-      // locally — /help /status /clear /tier and any unknown slash command are
-      // handled here; a slash-prefixed line is NEVER submitted to the engine
-      // as a coding task (iron rule).
-      if (cmd === '/help' || cmd === '/h') {
-        // 三处（classic/line/派发器）统一走 HelpCommand 分组渲染
-        const reg = await getSharedRegistry();
-        const view = buildHelpView(reg.list(), arg ? [arg.split(/\s+/)[0]] : []);
-        for (const l of view.lines) emit(useRich ? l.text : (l.style ? renderer.color(l.text, l.style) : l.text), 'info');
-        if (view.message) emit(view.message, 'warn');
-        return;
-      }
-      if (cmd === '/memory') {
-        // 快捷帮助收录了 /memory — line 模式给非交互直通
-        //（默认 list；无参数时 classic 的交互子菜单依赖 ctx.input，line 没有）
-        const { runMemoryCommand } = await import('../MemoryCommand.js');
-        try {
-          const result = await runMemoryCommand(arg ? arg.split(/\s+/) : ['list'], session.workspace || process.cwd());
-          emit(result || '(无输出)', 'info');
-        } catch (e: any) {
-          emit('Memory 命令失败: ' + (e?.message || e), 'error');
-        }
-        return;
-      }
-      if (cmd === '/resume') {
-        // 委托注册表里的 ResumeCommand（只依赖 renderer）
-        const reg = await getSharedRegistry();
-        const rctx: any = {
-          session,
-          registry: reg,
-          renderer: useRich ? { writeLine: (t: string) => emit(t, 'info'), color: (t: string) => t, warn: (t: string) => emit(t, 'warn'), error: (t: string) => emit(t, 'error'), success: (t: string) => emit(t, 'success'), info: (t: string) => emit(t, 'info') } : renderer,
-          input: null,
-          repl: null,
-          provider: (session as any).provider,
-          // sseInteractive 的 CommandContext 注册点——
-          // 注入与当前路径一致的现成审批桥 + 在途任务的 abort signal，使经此
-          // 派发的 registry 命令与主任务路径共享审批/中断语义。
-          approvalBridge: useRich
-            ? (req: { tool: string; description: string; danger: boolean }) => (bridgeRef.current.setConfirm(req) as Promise<string>)
-            : createCliApprovalBridge(),
-          signal: currentAbort?.signal,
-        };
-        const res = await reg.execute(rctx, 'resume', arg ? arg.split(/\s+/) : []);
-        if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
-        return;
-      }
-      if (cmd === '/clear') {
-        if (useRich && typeof bridge.clearScreen === 'function') { try { bridge.clearScreen(); } catch {} }
-        else renderer.clearScreen();
-        return;
-      }
-      if (cmd === '/tier' || cmd === '/t') {
-        const t = arg.trim().toLowerCase();
-        const TIERS = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
-        if (t && TIERS.includes(t)) {
-          session.tier = t as any;
-          emit(`档位已切换: ${t}（下次任务生效）`, 'success');
-        } else {
-          emit(`当前档位: ${session.tier}；可用: ${TIERS.join(', ')}`, 'info');
-        }
-        return;
-      }
-      if (cmd === '/status') {
-        const pct = Math.min(100, Math.floor((ctxUsedChars / 4 / ctxWindowTokens) * 100));
-        emit(`模式 ${session.approvalMode} · 档位 ${session.tier} · 模型 ${session.model} · 上下文 ~${pct}% · 队列 ${queue.taskCount} 任务 / ${queue.steerCount} 插话`, 'info');
-        return;
-      }
-      if (cmd === '/tree') {
-        // session tree (origin + branch nodes); /tree <id> → resume path
-        try {
-          const { listSessionTree, renderSessionTree } = await import('./rolloutStore.js');
-          const current = (session as any).sessionId || '';
-          const target = arg.trim() || current;
-          const tree = listSessionTree(target);
-          emit('会话树:', 'info');
-          for (const line of renderSessionTree(tree, current)) emit('  ' + line, 'info');
-          if (arg.trim() && arg.trim() !== current) emit(`切到节点 ${arg.trim()} 续写: /resume ${arg.trim()}`, 'success');
-          else emit('分支: /rewind 创建；节点续写: /tree <id> 后 /resume <id>', 'info');
-        } catch (e: any) {
-          emit('会话树读取失败: ' + (e?.message || e), 'error');
-        }
-        return;
-      }
-      if (cmd === '/feature') {
-        // /feature list|add|done|next (rich-local mirror of FeatureCommand)
-        const { loadFeatures, activeFeature, addFeature, markFeatureDone, setFeatureNext } = await import('./FeatureTracker.js');
-        const ws = session.workspace || process.cwd();
-        const sub = (arg.split(/\s+/)[0] || 'list').toLowerCase();
-        const rest = arg.split(/\s+/).slice(1);
-        if (sub === 'list' || sub === 'ls') {
-          const items = loadFeatures(ws);
-          if (items.length === 0) { emit('特性列表为空（/feature add <标题> 开始）', 'info'); return; }
-          for (const f of items) {
-            const mark = f.status === 'in-progress' ? '▶' : f.status === 'done' ? '✓' : f.status === 'blocked' ? '✗' : '·';
-            emit(`  ${mark} ${f.id} ${f.title} [${f.status}]${f.evidence ? ' · ✓ ' + f.evidence : ''}`, 'info');
-          }
-          return;
-        }
-        if (sub === 'add') {
-          const title = rest.join(' ').trim();
-          const item = title ? addFeature(ws, title) : null;
-          emit(item ? `已添加并激活: ${item.id} ${item.title}` : '用法: /feature add <标题>', item ? 'success' : 'warn');
-          return;
-        }
-        if (sub === 'done') {
-          const err = markFeatureDone(ws, rest[0] || '', rest.slice(1).join(' ').trim());
-          emit(err ?? `已标记 done: ${rest[0]}`, err ? 'warn' : 'success');
-          return;
-        }
-        if (sub === 'next') {
-          const err = setFeatureNext(ws, rest[0] || '', rest.slice(1).join(' ').trim());
-          emit(err ?? `已设为 active: ${rest[0]}`, err ? 'warn' : 'success');
-          return;
-        }
-        emit('用法: /feature list|add <标题>|done <id> <证据>|next <id>', 'warn');
-        return;
-      }
-      if (cmd === '/init') {
-        // rich-local /init — probe workspace + write
-        // .panshalach/AGENTS.md + feature_list.json. B-dual: reuses the SAME
-        // probe/build logic as the registry InitCommand (the old inline
-        // simplified copy diverged in output — now unified).
-        try {
-          const { probeWorkspace, buildAgentsMd } = await import('./commands/InitCommand.js');
-          const fs = await import('node:fs');
-          const path = await import('node:path');
-          const ws = session.workspace || process.cwd();
-          const probe = probeWorkspace(ws);
-          const agents = buildAgentsMd(ws, probe);
-          const agentsPath = path.join(ws, '.panshalach', 'AGENTS.md');
-          const existed = fs.existsSync(agentsPath);
-          if (existed && arg !== '--force' && arg !== '-f') { emit('AGENTS.md 已存在（/init --force 覆盖）', 'warn'); return; }
-          fs.mkdirSync(path.join(ws, '.panshalach'), { recursive: true });
-          fs.writeFileSync(agentsPath, agents, 'utf-8');
-          const { saveFeatures, featureListPath } = await import('./FeatureTracker.js');
-          if (!fs.existsSync(featureListPath(ws))) saveFeatures(ws, []);
-          const cmds = [probe.buildCmd, probe.testCmd, probe.lintCmd].filter(Boolean).join(' | ') || '未探测到';
-          emit(`已生成 ${agentsPath}（验证命令: ${cmds}）`, 'success');
-        } catch (e: any) {
-          emit('初始化失败: ' + (e?.message || e), 'error');
-        }
-        return;
-      }
-
-      // iron rule: unknown slash commands never reach the engine.
-      // 加模糊建议 — line 空闲态置待定命令（回车确认执行，
-      // Esc/其他输入取消）；rich / 运行中只提示建议。
-      // 建议不能指向命令本身（自指：确认后又落"未知命令"无限循环），
-      // 且待定命令确认路径会先过 handleLocalCommand（/exit /clear 只在那注册）。
-      {
-        const sug = suggestCommand(cmd);
-        if (sug && ('/' + sug) !== cmd) {
-          if (!useRich && !isRunning()) {
-            pendingSuggestion = '/' + sug;
-            emit(`未知命令 ${cmd} · 你是不是想要 /${sug}？（回车确认执行，Esc/其他输入取消）`, 'warn');
-          } else {
-            emit(`未知命令 ${cmd} · 你是不是想要 /${sug}？（输入 /help 查看全部命令）`, 'warn');
-          }
-        } else {
-          emit(`未知命令: ${cmd}（输入 /help 查看可用命令；斜杠命令均本地执行）`, 'warn');
-        }
-      }
-      return;
-    }
-
-    // auto-compact pre-flight (CC-style) — background-first, applied at
-    // task boundary, never blocks input. Sync fallback only when critical.
-    {
-      const ratioNow = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
-      const cs = await import('./compactService.js');
-      if (cs.shouldAutoCompact(session, ratioNow)) {
-        const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
-        let client: any = null;
-        try { client = (await resolveSharedClient(session.model, opts.provider as any)).client; } catch {}
-
-        // A ready background result → apply with zero wait
-        if (bgCompact && bgCompact.isReady()) {
-          const res = bgCompact.result();
-          bgCompact = null;
-          if (res && res.ok) {
-            const applied = cs.applyCompactResult(session, res);
-            ctxUsedChars = cs.estimateSessionTokens(session) * 4;
-            const msg = `${applied.message}`;
-            // 拒绝/失败以 warn 呈现（盘故障不该与普通回执同级）
-            if (!applied.ok) {
-              if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'warn' });
-              else renderer.warn(msg);
-            } else {
-              if (useRich && typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'info' });
-              else renderer.info(msg);
-            }
-            if (useRich && typeof bridge.setTop === 'function') {
-              const nr = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
-              try { bridge.setTop({ ctxRatio: nr }); } catch {}
-            }
-          }
-        } else if (!bgCompact) {
-          // Nothing running yet → kick off a background compaction (non-blocking).
-          const h = cs.startBackgroundCompact(session, client);
-          if (h) {
-            bgCompact = h;
-            emitFeed('⏳ 已在后台预压缩历史（阈值为 ≥85% 上下文）……', 'warn');
-          } else if (ratioNow >= 0.95) {
-            // Critical: stream is about to blow up — do a sync fallback.
-            // unified via runSyncCompact (feedback + meter reset)
-            await runSyncCompact('⏳ auto-compact 同步兜底：');
-          }
-        }
-      }
-    }
-
-    // steering injection — unconsumed steers join THIS round's prompt,
-    // then are consumed immediately (injected ones cannot be recalled).
-    const pendingSteers = queue.consumeSteers();
-    if (pendingSteers.length > 0) {
-      task = task + formatSteerInjection(pendingSteers);
-      lastInjectedSteers = pendingSteers;
-      emitFeed(`本轮已注入 ${pendingSteers.length} 条插话`, 'info');
-      updateQueueCount();
-    }
-
-    if (!useRich) {
-      renderer.writeLine(renderer.color(`\n[提交任务] ${task.split('\n\n【用户插话')[0]}`, 'cyan'));
-    } else if (typeof bridge.setRunning === 'function') {
-      try { bridge.setRunning(true); } catch {}
-    }
-
-    // Abort support: the engine cannot be hard-killed mid-step today, so we
-    // race the run against an abort promise (same pattern as Repl.ts). Once
-    // aborted, late events are dropped and the prompt returns immediately.
-    const controller = new AbortController();
-    currentAbort = controller;
-    lastAborted = false;
-    let abortReject: ((reason?: any) => void) | null = null;
-    const abortPromise = new Promise<never>((_, reject) => { abortReject = reject; });
-
-    const startedAt = Date.now();
-    // 任务边界重取当前模型真实窗口（/model 切换后立即生效）
-    ctxWindowTokens = resolveCtxWindowTokens();
-    // 任务边界重置 line 模式流式/卡片状态
-    lineUi.taskStartedAt = startedAt;
-    lineUi.taskEndedAt = 0;
-    lineUi.ghostIgnored = false;
-    lineUi.stepCount = 0;
-    lineUi.streamedAnswerChars = 0;
-    lineUi.thinkingStart = 0;
-    lineUi.thinkingBuf = '';
-    lineUi.thinkingPrinted = false;
-    lineUi.messageStreaming = false;
-    lineUi.toolStack = [];
-    lineUi.pendingTool = null;
-    // gerund interval handle (declared here so the finally can clear it)
-    let gerundTimer: NodeJS.Timeout | null = null;
-    // new task boundary — settle previous rollouts, start a fresh clock
-    agentTree.markAll('running', 'done');
-    treeTaskStart = startedAt;
-
-    try {
-      // ensure MCP servers are initialized (lazy, once) before the run
-      await initMcpServers();
-      const { runAgentTask } = await import('../../server/runAgentTask.js');
-
-      // real approval bridges.
-      // - rich path → bridge.setConfirm(request) → ConfirmBar (y/n/a/Esc)
-      // - line path → readline question bridge (60s silence → n)
-      const approvalBridge = useRich
-        ? (req: { tool: string; description: string; danger: boolean }) =>
-            (bridgeRef.current.setConfirm(req) as Promise<'y' | 'n' | 'a'>)
-        : createCliApprovalBridge();
-
-      // 主 readline 不再全程 pause（那样会让任务运行中的 Ctrl+C
-      // 无人接、输入缓冲成幽灵 ^C）。stdin 所有权只在审批 question 挂起时
-      // 经 setApprovalActivityListener（line 段注册）临时交接。
-
-      // gerund running label — line-mode inline updates every 4s.
-      // Timer unref'd (non-deadline timers must not hold the
-      // process) and always cleared in the finally below.
-      // 重绘统一走本函数（清活行 → 原地写 → 记 inlineLine）。
-      // 审批挂起时暂停；正文流式期间暂停。
-      if (!useRich) {
-        try {
-          const { nextGerund, formatRunningLabel } = await import('./GerundSpinner.js');
-          const gStart = startedAt;
-          const paint = () => {
-            // thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
-            if (isApprovalActive() || lineUi.messageStreaming || lineUi.inlineLine === 'thinking') return;
-            try {
-              // 任务运行超 30s → 一次性等待 tip（受全局 ≤2 节流）
-              if (Date.now() - gStart > 30000 && sessionTipGate.canShow('wait')) {
-                sessionTipGate.markShown('wait');
-                clearInlineLine();
-                process.stdout.write(`${ANSI_DIM}Tip: 长时间无进展可 Ctrl+C 中断，补充上下文后再试${ANSI_RESET}\n`);
-              }
-              clearInlineLine();
-              let label: string;
-              const pt = lineUi.pendingTool;
-              if (pt && Date.now() - pt.at > 3000) {
-                // pre 后 3s 未 post → 进行时工具标签
-                label = `${pt.doing} ${pt.summary}… ⏱ ${Math.floor((Date.now() - gStart) / 1000)}s`;
-              } else {
-                label = formatRunningLabel(Date.now() - gStart, nextGerund());
-              }
-              process.stdout.write('\r' + label + '   ');
-              lineUi.inlineLine = 'gerund';
-            } catch {}
-          };
-          paint();
-          gerundTimer = setInterval(paint, 4000);
-          gerundTimer.unref();
-        } catch {}
-      }
-
-      const runPromise = runAgentTask(
-        {
-          task,
-          // the task must run against the LIVE session state — /tier and
-          // /workspace switches take effect immediately, and the session's
-          // turns feed "最近 N 轮上下文" on the default path.
-          tier: session.tier,
-          workspace: session.workspace,
-          model: session.model,
-          simulate: false,
-          session,
-        },
-        {
-          provider: opts.provider,
-          signal: controller.signal,
-          approvalMode: session.approvalMode,
-          sessionAllowlist: session.sessionApprovalAllowlist,
-          approvalBridge,
-          planMode: session.planMode,
-          mcpTools: mcpToolsReady,
-          onEvent: (ev: any) => {
-            if (controller.signal.aborted) return;
-
-            // feed the agent tree from rolloutId-carrying events
-            if (ev && (ev.type === 'step' || ev.type === 'critique') && ev.rolloutId) {
-              agentTree.upsert({
-                id: String(ev.rolloutId),
-                parent: null,
-                status: 'running',
-                stepCount: Number(ev.stepNumber ?? 1),
-                durationMs: treeTaskStart ? Date.now() - treeTaskStart : 0,
-                lastPhase: ev.type,
-              });
-            }
-
-            // heuristic context meter (chars/4) from reasoning/plan/result/critique
-            if (ev && ev.type === 'step') {
-              bumpCtx(ev.thinking); bumpCtx(ev.plan);
-              bumpCtx(typeof ev.result === 'string' ? ev.result : '');
-              if (Array.isArray(ev.toolCalls)) {
-                for (const tc of ev.toolCalls) {
-                  bumpCtx(tc?.rawBlock); bumpCtx(tc?.argsSummary);
-                }
-              }
-              if (useRich && typeof bridge.setTop === 'function') {
-                const ratio = Math.min(1, (ctxUsedChars / 4) / ctxWindowTokens);
-                try { bridge.setTop({ ctxRatio: ratio }); } catch {}
-              }
-            } else if (ev && ev.type === 'critique') {
-              bumpCtx(ev.critique);
-            }
-
-            if (useRich) {
-              mapSseToBridge(ev.type || 'event', ev, bridge);
-            } else {
-              renderSseEvent(ev.type || 'event', ev, renderer);
-            }
-          },
-        }
-      );
-
-      const raced = await Promise.race([
-        runPromise.then((r) => ({ kind: 'done' as const, result: r })),
-        abortPromise.then(() => ({ kind: 'aborted' as const })).catch(() => ({ kind: 'aborted' as const })),
-      ]);
-
-      if (raced.kind === 'aborted') {
-        try { controller.abort(); } catch {}
-        // abort 已贯穿 solveIssue → loop → 模型 fetch / 工具执行。
-        // 等待底层 promise 真正 settle（signal 已触发，通常在当前 in-flight
-        // 请求中断后立即返回），避免"UI 已返回但网关仍在刷 POST"。
-        // 捕获 settle 结果——aborted 轨迹的 partialText 在这里。
-        let settled: any = null;
-        try { settled = await runPromise; } catch {}
-        // mark this turn as aborted so the queue-drain loop below does NOT
-        // auto-execute the remaining queued tasks (the user keeps them to
-        // rerun deliberately; previously lastAborted was never set → aborted
-        // turns still drained and ran queued tasks automatically).
-        lastAborted = true;
-        // abort semantics: unconsumed steers are dropped (injected ones
-        // cannot be recalled); queued TASKS are kept for the user to rerun.
-        const droppedSteers = queue.consumeSteers();
-        updateQueueCount();
-        const tail = droppedSteers.length > 0 ? `（${droppedSteers.length} 条未注入插话已丢弃；排队任务保留）` : '';
-        // 中断提示合并为一条（SIGINT 处理器不再另发"已请求中断"），
-        // 并带上 aborted 场景的「下一步」建议。
-        const abortMsg = `⏹ 任务已被中断 · 现场已保留 · 重新描述任务可继续${tail}`;
-        if (!useRich) { renderer.writeLine(renderer.color(abortMsg, 'yellow')); recordOutput(abortMsg); }
-        else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: abortMsg, level: 'warn' });
-        // 中断现场落盘：aborted 回合也写 turn（session + rollout
-        // jsonl），携带已流出的部分正文——"现场已保留"从此有数据支撑。
-        const partialText: string | undefined = settled?.partialText;
-        const abortedTurn: any = {
-          id: Date.now().toString(36),
-          timestamp: Date.now(),
-          userInput: task.split('\n\n【用户插话')[0],
-          userInputType: 'task' as const,
-          tier: session.tier,
-          durationMs: Date.now() - startedAt,
-          ...(partialText ? { partialText } : {}),
-          result: { success: false, summary: '已中断', stopReason: 'aborted', goal: task.split('\n\n【用户插话')[0], changedFiles: [], verifyCmd: [], outcome: 'aborted' },
-        };
-        try { session.addTurn(abortedTurn); } catch {}
-        try { rollout.appendTurn(session.id, abortedTurn); } catch {}
-      } else {
-        // persist the completed turn into the session + rollout jsonl
-        // this task's rollouts are done
-        agentTree.markAll('running', 'done');
-        const r = raced.result;
-        const stopReason = (r as any)?.stopReason;
-        // 三态文案：completed→已通过验证；answered→已回复；aborted→已中断；其余→未通过验证
-        const summary = stopReason === 'completed' ? '已通过验证'
-          : stopReason === 'answered' ? '已回复'
-          : stopReason === 'aborted' ? '已中断'
-          : r?.success ? '已通过验证' : '未通过验证';
-        const turn = {
-          id: Date.now().toString(36),
-          timestamp: Date.now(),
-          userInput: task.split('\n\n【用户插话')[0],
-          userInputType: 'task' as const,
-          tier: session.tier,
-          durationMs: r?.durationMs ?? (Date.now() - startedAt),
-          result: {
-            success: !!r?.success,
-            summary,
-            budgetReport: r?.budgetReport as any,
-            stopReason,
-            goal: task.split('\n\n【用户插话')[0],
-            changedFiles: (r as any)?.changedFiles ?? [],
-            verifyCmd: (r as any)?.verifyCmd ?? [],
-            outcome: mapOutcome(stopReason),
-          },
-        };
-        try { session.addTurn(turn); } catch {}
-        try { rollout.appendTurn(session.id, turn as any); } catch {}
-        // answered 时把模型正文呈现给用户（/edit 可取回）
-        // 正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
-        // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。
-        if (stopReason === 'answered' && r) {
-          const traj = (r as any).bestTrajectory;
-          const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
-          if (answerText && useRich && typeof bridge.pushFeed === 'function') {
-            bridge.pushFeed({ type: 'markdown', content: answerText });
-          } else if (answerText && !useRich && lineUi.streamedAnswerChars < String(answerText).length) {
-            // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
-            const rest = String(answerText).slice(lineUi.streamedAnswerChars);
-            if (rest) {
-              renderer.writeLine(renderer.color(rest, 'white'));
-              recordOutput(rest);
-            }
-          }
-        }
-        recordOutput(summary);
-      }
-    } catch (err: any) {
-      const msg = '任务执行失败: ' + (err?.message || err);
-      if (!useRich) renderer.error(msg);
-      else if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text: msg, level: 'error' });
-    } finally {
-      currentAbort = null;
-      void startedAt;
-      if (gerundTimer) { try { clearInterval(gerundTimer); } catch {} }
-      gerundTimer = null;
-      // 清活行（gerund/thinking 残留）；正文流式收尾换行
-      clearInlineLine();
-      if (lineUi.messageStreaming) { try { process.stdout.write('\n'); } catch {} }
-      lineUi.messageStreaming = false;
-      lineUi.pendingTool = null;
-      lineUi.toolStack = [];
-      // 幽灵 ^C 窗口 — 任务刚结束的 1.5s 内缓冲的 Ctrl+C 只忽略一次
-      lineUi.taskEndedAt = Date.now();
-      lineUi.ghostIgnored = false;
-      // 上下文占用 >75% → 一次性 tip（启发式 chars/4 估算，
-      // 与 auto-compact 的 ratioNow 同源；受全局 ≤2 节流）
-      if (!useRich) {
-        const ratio = (ctxUsedChars / 4) / ctxWindowTokens;
-        if (ratio > 0.75 && sessionTipGate.canShow('ctx')) {
-          sessionTipGate.markShown('ctx');
-          try { renderer.writeLine(renderer.color(`Tip: 上下文占用约 ${Math.round(ratio * 100)}% · /compact 可立即压缩`, 'gray')); } catch {}
-        }
-      }
-      if (useRich && typeof bridge.setRunning === 'function') {
-        try { bridge.setRunning(false); } catch {}
-      } else {
-        // Line path: restore prompt so the user can type the next task.
-        if (lineRl) { try { lineRl.resume(); } catch {} }
-        try { lineSetPrompt(); } catch {}
-        if (lineRl) { try { lineRl.prompt(); } catch {} }
-      }
-    }
-
-    // drain queued tasks once the turn settles (FIFO, one by one).
-    // An aborted turn stops the drain — the user keeps the remaining queue.
-    while (queue.taskCount > 0 && !lastAborted) {
-      const next = queue.drainTasks();
-      updateQueueCount();
-      for (const t of next) {
-        if (lastAborted) break;
-        emitFeed(`▶ 执行排队任务：${t.slice(0, 80)}`, 'info');
-        await runTaskViaSse(t, bridge);
-      }
-    }
-  }
-
-  // Map normalized SSE events (from agentServer) to the rich bridge (Ink UI).
-  function mapSseToBridge(event: string, data: any, b: any) {
-    if (!b) return;
-    const t = (data && data.type) || event;
-
-    if (t === 'start' || event === 'start') {
-      if (typeof b.setRunning === 'function') { try { b.setRunning(true); } catch {} }
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `开始执行: ${data.task || ''}`, level: 'info' });
-      return;
-    }
-    if (t === 'phase' || event === 'phase') {
-      const ph = localizePhase(data.phase || data);
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'phase', phase: ph });
-      if (typeof b.setTop === 'function') b.setTop({ phase: ph });
-      return;
-    }
-    if (t === 'thinking.start' || event === 'thinking.start') {
-      // New thinking segment: clear only the thinking buffer (P1.4)
-      if (typeof b.resetStream === 'function') { try { b.resetStream('thinking'); } catch {} }
-      return;
-    }
-    if (t === 'message.start' || event === 'message.start') {
-      // New message segment: clear only the message buffer (💭 stays visible)
-      if (typeof b.resetStream === 'function') { try { b.resetStream('message'); } catch {} }
-      return;
-    }
-    if (t === 'thinking.delta' || event === 'thinking.delta') {
-      if (typeof b.appendStream === 'function') b.appendStream('thinking', data.text || '');
-      return;
-    }
-    if (t === 'message.delta' || event === 'message.delta') {
-      if (typeof b.appendStream === 'function') b.appendStream('message', data.text || '');
-      return;
-    }
-    if (t === 'step' || event === 'step') {
-      // Turn segment settled → clear live zone before the step card lands
-      if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      if (typeof b.pushStep === 'function') b.pushStep(data);
-      if (Array.isArray(data.toolCalls) && typeof b.pushTool === 'function') {
-        for (const tc of data.toolCalls) b.pushTool(tc);
-      }
-      return;
-    }
-    if (t === 'critique' || event === 'critique') {
-      if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      if (typeof b.pushCritique === 'function') b.pushCritique(data);
-      return;
-    }
-    if (t === 'tool' || event === 'tool') {
-      if (typeof b.pushTool === 'function') b.pushTool(data);
-      return;
-    }
-    if (t === 'budget' || t === 'softLimit' || event === 'budget' || event === 'softLimit') {
-      const ratio = typeof data.usedRatio === 'number' ? data.usedRatio : (typeof data.ratio === 'number' ? data.ratio : 0);
-      if (typeof b.pushBudget === 'function') b.pushBudget(ratio);
-      return;
-    }
-    if (t === 'degradation' || event === 'degradation') {
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `⚠ 行为降级: ${data.reason || 'soft-limit'}`, level: 'warn' });
-      return;
-    }
-    if (t === 'markdown' || event === 'markdown') {
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'markdown', content: data.content || '' });
-      return;
-    }
-    if (t === 'thought' || event === 'thought') {
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'thought', short: data.short || '', full: data.full || data.thinking || '' });
-      return;
-    }
-    if (t === 'progress' || event === 'progress') {
-      // lightweight; surface as phase hint if numeric step present
-      if (typeof data.step === 'number' || typeof data.stepNumber === 'number') {
-        const n = data.step ?? data.stepNumber;
-        if (typeof b.setTop === 'function') { try { b.setTop({ phase: `step ${n}` }); } catch {} }
-      }
-      return;
-    }
-    if (t === 'result' || event === 'result') {
-      if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      // 三态文案：answered→已回复；aborted→已中断；success→已通过验证；否则未通过验证
-      const sr2 = data.stopReason;
-      const resultText = sr2 === 'answered' ? '已回复' : sr2 === 'aborted' ? '已中断'
-        : data.success ? '完成（已通过验证）' : '任务未通过验证';
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: resultText, level: sr2 === 'answered' || data.success ? 'success' : 'warn' });
-      if (data && data.budgetReport && typeof data.budgetReport.usageRatio === 'number') {
-        if (typeof b.pushBudget === 'function') b.pushBudget(data.budgetReport.usageRatio);
-      }
-      if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
-      return;
-    }
-    if (t === 'done' || event === 'done') {
-      if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      if (data && data.durationMs && typeof b.pushFeed === 'function') {
-        // "Cooked for" style tail note (CC-inspired)
-        b.pushFeed({ type: 'text', text: `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`, level: 'info' });
-      }
-      if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
-      return;
-    }
-    if (t === 'error' || event === 'error') {
-      if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-      const msg = data && (data.message || JSON.stringify(data));
-      if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: '错误: ' + msg, level: 'error' });
-      if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
-      return;
-    }
-    // Fallback generic
-    if (typeof b.pushFeed === 'function') {
-      if (data && typeof data === 'object' && data.type) b.pushFeed(data);
-      else b.pushFeed({ type: 'text', text: JSON.stringify(data), level: 'info' });
-    }
-  }
-
-  // Line-mode renderer for SSE events (used when rich UI is not active).
-  // line 模式接住 version 2 流式增量 —
-  //   thinking.delta → 默认单行滚动（dim 斜体 ∴ + 最新行截断），verbose 开启时全文多行；
-  //   message.delta  → 正文逐 delta 直接写 stdout（无前缀），回合结束补换行。
-  function endThinkingBlock(r: ReturnType<typeof createOutputRenderer>) {
-    const started = lineUi.thinkingStart > 0;
-    if (lineUi.verbose) {
-      if (lineUi.thinkingBuf) {
-        const carry = lineUi.thinkingBuf;
-        lineUi.thinkingBuf = '';
-        printVerboseThinkingLine(carry, r);
-      }
-    } else if (started) {
-      clearInlineLine();
-      const secs = Math.max(1, Math.round((Date.now() - lineUi.thinkingStart) / 1000));
-      try { r.writeLine(r.color(`∴ 已思考 ${secs}s`, 'gray')); } catch {}
-    }
-    lineUi.thinkingStart = 0;
-    lineUi.thinkingBuf = '';
-    lineUi.thinkingPrinted = false;
-  }
-
-  function printVerboseThinkingLine(line: string, r: ReturnType<typeof createOutputRenderer>) {
-    void r;
-    const text = String(line ?? '').replace(/\t/g, '  ');
-    if (!text.trim()) return;
-    clearInlineLine(); // gerund 标签可能还占着当前行（清行纪律）
-    const w = Math.max(20, termWidth() - 4);
-    for (const chunk of wrapByWidth(text, w)) {
-      try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}  ${chunk}${ANSI_RESET}\n`); } catch {}
-      lineUi.thinkingPrinted = true;
-    }
-  }
-
-  function endMessageStream() {
-    if (lineUi.messageStreaming) {
-      lineUi.messageStreaming = false;
-      try { process.stdout.write('\n'); } catch {}
-    }
-  }
-
-  function renderSseEvent(event: string, data: any, r: ReturnType<typeof createOutputRenderer>) {
-    switch (event) {
-      case 'thinking.start':
-        // 新思考段 — 记起点（首个 thinking.delta 也兜底记）；
-        // 上一段若还有正文流式未收尾，先补换行
-        endMessageStream();
-        lineUi.thinkingStart = Date.now();
-        lineUi.thinkingBuf = '';
-        lineUi.thinkingPrinted = false;
-        return;
-      case 'thinking.delta': {
-        // 接住思考增量（旧 line 模式直接忽略）
-        const text = String(data.text || '');
-        if (!text) return;
-        if (!lineUi.thinkingStart) lineUi.thinkingStart = Date.now();
-        if (lineUi.verbose) {
-          // 全文多行 — 按完整行宽度折行 + 2 空格缩进（增量按行 flush）
-          lineUi.thinkingBuf += text;
-          let nl: number;
-          while ((nl = lineUi.thinkingBuf.indexOf('\n')) !== -1) {
-            const ready = lineUi.thinkingBuf.slice(0, nl);
-            lineUi.thinkingBuf = lineUi.thinkingBuf.slice(nl + 1);
-            printVerboseThinkingLine(ready, r);
-          }
-          return;
-        }
-        // 默认：单行滚动 — 取最新一行，dim 斜体 ∴ 前缀，截到终端宽度-4
-        lineUi.thinkingBuf += text;
-        const parts = lineUi.thinkingBuf.split('\n');
-        let last = '';
-        for (let i = parts.length - 1; i >= 0; i--) {
-          if (parts[i].trim()) { last = parts[i]; break; }
-        }
-        if (!last) return;
-        clearInlineLine();
-        const shown = truncateByWidth(last.replace(/\t/g, '  '), Math.max(10, termWidth() - 4));
-        try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}∴ ${shown}${ANSI_RESET}`); } catch {}
-        lineUi.inlineLine = 'thinking';
-        return;
-      }
-      case 'message.start':
-        // thinking 结束（收到 message.start → 折叠为灰字统计）
-        endThinkingBlock(r);
-        return;
-      case 'message.delta': {
-        // 正文流式 — 逐 delta 直接写 stdout（正文本体，无前缀）；
-        // gerund 重绘在 messageStreaming 期间暂停（paint 回调里检查）。
-        const text = String(data.text || '');
-        if (!text) return;
-        clearInlineLine();
-        try { process.stdout.write(text); } catch {}
-        lineUi.messageStreaming = true;
-        lineUi.streamedAnswerChars += text.length;
-        return;
-      }
-      case 'start':
-        r.writeLine(r.color(`开始执行: ${data.task || ''}`, 'cyan'));
-        break;
-      case 'phase':
-        // phase 值本地化（渲染层映射，不改事件值）
-        r.writeLine(r.color(`── ${localizePhase(String(data.phase || data))} ──`, 'gray'));
-        break;
-      case 'step': {
-        // 流式段收尾：thinking 折叠为统计行、正文流补换行
-        endThinkingBlock(r);
-        endMessageStream();
-        const n = Number(data.stepNumber);
-        if (Number.isFinite(n) && n > 0) lineUi.stepCount = n; // 步数（Chaser 末尾 lastStep = 总步数）
-        const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
-        r.writeLine(r.color(msg, 'white'));
-        // 旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；
-        // step 只剩 thinking 汇总；verificationResult 维持现有渲染（无单独渲染）。
-        break;
-      }
-      case 'tools/pre-execute': {
-        // 工具实时卡片头行 `▸ <工具名青色> <参数摘要>`
-        endMessageStream(); // 模型正文若刚流式完，先补换行再出卡片
-        const tool = String(data.tool || 'tool');
-        const params = (data.params && typeof data.params === 'object') ? data.params : {};
-        const summary = summarizeToolParams(tool, params);
-        lineUi.toolStack.push({ tool, params });
-        lineUi.pendingTool = { tool, summary, doing: doingVerb(tool), at: Date.now() };
-        clearInlineLine();
-        r.writeLine(`${ANSI_DIM}▸${ANSI_RESET} ${r.color(tool, 'cyan')} ${r.color(summary, 'gray')}`);
-        break;
-      }
-      case 'tools/post-execute': {
-        // 结果行 `  ⎿ <动词句>`（从最近工具栈取回 pre 参数）
-        let preParams: any = null;
-        for (let i = lineUi.toolStack.length - 1; i >= 0; i--) {
-          if (lineUi.toolStack[i].tool === String(data.tool || '')) {
-            preParams = lineUi.toolStack.splice(i, 1)[0].params;
-            break;
-          }
-        }
-        if (preParams === null && lineUi.toolStack.length > 0) preParams = lineUi.toolStack.pop()!.params;
-        lineUi.pendingTool = null;
-        clearInlineLine();
-        r.writeLine('  ⎿ ' + toolResultLine(data, preParams));
-        break;
-      }
-      case 'critique':
-        // 删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
-        r.writeLine(r.color(String(data.critique || data), 'yellow'));
-        break;
-      case 'tool':
-        r.writeLine(r.color(`⚙ ${data.tool || ''} ${data.target || ''} [${data.status || ''}]`, 'cyan'));
-        if (data.result) {
-          const preview = String(data.result).slice(0, 200);
-          r.writeLine(r.color('   ' + preview, 'gray'));
-        }
-        break;
-      case 'budget':
-      case 'softLimit':
-        const pct = Math.floor(((data.usedRatio || 0) * 100));
-        const color = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green';
-        r.writeLine(r.color(`[预算 ${pct}%]`, color));
-        break;
-      case 'degradation':
-        r.writeLine(r.color(`⚠ 行为降级: ${data.reason || 'soft-limit'}`, 'yellow'));
-        break;
-      case 'progress':
-        r.writeLine(r.color(`… 进度 step ${data.step || data.stepNumber || ''}`, 'gray'));
-        break;
-      case 'markdown':
-        // In line mode, render a compact preview
-        {
-          const content = String(data.content || '').trim();
-          if (content) {
-            const preview = content.length > 240 ? content.slice(0, 237) + '…' : content;
-            r.writeLine(r.color(preview, 'white'));
-          }
-        }
-        break;
-      case 'thought':
-        {
-          const s = data.short || data.thinking || '';
-          r.writeLine(r.color(`💭 ${s}`, 'magenta'));
-        }
-        break;
-      case 'result':
-        {
-          // 流式段收尾
-          endThinkingBlock(r);
-          endMessageStream();
-          // 结束总结块 — `✓ 已通过验证 · N 步 · Xs · ~Yk tokens · 预算 Z%`
-          // + 第二行灰字「下一步」按 stopReason 分支。[最终预算] 并入总结行。
-          const sr = String(data.stopReason || '');
-          const elapsedMs = lineUi.taskStartedAt ? Date.now() - lineUi.taskStartedAt : 0;
-          const stateText = sr === 'completed' ? '✓ 已通过验证'
-            : sr === 'answered' ? '✓ 已回复'
-            : sr === 'aborted' ? '↩ 已中断'
-            : data.success === true ? '✓ 已通过验证' : '✗ 未通过验证';
-          const parts: string[] = [stateText];
-          if (lineUi.stepCount > 0) parts.push(`${lineUi.stepCount} 步`);
-          if (elapsedMs > 0) parts.push(fmtMs(elapsedMs));
-          const tokens = Number(data?.budgetReport?.estimatedUsedTokens) || 0;
-          if (tokens > 0) parts.push(`~${(tokens / 1000).toFixed(1)}k tokens`);
-          const ratio = Number(data?.budgetReport?.usageRatio);
-          if (Number.isFinite(ratio) && ratio > 0) parts.push(`预算 ${Math.round(ratio * 100)}%`);
-          const lineColor = sr === 'aborted' ? 'yellow'
-            : (sr === 'completed' || sr === 'answered' || data.success === true) ? 'green' : 'red';
-          const summaryLine = parts.join(' · ');
-          r.writeLine(r.color(summaryLine, lineColor));
-          r.writeLine(r.color(`  下一步: ${nextStepHint(sr)}`, 'gray'));
-          recordOutput(summaryLine);
-        }
-        break;
-      case 'done':
-        if (data.durationMs) {
-          // "Cooked for" style tail note (CC-inspired)
-          const t = `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`;
-          r.writeLine(r.color(t, 'gray'));
-          recordOutput(t);
-        }
-        break;
-      case 'error':
-        r.error(data.message || JSON.stringify(data));
-        break;
-      default:
-        if (data && typeof data === 'object' && data.type) {
-          renderSseEvent(data.type, data, r);
-        } else {
-          r.writeLine(JSON.stringify(data));
-        }
-    }
-  }
+  ctx.modeRing = createModeRing(ctx);
+  const controller = createTurnController(ctx);
 
   // --- Try rich UI (the real "交互升级") ---
   let bridge: any = null;
   let richActive = false;
-
-  // Use a ref so the initial hostCtx lambdas see updates after assignment.
-  const bridgeRef: { current: any } = { current: null };
 
   try {
     const { tryStartInkUI } = await import('./ui/startInkUI.js');
@@ -1803,29 +1930,29 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     // seeded here and flow into the engine adapter via runTaskViaSse.
     // submissions route through handleUserLine (queue/steer aware).
     const hostCtx: any = {
-      handleInput: async (text: string) => { await handleUserLine(text, bridgeRef.current); },
-      executeTask: async (text: string) => { await handleUserLine(text, bridgeRef.current); },
+      handleInput: async (text: string) => { await controller.handleLine(text, ctx.bridgeRef.current); },
+      executeTask: async (text: string) => { await controller.handleLine(text, ctx.bridgeRef.current); },
     };
 
-    const res = await tryStartInkUI(session as any, renderer, hostCtx);
+    const res = await tryStartInkUI(session as any, ctx.renderer, hostCtx);
     if (res && res.started) {
       richActive = true;
       bridge = (hostCtx as any).inkBridge || (hostCtx as any)._inkBridge || null;
-      bridgeRef.current = bridge;
+      ctx.bridgeRef.current = bridge;
 
       // expose host-side handlers to the rich bridge
       try {
-        (bridge as any).cycleMode = () => cycleMode();
-        (bridge as any).clearQueue = () => { queue.clear(); updateQueueCount(); };
+        (bridge as any).cycleMode = () => cycleMode(ctx);
+        (bridge as any).clearQueue = () => { ctx.queue.clear(); updateQueueCount(ctx); };
         (bridge as any).requestStatusPanel = () => {
           (async () => {
             const { recentCheckpoints } = await import('../../tools/fileHistory.js');
             const cps = recentCheckpoints(session.workspace || process.cwd(), 5);
             const feedOrLine = (text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') => {
               if (typeof bridge.pushFeed === 'function') bridge.pushFeed({ type: 'text', text, level });
-              else renderer.writeLine(renderer.color(text, 'gray'));
+              else ctx.renderer.writeLine(ctx.renderer.color(text, 'gray'));
             };
-            feedOrLine(`── 状态面板 ── 队列任务 ${queue.taskCount} · 未注入插话 ${queue.steerCount} · 模式 ${modeRing.current}`, 'info');
+            feedOrLine(`── 状态面板 ── 队列任务 ${ctx.queue.taskCount} · 未注入插话 ${ctx.queue.steerCount} · 模式 ${ctx.modeRing.current}`, 'info');
             for (const c of cps) feedOrLine(`  ↳ checkpoint ${c.rel}（${c.prevExists ? '可还原' : '创建型'}）`, 'info');
             if (cps.length === 0) feedOrLine('  ↳ （暂无 file-history checkpoint）', 'info');
           })().catch(() => {});
@@ -1833,8 +1960,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       } catch {}
 
       // Rebind to ensure we pass the resolved bridge value.
-      hostCtx.handleInput = async (text: string) => { await handleUserLine(text, bridgeRef.current); };
-      hostCtx.executeTask = async (text: string) => { await handleUserLine(text, bridgeRef.current); };
+      hostCtx.handleInput = async (text: string) => { await controller.handleLine(text, ctx.bridgeRef.current); };
+      hostCtx.executeTask = async (text: string) => { await controller.handleLine(text, ctx.bridgeRef.current); };
     }
   } catch {
     // Any failure is silent; fall through to line streaming (still event-driven).
@@ -1847,19 +1974,19 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   // === Line streaming terminal (same in-process events, structured colored lines) ===
   // "通道升级" when rich UI (ink) is not available or TTY caps insufficient.
-  renderer.clearScreen();
+  ctx.renderer.clearScreen();
   // 启动横幅 — 粗体名 + dim 元信息（cwd 按显示宽度截断）
   {
     const banner = buildBanner({
       model: session.model,
       tier: String(session.tier),
-      mode: modeRing.current,
+      mode: ctx.modeRing.current,
       workspace: session.workspace || process.cwd(),
       width: termWidth(),
     });
-    renderer.writeLine(renderer.color(banner[0], 'bold'));
-    renderer.writeLine(renderer.color(banner[1], 'gray'));
-    renderer.writeLine(renderer.color(banner[2], 'gray'));
+    ctx.renderer.writeLine(ctx.renderer.color(banner[0], 'bold'));
+    ctx.renderer.writeLine(ctx.renderer.color(banner[1], 'gray'));
+    ctx.renderer.writeLine(ctx.renderer.color(banner[2], 'gray'));
     // 首跑预检——横幅处探测无任何可用 provider 时打一行灰字配置
     // 指引（不阻塞、不报错；用户配置好后 /model list 会热加载）。
     try {
@@ -1869,7 +1996,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       const anyUsable = names.some((n) => { try { return !!probe.createClient(n); } catch { return false; } })
         || !!(typeof probe.createDefaultClient === 'function' && probe.createDefaultClient());
       if (!anyUsable) {
-        renderer.writeLine(renderer.color(
+        ctx.renderer.writeLine(ctx.renderer.color(
           '未检测到可用模型。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3） ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择',
           'gray'
         ));
@@ -1877,30 +2004,30 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     } catch {}
   }
   if (resumedInfo) {
-    renderer.info(`已恢复会话 ${resumedInfo.from}（${resumedInfo.turns} 轮上下文，模式 ${session.approvalMode}）——/status 查看，/undo 撤销最近写盘`);
-  } else if (shouldShowStartupTip(session.turns.length, false, Math.random()) && sessionTipGate.canShow('startup')) {
+    ctx.renderer.info(`已恢复会话 ${resumedInfo.from}（${resumedInfo.turns} 轮上下文，模式 ${session.approvalMode}）——/status 查看，/undo 撤销最近写盘`);
+  } else if (shouldShowStartupTip(session.turns.length, false, Math.random()) && ctx.tipGate.canShow('startup')) {
     // 新会话 50% 概率出一条启动 tip
-    sessionTipGate.markShown('startup');
-    renderer.writeLine(renderer.color('Tip: 直接输入任务描述即可开始，如 "修复 README 里的错别字"', 'gray'));
+    ctx.tipGate.markShown('startup');
+    ctx.renderer.writeLine(ctx.renderer.color('Tip: 直接输入任务描述即可开始，如 "修复 README 里的错别字"', 'gray'));
   }
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: renderer.color('▸ ', 'cyan'),
+    prompt: ctx.renderer.color('▸ ', 'cyan'),
     // Tab 补全 `/` 命令名（精确前缀优先 + 模糊兜底，常用命令在前）
     completer: (line: string): [string[], string] => completeLineCommand(line),
   });
 
-  // Wire holders so the unified SSE runner (defined earlier) can restore the prompt
+  // Wire holders so the unified SSE runner can restore the prompt
   // after consuming the SSE stream in the line-mode fallback.
-  lineRl = rl;
+  ctx.lineRl = rl;
 
   // 空闲提示符上方的模式徽标行 — 只在启动与模式变化后输出一次。
   function printModeBadgeIfPending() {
-    if (!modeBadgePending) return;
-    modeBadgePending = false;
-    try { renderer.writeLine(renderer.color(modeBadgeLine(modeRing.current), 'gray')); } catch { modeBadgePending = true; }
+    if (!ctx.modeBadgePending) return;
+    ctx.modeBadgePending = false;
+    try { ctx.renderer.writeLine(ctx.renderer.color(modeBadgeLine(ctx.modeRing.current), 'gray')); } catch { ctx.modeBadgePending = true; }
   }
 
   /** 空闲态出提示符（徽标行置前；统一入口，防漏防刷）。 */
@@ -1909,13 +2036,13 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     try { rl.prompt(); } catch {}
   }
 
-  lineSetPrompt = () => {
-    rl.setPrompt(renderer.color('▸ ', 'cyan'));
+  ctx.lineSetPrompt = () => {
+    rl.setPrompt(ctx.renderer.color('▸ ', 'cyan'));
     printModeBadgeIfPending(); // runTaskViaSse finally 恢复提示符前也补徽标（若模式刚变过）
   };
 
   rl.on('close', () => {
-    renderer.writeLine('\n再见。');
+    ctx.renderer.writeLine('\n再见。');
     process.exit(0);
   });
 
@@ -1924,8 +2051,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // 直接检查 isApprovalActive()。
   try {
     setApprovalActivityListener((active) => {
-      if (!lineRl) return;
-      try { if (active) lineRl.pause(); else lineRl.resume(); } catch {}
+      if (!ctx.lineRl) return;
+      try { if (active) ctx.lineRl.pause(); else ctx.lineRl.resume(); } catch {}
     });
   } catch {}
 
@@ -1934,35 +2061,35 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // 同一次按键两个入口都触发时用 100ms 去重。
   function handleSigint() {
     const now = Date.now();
-    if (now - lineUi.lastSigintAt < 100) return;
-    lineUi.lastSigintAt = now;
+    if (now - ctx.lineUi.lastSigintAt < 100) return;
+    ctx.lineUi.lastSigintAt = now;
     // 1) 审批挂起 → 立即拒绝该次审批
     if (isApprovalActive()) {
       cancelActiveApproval('sigint');
       return;
     }
     // 2) 任务运行中 → 中断（提示合并：只由 aborted 分支出一条消息）
-    if (currentAbort) {
-      try { currentAbort.abort(); } catch {}
+    if (ctx.currentAbort) {
+      try { ctx.currentAbort.abort(); } catch {}
       return;
     }
     // 3) 幽灵 ^C：任务刚结束 1.5s 内的缓冲按键只忽略一次，随后放行到二次确认
-    if (lineUi.taskEndedAt && now - lineUi.taskEndedAt < 1500) {
-      if (!lineUi.ghostIgnored) {
-        lineUi.ghostIgnored = true;
-        renderer.writeLine(renderer.color('（任务刚结束，忽略退出）', 'gray'));
+    if (ctx.lineUi.taskEndedAt && now - ctx.lineUi.taskEndedAt < 1500) {
+      if (!ctx.lineUi.ghostIgnored) {
+        ctx.lineUi.ghostIgnored = true;
+        ctx.renderer.writeLine(ctx.renderer.color('（任务刚结束，忽略退出）', 'gray'));
         return;
       }
       // 窗口内第二次按：已提示过一次，落到二次确认分支
     }
     // 4) 空闲 → 二次确认模式：2s 内再按才退出
-    if (lineUi.idleCtrlCAt && now - lineUi.idleCtrlCAt < 2000) {
-      renderer.writeLine('\n再见。');
+    if (ctx.lineUi.idleCtrlCAt && now - ctx.lineUi.idleCtrlCAt < 2000) {
+      ctx.renderer.writeLine('\n再见。');
       process.exit(0);
     }
-    lineUi.idleCtrlCAt = now;
-    renderer.writeLine(renderer.color('再按一次 Ctrl+C 退出 · Ctrl+C 正在执行时 = 中断任务', 'gray'));
-    const t = setTimeout(() => { lineUi.idleCtrlCAt = 0; }, 2000);
+    ctx.lineUi.idleCtrlCAt = now;
+    ctx.renderer.writeLine(ctx.renderer.color('再按一次 Ctrl+C 退出 · Ctrl+C 正在执行时 = 中断任务', 'gray'));
+    const t = setTimeout(() => { ctx.lineUi.idleCtrlCAt = 0; }, 2000);
     (t as any).unref?.();
   }
 
@@ -1976,92 +2103,18 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     process.stdin.on('keypress', (_str: string, key: any) => {
       if (!key) return;
       if (key.shift && key.name === 'tab') {
-        if (isApprovalActive() || isRunning()) return;
-        cycleMode();
+        if (isApprovalActive() || isRunning(ctx)) return;
+        cycleMode(ctx);
         linePromptIdle(); // 回执已由 onChange 打印；徽标行 + 提示符在此补上
         return;
       }
-      if (key.name === 'escape' && pendingSuggestion) {
-        pendingSuggestion = null;
-        renderer.writeLine(renderer.color('（已取消命令建议）', 'gray'));
+      if (key.name === 'escape' && ctx.pendingSuggestion) {
+        ctx.pendingSuggestion = null;
+        ctx.renderer.writeLine(ctx.renderer.color('（已取消命令建议）', 'gray'));
         linePromptIdle();
       }
     });
   } catch {}
-
-  // Simple command handling (local for now, can be proxied later)
-  async function handleLocalCommand(line: string): Promise<boolean> {
-    const trimmed = line.trim();
-    if (!trimmed) return true;
-
-    if (trimmed === '/exit' || trimmed === '/quit' || trimmed === '/q') {
-      rl.close();
-      return true;
-    }
-
-    if (trimmed === '?') {
-      // 快捷帮助面板 — 常用条目 + dim 尾行指向 /help 全部命令
-      const reg = await getSharedRegistry();
-      const ql = buildQuickHelpLines(reg.list().length);
-      ql.forEach((l, i) => {
-        renderer.writeLine(i === 0 ? renderer.color(l, 'bold') : i === ql.length - 1 ? renderer.color(l, 'gray') : l);
-      });
-      return true;
-    }
-
-    if (trimmed === '/help' || trimmed === '/h') {
-      // 与派发器 / classic 完全一致的分组帮助（HelpCommand 渲染）
-      const reg = await getSharedRegistry();
-      const view = buildHelpView(reg.list());
-      for (const l of view.lines) renderer.writeLine(l.style ? renderer.color(l.text, l.style) : l.text);
-      if (view.message) renderer.warn(view.message);
-      return true;
-    }
-
-    if (trimmed === '/status') {
-      const pct = Math.min(100, Math.floor((ctxUsedChars / 4 / ctxWindowTokens) * 100));
-      renderer.writeLine('传输: 进程内直连（in-process events，无端口）。远程 UI 可用 /serve 启动 SSE 服务。');
-      renderer.writeLine(`上下文估算: ~${pct}% of ${ctxWindowTokens} tokens（启发式）`);
-      renderer.writeLine(`队列: ${queue.taskCount} 个排队任务；未注入插话: ${queue.steerCount}`);
-      try {
-        const { isBranch } = await import('../../cli/repl/rolloutStore.js');
-        const origin = isBranch(session.id);
-        if (origin) renderer.writeLine(`分支: branch of ${origin}（/resume 可回原会话）`);
-      } catch {}
-      if (lastInjectedSteers.length > 0) {
-        renderer.writeLine(`最近注入的插话: ${lastInjectedSteers.join(' / ')}`);
-      }
-      return true;
-    }
-
-    if (trimmed === '/clear') {
-      renderer.clearScreen();
-      return true;
-    }
-
-    if (trimmed === '/edit' || trimmed === '/e') {
-      const prev = getLastOutput();
-      if (!prev) {
-        renderer.warn('暂无上次输出可编辑');
-        return true;
-      }
-      // Prefill for quick edit/resubmit in line mode
-      try {
-        (rl as any).line = prev;
-        (rl as any).cursor = prev.length;
-        if (typeof (rl as any)._refreshLine === 'function') (rl as any)._refreshLine();
-        renderer.writeLine(renderer.color('(已载入上次输出，可编辑后回车提交)', 'gray'));
-      } catch {
-        renderer.writeLine('--- 上次输出 ---');
-        renderer.writeLine(prev);
-        renderer.writeLine('--- 直接提交以重用 ---');
-        rl.prompt();
-      }
-      return true;
-    }
-
-    return false; // not a local command, treat as task
-  }
 
   // Main input loop (line mode over SSE transport)
   let pendingPaste: string | null = null; // folded paste awaiting Enter
@@ -2074,39 +2127,38 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     const trimmed = line.trim();
     if (!trimmed) {
       // 任务运行中（readline 已恢复消费输入）不打印提示符，避免污染流式输出
-      if (isRunning()) return;
+      if (isRunning(ctx)) return;
       if (pendingPaste !== null) {
         // 折叠粘贴的第二次回车 = 提交
         const submit = pendingPaste;
         pendingPaste = null;
         linePromptIdle();
-        await handleUserLine(submit, undefined);
+        await controller.handleLine(submit, undefined);
         return;
       }
-      if (pendingSuggestion) {
+      if (ctx.pendingSuggestion) {
         // 回车确认执行建议命令。
         // 先过本地命令注册（/exit /clear 等只在 handleLocalCommand），
         // 否则建议 /exit 确认后又落 runTaskViaSse 的"未知命令"分支自指循环。
-        const sug = pendingSuggestion;
-        pendingSuggestion = null;
-        renderer.writeLine(renderer.color(`→ ${sug}`, 'gray'));
-        if (!(await handleLocalCommand(sug))) {
-          await runTaskViaSse(sug);
+        const sug = ctx.pendingSuggestion;
+        ctx.pendingSuggestion = null;
+        ctx.renderer.writeLine(ctx.renderer.color(`→ ${sug}`, 'gray'));
+        if (!(await handleLocalCommand(ctx, sug))) {
+          await controller.runTask(sug);
         }
-        if (!isRunning()) linePromptIdle();
+        if (!isRunning(ctx)) linePromptIdle();
         return;
       }
       // 空输入回车给灰字引导（原来是静默重出提示符）
-      renderer.writeLine(renderer.color('输入任务描述，或 ? 看快捷帮助', 'gray'));
+      ctx.renderer.writeLine(ctx.renderer.color('输入任务描述，或 ? 看快捷帮助', 'gray'));
       linePromptIdle();
       return;
     }
-    if (pendingSuggestion) pendingSuggestion = null; // 其他输入 = 取消建议，按原样处理
+    if (ctx.pendingSuggestion) ctx.pendingSuggestion = null; // 其他输入 = 取消建议，按原样处理
 
-    // Use the unified runner (no bridge → line renderer path).
     // while a task is running, submissions are queued/steered instead.
-    if (isRunning()) {
-      await handleUserLine(trimmed, undefined);
+    if (isRunning(ctx)) {
+      await controller.handleLine(trimmed, undefined);
       // 任务结束时 finally 会统一恢复提示符
       return;
     }
@@ -2117,7 +2169,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     const pasteInfo = detectPaste(line);
     if (pasteInfo.isPaste && pendingPaste === null) {
       pendingPaste = line;
-      renderer.writeLine(renderer.color(`[粘贴 ${pasteInfo.lines} 行，已折叠；回车提交，Esc/输入其它内容取消]`, 'yellow'));
+      ctx.renderer.writeLine(ctx.renderer.color(`[粘贴 ${pasteInfo.lines} 行，已折叠；回车提交，Esc/输入其它内容取消]`, 'yellow'));
       linePromptIdle();
       return;
     }
@@ -2126,7 +2178,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       pendingPaste = null;
     }
 
-    const isLocal = await handleLocalCommand(trimmed);
+    const isLocal = await handleLocalCommand(ctx, trimmed);
     if (isLocal) {
       linePromptIdle();
       return;
@@ -2135,14 +2187,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     if (trimmed.startsWith('/')) {
       // 派发器本地命令（/mode /model /usage /tier …）多为早退分支、不经过
       // runTaskViaSse 的 finally — 这里统一恢复提示符。
-      await runTaskViaSse(trimmed);
-      if (!isRunning()) linePromptIdle();
+      await controller.runTask(trimmed);
+      if (!isRunning(ctx)) linePromptIdle();
       return;
     }
 
     // Use the unified runner (no bridge → line renderer path).
-    // The runner's finally restores the prompt via lineSetPrompt/lineRl.
-    await runTaskViaSse(trimmed);
+    // The runner's finally restores the prompt via ctx.lineSetPrompt/ctx.lineRl.
+    await controller.runTask(trimmed);
   });
 }
 

@@ -48,7 +48,8 @@ describe('P2-1 启动横幅 v2', () => {
     assert.equal(b.length, 3);
     assert.equal(b[0], '烛龙 Zhulong v0.7.0');
     assert.ok(b[1].startsWith('  模型 emb-1b-i1 · 档位 high · 模式 default · C:\\ws'), b[1]);
-    assert.ok(b[2].includes('? 快捷帮助'), b[2]);
+    // 0.7.4 任务 C：`?` 改为透传模型——横幅不再宣传快捷帮助
+    assert.ok(!b[2].includes('? 快捷帮助'), b[2]);
     assert.ok(b[2].includes('/help 全部命令'), b[2]);
     assert.ok(b[2].includes('Ctrl+C 中断任务/二次退出'), b[2]);
   });
@@ -184,7 +185,7 @@ describe('P3-3 情境 tip 节流 createTipGate', () => {
   });
 });
 
-describe('P2-2 ? 快捷帮助面板 + P3-1 宽度补齐', () => {
+describe('P2-2 buildQuickHelpLines（0.7.4 起仅供 /help 复用，? 不再截获）+ P3-1 宽度补齐', () => {
   it('buildQuickHelpLines: 8+ entries and a dim tail pointing at /help with the total', () => {
     const ql = buildQuickHelpLines(26);
     assert.ok(ql.length >= 10, `entries=${ql.length}`);

@@ -97,6 +97,8 @@ export interface OpenAICompatClient {
   listModels(): Promise<string[]>;
   /** 网关返回原生 tool_calls 时返回结构化对象（detectedFormat:'openai-json'），否则返回文本 */
   complete(prompt: string, opts?: CompleteOptions): Promise<string | OpenAICompatOutput>;
+  /** streamChat 回退专用（0.7.4 B4）：withRetry + emptyResponse 语义的非流式回退。 */
+  completeLikeFallback(prompt: string, opts?: CompleteOptions): Promise<string | OpenAICompatOutput>;
   streamChat?(prompt: string, opts?: CompleteOptions): AsyncIterable<ModelStreamChunk>;
 }
 
@@ -367,12 +369,28 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     if (json && Array.isArray(json.choices)) {
       try { return JSON.stringify(json); } catch { return ''; }
     }
-    const emptyErr: any = new Error('EMPTY_RESPONSE');
+    const emptyErr: any = new Error(
+      'EMPTY_RESPONSE: 端点返回 200 但无有效内容。若使用 diffusion/embedding 类模型，'
+      + 'LM Studio 对其 chat/completions 返回空体——请加载标准自回归对话模型'
+    );
     emptyErr.emptyResponse = true;
     throw emptyErr;
   }
 
   return {
+    /** streamChat 回退专用（0.7.4 任务 B4）：与 complete() 同语义的非流式回退。 */
+    async completeLikeFallback(prompt: string, opts: CompleteOptions): Promise<string | OpenAICompatOutput> {
+      try {
+        return await withRetry(() => doComplete(prompt, opts));
+      } catch (e: any) {
+        if (e && e.emptyResponse === true) {
+          // 空响应重试耗尽 → 返回空（调用方按 NO_TOOL_CALLS 处理），不挂起
+          return '';
+        }
+        throw e;
+      }
+    },
+
     async listModels(): Promise<string[]> {
       const url = joinUrl(baseUrl, '/models');
       const res = await fetchWithTimeout(url, {
@@ -467,14 +485,16 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           err.code = 'ABORTED';
           throw err;
         }
-        // Transport-level failure → fall back to non-streaming so callers keep working
-        for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
+        // Transport-level failure → fall back to non-streaming so callers keep working.
+        // 0.7.4：与 complete() 同语义——withRetry 包裹 + emptyResponse 耗尽转空串，
+        // 消灭"三连发裸调用穿透 → chaser 误判 aborted"（LM Studio diffusion 实测）。
+        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
         return;
       }
 
       if (!res.ok || !(res as any).body) {
         // Non-OK → fall back to complete() which surfaces a rich error
-        for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
+        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
         return;
       }
 
@@ -571,7 +591,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
       // Endpoint accepted stream:true but sent nothing parseable — fall back once.
       if (!sawAny) {
-        for (const c of chunksFromCompleteOutput(await doComplete(prompt, opts))) yield c;
+        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
       }
     },
   };
