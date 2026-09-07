@@ -39,14 +39,19 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 // 导入共享 schema
-// 注：schema.mjs 的 validateResult 校验的是 v0.6.5 RESULT_SCHEMA 必填集
-//（ablation/taskFamily/seed...），与本 runner 的 R6 运行时字段（tier/model/timestamp）
-// 尚未完全对齐——全量 schema 校验由 smoke-eval.mjs 承担；U4/U6 字段收敛后 runner 再接入。
+// U4 字段收敛：runOne 返回结构与 RESULT_SCHEMA 对齐，写盘前跑 validateResult 校验。
 import {
   EVAL_SOURCES,
   FAILURE_PRIMARY, FAILURE_SECONDARY,
   normalizeFailureTaxonomy,
+  validateResult,
+  hashPrompt,
+  stopwatch,
+  EVAL_VERDICTS,
 } from './results/schema.mjs';
+
+/** 当前 runner 对应的 panshalach 版本（证据链必填） */
+const PANSHALACH_VERSION = '0.7.4';
 
 // ── 常量 ──
 
@@ -258,19 +263,19 @@ function parseFixtureMarkdown(content, dirName) {
 
 /**
  * 按消融档位返回执行参数。
- * @param {'A'|'B'|'C'|'C4'} tier
- * @returns {{ injectMemory: boolean, overflowWindow: boolean, semanticSearch: boolean, description: string }}
+ * @param {'A'|'B'|'C'|'C4'} key
+ * @returns {{ key: string, injectMemory: boolean, overflowWindow: boolean, semanticSearch: boolean, description: string }}
  */
-function ablationConfig(tier) {
-  switch (tier) {
+function ablationConfig(key) {
+  switch (key) {
     case 'A':
-      return { injectMemory: true, overflowWindow: true, semanticSearch: false, description: 'A: 记忆窗口溢出（长上下文）' };
+      return { key: 'A', injectMemory: true, overflowWindow: true, semanticSearch: false, description: 'A: 记忆窗口溢出（长上下文）' };
     case 'B':
-      return { injectMemory: false, overflowWindow: false, semanticSearch: false, description: 'B: 零记忆注入（防线失败基准）' };
+      return { key: 'B', injectMemory: false, overflowWindow: false, semanticSearch: false, description: 'B: 零记忆注入（防线失败基准）' };
     case 'C':
-      return { injectMemory: true, overflowWindow: false, semanticSearch: false, description: 'C: 完整记忆注入（当前主线）' };
+      return { key: 'C', injectMemory: true, overflowWindow: false, semanticSearch: false, description: 'C: 完整记忆注入（当前主线）' };
     case 'C4':
-      return { injectMemory: true, overflowWindow: false, semanticSearch: true, description: 'C4: 语义检索增强' };
+      return { key: 'C4', injectMemory: true, overflowWindow: false, semanticSearch: true, description: 'C4: 语义检索增强' };
     default:
       return ablationConfig('C');
   }
@@ -342,24 +347,46 @@ function parseVerification(stdout, stderr, exitCode) {
 
 /**
  * 从 harness 输出中解析记忆信息。
+ * 优先抓 SSE/JSON 格式的 memory.finalized 事件；回退到正则文本匹配。
  */
 function parseMemory(stdout) {
   const injected = [];
   const verified = [];
+  const refined = { added: 0, merged: 0, written: 0, capped: 0 };
 
-  const injectedMatch = stdout.match(/injectedCardIds[:\s]*\[([^\]]*)\]/i);
-  if (injectedMatch) {
-    const ids = injectedMatch[1].match(/[a-zA-Z0-9_-]+/g);
-    if (ids) injected.push(...ids);
+  // 优先：抓 memory.finalized 事件（JSON 行）
+  const memFinalizedMatch = stdout.match(/memory\.finalized[:\s]*(\{[^\n]+\})/i);
+  if (memFinalizedMatch) {
+    try {
+      const data = JSON.parse(memFinalizedMatch[1]);
+      if (Array.isArray(data.injectedCardIds)) injected.push(...data.injectedCardIds);
+      if (Array.isArray(data.verifiedCardIds)) verified.push(...data.verifiedCardIds);
+      if (data.refined) {
+        refined.added = data.refined.added ?? 0;
+        refined.merged = data.refined.merged ?? 0;
+        refined.written = data.refined.written ?? 0;
+        refined.capped = data.refined.capped ?? 0;
+      }
+    } catch { /* JSON 解析失败，回退正则 */ }
   }
 
-  const verifiedMatch = stdout.match(/verifiedCardIds[:\s]*\[([^\]]*)\]/i);
-  if (verifiedMatch) {
-    const ids = verifiedMatch[1].match(/[a-zA-Z0-9_-]+/g);
-    if (ids) verified.push(...ids);
+  // 回退：正则文本匹配（兼容旧输出）
+  if (injected.length === 0) {
+    const injectedMatch = stdout.match(/injectedCardIds[:\s]*\[([^\]]*)\]/i);
+    if (injectedMatch) {
+      const ids = injectedMatch[1].match(/[a-zA-Z0-9_-]+/g);
+      if (ids) injected.push(...ids);
+    }
+  }
+  if (verified.length === 0) {
+    const verifiedMatch = stdout.match(/verifiedCardIds[:\s]*\[([^\]]*)\]/i);
+    if (verifiedMatch) {
+      const ids = verifiedMatch[1].match(/[a-zA-Z0-9_-]+/g);
+      if (ids) verified.push(...ids);
+    }
   }
 
-  return { injectedCardIds: injected, verifiedCardIds: verified };
+  return { injectedCardIds: injected, verifiedCardIds: verified, refined };
 }
 
 /**
@@ -394,46 +421,66 @@ function parseFailure(stdout, stderr, exitCode, errorMessage) {
 
 /**
  * 执行单个任务，返回符合 R6 合同的结果记录。
+ *
+ * 返回形状严格对齐 scripts/eval/results/schema.mjs 的 RESULT_SCHEMA，
+ * 写盘前会跑 validateResult() 校验，失败即 exit 1。
  */
 async function runOne(fixture, ablation, opts) {
   const runId = randomUUID();
-  const startTime = Date.now();
+  const startedAt = new Date();
+  const tick = stopwatch();
 
-  /** @type {object} */
+  // 从 fixture id 提取 taskFamily（如 "T1" → "T1"）
+  const taskFamilyMatch = fixture.id.match(/^([A-Z]\d+)/);
+  const taskFamily = taskFamilyMatch ? taskFamilyMatch[1] : 'T1';
+
+  /** @type {import('./results/schema.mjs').EvalResult} */
   const result = {
     runId,
     source: opts.source,
-    tier: fixture.tier,
+    ablation: ablation.key,
     taskId: fixture.id,
-    model: opts.model,
+    taskFamily,
+    seed: fixture.seed ?? 42,
     seedSupport: opts.seedSupport,
-    timestamp: new Date().toISOString(),
+    modelId: opts.model,
+    panshalachVersion: PANSHALACH_VERSION,
+    startedAt: startedAt.toISOString(),
+    finishedAt: startedAt.toISOString(),
     durationMs: 0,
-    verdict: 'fail',
-    verification: { signal: 'none', exitCode: null, commands: [] },
+    verdict: 'no-verification',
+    verification: { signal: 'NO_VERIFICATION', exitCode: 0, commands: [] },
     memory: { injectedCardIds: [], verifiedCardIds: [] },
     prompt: {
       chars: fixture.prompt.length,
       estimatedTokens: Math.ceil(fixture.prompt.length / 4),
-      hash: createHash('sha256').update(fixture.prompt).digest('hex').slice(0, 8),
+      hash: hashPrompt(fixture.prompt),
     },
-    failureTaxonomy: undefined,
+    stopReason: 'no-verification',
+    attemptCount: 1,
+    failureTaxonomy: { primary: 'no-verification', secondary: 'unknown' },
+    refined: { added: 0, merged: 0, written: 0, capped: 0 },
     artifacts: {},
+    tags: [],
   };
 
   // ── mock-smoke：预设通过数据 ──
   if (opts.source === 'mock-smoke') {
-    result.verdict = 'pass';
-    result.verification = { signal: 'EXIT_CODE:0', exitCode: 0, commands: ['npx tsc --noEmit (mock)'] };
+    result.verdict = 'completed';
+    result.stopReason = 'completed';
+    result.verification = { signal: 'PASS', exitCode: 0, commands: ['npx tsc --noEmit (mock)'] };
     result.memory = {
       injectedCardIds: [`mock-card-${fixture.id}`],
       verifiedCardIds: [`mock-verified-${fixture.id}`],
     };
+    result.failureTaxonomy = undefined;
+    result.refined = { added: 1, merged: 0, written: 1, capped: 0 };
     result.artifacts = {
-      trajectory: `mock/trajectories/${fixture.id}.jsonl`,
-      log: `mock/logs/${fixture.id}.log`,
+      rolloutJsonl: `mock/trajectories/${fixture.id}.jsonl`,
+      stdoutTail: `mock/logs/${fixture.id}.log`,
     };
-    result.durationMs = Date.now() - startTime;
+    result.durationMs = tick();
+    result.finishedAt = new Date().toISOString();
     return result;
   }
 
@@ -458,29 +505,48 @@ async function runOne(fixture, ablation, opts) {
       }
     );
 
-    result.durationMs = Date.now() - startTime;
+    result.durationMs = tick();
+    result.finishedAt = new Date().toISOString();
 
     if (error) {
       console.warn(`  [eval] 子进程错误: ${error.message}`);
       result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, error.message);
-      result.verdict = 'fail';
-      result.verification = { signal: 'none', exitCode: exitCode ?? null, commands: [] };
+      result.verdict = 'aborted';
+      result.stopReason = 'aborted';
+      result.lastError = error.message;
+      result.verification = { signal: 'UNKNOWN', exitCode: exitCode ?? null, commands: [] };
     } else {
       const verification = parseVerification(stdout, stderr, exitCode ?? 1);
       const memory = parseMemory(stdout);
 
       result.verification = verification;
-      result.memory = memory;
+      result.memory = {
+        injectedCardIds: memory.injectedCardIds,
+        verifiedCardIds: memory.verifiedCardIds,
+      };
+      if (memory.refined) result.refined = memory.refined;
 
-      // 判定 verdict
+      // 判定 verdict（按 RESULT_SCHEMA 语义：completed / max-steps / aborted / no-verification）
+      // 另外用 tags 标注 R6 专用分类（not_applicable / invalid），不进 verdict 枚举
       if (ablation.injectMemory === false && memory.injectedCardIds.length === 0) {
-        result.verdict = 'invalid';  // B 档零注入 = 防线失败
+        result.tags.push('line-defense-failed');  // B 档零注入 = 防线失败
+        result.verdict = 'no-verification';
+        result.stopReason = 'no-verification';
       } else if (ablation.overflowWindow && !/(overflow|truncat|窗口|截断)/i.test(stdout)) {
-        result.verdict = 'not_applicable';  // A 档未溢出
-      } else if (verification.signal !== 'none') {
-        result.verdict = 'pass';
+        result.tags.push('overflow-skipped');  // A 档未溢出
+        result.verdict = 'no-verification';
+        result.stopReason = 'no-verification';
+      } else if (verification.signal === 'PASS' || verification.signal === 'ALL_TESTS_PASSED') {
+        result.verdict = 'completed';
+        result.stopReason = 'completed';
+        result.failureTaxonomy = undefined;
+      } else if (verification.signal === 'FAIL' || verification.signal === 'TESTS_FAILED') {
+        result.verdict = 'no-verification';
+        result.stopReason = 'no-verification';
+        result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, '');
       } else {
-        result.verdict = 'fail';
+        result.verdict = 'no-verification';
+        result.stopReason = 'no-verification';
         result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, '');
       }
     }
@@ -494,15 +560,18 @@ async function runOne(fixture, ablation, opts) {
     await writeFile(join(artifactDir, 'result.json'), JSON.stringify(result, null, 2), 'utf8');
 
     result.artifacts = {
-      stdout: relative(ROOT, join(artifactDir, 'stdout.txt')),
-      stderr: relative(ROOT, join(artifactDir, 'stderr.txt')),
-      result: relative(ROOT, join(artifactDir, 'result.json')),
+      rolloutJsonl: relative(ROOT, join(artifactDir, 'stdout.txt')),
+      stdoutTail: relative(ROOT, join(artifactDir, 'stdout.txt')),
+      traceJson: relative(ROOT, join(artifactDir, 'result.json')),
     };
 
   } catch (err) {
-    result.durationMs = Date.now() - startTime;
-    result.verdict = 'fail';
+    result.durationMs = tick();
+    result.finishedAt = new Date().toISOString();
+    result.verdict = 'aborted';
+    result.stopReason = 'aborted';
     result.failureTaxonomy = { primary: 'infra-error', secondary: 'unknown' };
+    result.lastError = err?.message || String(err);
     console.error(`  [eval] 致命错误: ${err.message}`);
   }
 
@@ -558,8 +627,22 @@ function spawnWithTimeout(command, args, opts = {}) {
 
 // ── 汇总统计 ──
 
+/**
+ * 把单 rollout 的 TurnStopReason + tags 翻译成 R6 评测结论（EVAL_VERDICTS）。
+ *  - completed → pass
+ *  - tags 含 overflow-skipped → not_applicable（A 档未溢出）
+ *  - tags 含 line-defense-failed → invalid（B 档零注入，防线失败）
+ *  - 其余失败 → fail
+ */
+function verdictToEvalVerdict(r) {
+  if (r.tags?.includes('overflow-skipped')) return 'not_applicable';
+  if (r.tags?.includes('line-defense-failed')) return 'invalid';
+  if (r.verdict === 'completed') return 'pass';
+  return 'fail';
+}
+
 function generateSummary(results, source) {
-  const byTier = {
+  const byAblation = {
     A: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 },
     B: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 },
     C: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 },
@@ -569,13 +652,14 @@ function generateSummary(results, source) {
   let passed = 0, failed = 0, validSamples = 0;
 
   for (const r of results) {
-    const t = byTier[r.tier];
+    const t = byAblation[r.ablation];
     if (!t) continue;
     t.total++;
-    if (r.verdict === 'pass') { t.passed++; passed++; validSamples++; }
-    else if (r.verdict === 'fail') { t.failed++; failed++; validSamples++; }
-    else if (r.verdict === 'invalid') { t.invalid++; }
-    else if (r.verdict === 'not_applicable') { t.notApplicable++; }
+    const ev = verdictToEvalVerdict(r);
+    if (ev === 'pass') { t.passed++; passed++; validSamples++; }
+    else if (ev === 'fail') { t.failed++; failed++; validSamples++; }
+    else if (ev === 'invalid') { t.invalid++; }
+    else if (ev === 'not_applicable') { t.notApplicable++; }
 
     // 双层 taxonomy：统计 primary（枚举漂移守卫，merge 注）
     const tax = normalizeFailureTaxonomy(r.failureTaxonomy);
@@ -598,7 +682,7 @@ function generateSummary(results, source) {
     validSamples,
     passed,
     failed,
-    byTier,
+    byAblation,
     byFailure,
     runIds: results.map(r => r.runId),
   };
@@ -653,6 +737,7 @@ async function main() {
   }
 
   const results = [];
+  let schemaErrors = 0;
   for (const fixture of fixtures) {
     const cfg = ablationConfig(fixture.tier);
     console.log(`\n[eval] === ${fixture.id} [${fixture.tier}] ${fixture.title} ===`);
@@ -660,6 +745,14 @@ async function main() {
     console.log(`[eval] Prompt (${fixture.prompt.length} chars): ${fixture.prompt.slice(0, 100)}...`);
 
     const result = await runOne(fixture, cfg, opts);
+
+    // U4 字段收敛：每条结果过 schema 校验
+    const v = validateResult(result);
+    if (!v.ok) {
+      schemaErrors++;
+      console.error(`  [eval] SCHEMA VIOLATION: ${v.errors.join('; ')}`);
+    }
+
     results.push(result);
     console.log(`[eval] 结果: verdict=${result.verdict} signal=${result.verification.signal} duration=${result.durationMs}ms`);
   }
@@ -667,6 +760,9 @@ async function main() {
   const summary = generateSummary(results, opts.source);
   console.log(`\n[eval] === 汇总 ===`);
   console.log(`[eval] 总运行: ${summary.totalRuns} | 有效样本: ${summary.validSamples} | 通过: ${summary.passed} | 失败: ${summary.failed}`);
+  if (schemaErrors > 0) {
+    console.error(`[eval] SCHEMA 违规: ${schemaErrors} 条结果未通过 validateResult`);
+  }
 
   // 输出路径（source 决定目录：mock → results/mock/，real → results/）
   const outDir = opts.source === 'mock-smoke' ? MOCK_RESULTS_DIR : RESULTS_DIR;
@@ -691,9 +787,17 @@ async function main() {
     results,
   };
 
+  // schema 有违规时不写真实结果表（mock 模式允许写，方便调试）
+  if (schemaErrors > 0 && opts.source !== 'mock-smoke') {
+    console.error('[eval] 因 schema 违规，跳过真实结果写盘');
+    process.exit(1);
+  }
+
   await writeFile(outPath, JSON.stringify(output, null, 2), 'utf8');
   console.log(`[eval] 结果已写入: ${relative(ROOT, outPath)}`);
-  process.exit(summary.failed > 0 ? 1 : 0);
+
+  const hasFailures = summary.failed > 0 || schemaErrors > 0;
+  process.exit(hasFailures ? 1 : 0);
 }
 
 main().catch(e => {
