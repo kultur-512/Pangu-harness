@@ -3,7 +3,8 @@
 //
 // 字段来源：
 //   1. ROADMAP-NEXT §3.1 R6 合同（runId/source/seedSupport/verdict/verification/memory/prompt/failureTaxonomy/artifacts）
-//   2. v0.6.4 接口契约 v3.1 双层终止语义（TurnStopReason 6 态 + continueCount + lastError）
+//   2. v0.6.4 接口契约 v3.1 双层终止语义（TurnStopReason 6 态 + attemptCount + lastError）
+//      注：continueCount 在 0.7 判官摘除后已是死字段（恒 0），由 attemptCount（v0.6.5 防伪造约束）替代
 //   3. v0.6.5 R1/R2 契约（panshalachVersion / attemptCount / refined 透传 + memory 注入层 vs 落定层）
 //   4. FailureTaxonomy 双层升级（{ primary, secondary? } + normalizeFailureTaxonomy 向后兼容）
 //
@@ -187,7 +188,6 @@ export const RESULT_SCHEMA = Object.freeze({
       },
     },
     stopReason:      { enum: [...TURN_STOP_REASONS] },
-    continueCount:   { type: 'integer', minimum: 0, description: '判官拦截续跑次数（0 = 未续跑）' },
     /**
      * 实际尝试次数（王浩宇 R1/R2 防伪造约束）：
      * - 缺省 / undefined → verifier 不判 'completed'，强制 'no-verification'
@@ -324,7 +324,6 @@ export function newResult(init) {
     verification: { signal: 'NO_VERIFICATION', exitCode: 0, commands: [] },
     memory: { injectedCardIds: [], verifiedCardIds: [] },
     prompt: { chars: 0, estimatedTokens: 0, hash: '' },
-    continueCount: 0,
     failureTaxonomy: 'none',
     artifacts: {},
     tags: [],

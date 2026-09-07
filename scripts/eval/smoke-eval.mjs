@@ -103,9 +103,9 @@ function mockResult({ ablation, taskFamily, taskId, seed }) {
       break;
   }
 
-  // T4 (resume) 演示 continueCount
+  // T4 (resume) 演示 attemptCount（续跑一次 = 总尝试 2 次，对齐 R6 防伪造约束）
   if (taskFamily === 'T4') {
-    r.continueCount = 1;
+    r.attemptCount = 2;
     r.tags.push('resumed');
   }
 
