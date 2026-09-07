@@ -3,7 +3,8 @@
 //
 // 字段来源：
 //   1. ROADMAP-NEXT §3.1 R6 合同（runId/source/seedSupport/verdict/verification/memory/prompt/failureTaxonomy/artifacts）
-//   2. v0.6.4 接口契约 v3.1 双层终止语义（TurnStopReason 6 态 + continueCount + lastError）
+//   2. 0.7 接口契约 v4 单层终止语义（TurnStopReason 6 态 + attemptCount + lastError）
+//      （0.7 前判官摘除，verification-failed-continue → answered；continueCount 死字段由 attemptCount 替代）
 //   3. v0.6.5 R1/R2 契约（panshalachVersion / attemptCount / refined 透传 + memory 注入层 vs 落定层）
 //   4. FailureTaxonomy 双层升级（{ primary, secondary? } + normalizeFailureTaxonomy 向后兼容）
 //
@@ -25,14 +26,15 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
-/** 双层终止语义 6 态（与 src/cli/repl/types.ts TurnStopReason 同步） */
+/** 0.7 单层终止语义 6 态（与 src/cli/repl/types.ts TurnStopReason 双向同步）
+ *  改动此数组必须同步更新 src/cli/repl/types.ts 的 TurnStopReason 类型。 */
 export const TURN_STOP_REASONS = Object.freeze([
-  'completed',                    // end_turn 且轨迹含验证 PASS
-  'verification-failed-continue', // 判官拦截续跑（本轮结束但任务未完）
+  'completed',                    // end_turn 且轨迹含真实验证 PASS
+  'answered',                     // end_turn 且有正文答复（纯问答/信息型，不算记忆 success 信号）
   'max-steps',                    // 步数耗尽
   'consecutive-failures',         // 连续工具失败保护
   'aborted',                      // 用户/信号中止
-  'no-verification',             // end_turn 但从未产生 PASS（信息型）
+  'no-verification',             // end_turn 但无正文无工具（空白/空转）
 ]);
 
 /** 评测源（隔离 mock 与真模型） */
@@ -134,19 +136,23 @@ export const RESULT_SCHEMA = Object.freeze({
     finishedAt:      { type: 'string', format: 'date-time' },
     durationMs:      { type: 'integer', minimum: 0 },
     /**
-     * verdict 映射规则（v0.6.4 R0 + v0.6.5 R1/R2 对齐）：
-     * ┌─────────────────┬────────────────┬──────────────────────────────────┐
-     * │ trajectory.success│ verifiedSteps │ verdict                          │
-     * ├─────────────────┼────────────────┼──────────────────────────────────┤
-     * │ true            │ *              │ 'completed'                      │
-     * │ false           │ 存在（fail）    │ 'verification-failed-continue'   │
-     * │ false           │ 不存在         │ 'no-verification'                │
-     * │ false + max-steps│ *              │ 'max-steps'                      │
-     * │ false + aborted │ *              │ 'aborted'                        │
-     * │ false + 缺 attemptCount│ *        │ 'no-verification'（防"一次通过"伪造）│
-     * └─────────────────┴────────────────┴──────────────────────────────────┘
+     * verdict（= TurnStopReason）映射规则（0.7 单层终止口径）：
+     * ┌──────────────────────────┬───────────────────────────────────────────┐
+     * │ 条件                      │ verdict                                   │
+     * ├──────────────────────────┼───────────────────────────────────────────┤
+     * │ 真实验证 PASS              │ 'completed'                              │
+     * │ 纯问答 end_turn 有正文      │ 'answered'（信息型成功，不计记忆 success）│
+     * │ 步数耗尽                   │ 'max-steps'                              │
+     * │ 连续工具失败保护            │ 'consecutive-failures'                   │
+     * │ 用户/信号中止              │ 'aborted'                                │
+     * │ end_turn 无正文无工具       │ 'no-verification'（空白/空转）           │
+     * └──────────────────────────┴───────────────────────────────────────────┘
      * R6 runner 方言另用 EVAL_VERDICTS（pass/fail/not_applicable/invalid），
-     * 由 validateResult 双方言兼容；U6 ajv 接入后收敛。
+     * 由 validateResult 双方言兼容；U6 ajv 接入后收敛到双层 object。
+     *
+     * ⚠️ attemptCount 防伪造：completed 必须 attemptCount ≥ 1；
+     * 缺 attemptCount 的结果即使说"完成"也只判 no-verification。
+     * （当前 validateResult 轻量校验未执行此规则，U6 接 ajv 后落地。）
      */
     verdict:         { enum: [...TURN_STOP_REASONS] },
     verification: {
