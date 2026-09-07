@@ -13,7 +13,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 1. **会话内状态**（回合轨迹 / 验证信号，实时纠偏）；
 2. **结构化记忆卡**（跨会话提炼的教训/经验/偏好，分档注入、衰减与合并）；
 3. **上下文压缩与会话资产**（长会话可 resume/branch，压缩保留关键摘要）；
-4. **事件记忆 + 任务状态**（规划）：语义化业务事件流与跨多轮任务状态机，直击"中期遗忘 / 上下文断裂"。
+4. **事件记忆 + 任务状态**（已落地）：语义化业务事件流（R4 `memory/events.ts`）与跨多轮任务状态机（R5 `memory/taskState.ts`），直击"中期遗忘 / 上下文断裂"；运行时接线见 11dbea3。
 
 在真实业务场景"软件工程长期维护"上，它表现为：早期需求约束在多轮演进后仍被遵守、跨文件修改不丢失关联、中断后能准确续接进度。
 
@@ -34,9 +34,9 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ├──────────────────────────────────────────────────────────────────┤
 │ 记忆增强层                                                        │
 │   记忆卡 store（failure/success/preference + 类别分档 + 衰减+合并）  │
-│   会话资产/事件日志(rollout jsonl → 事件记忆[规划])                 │
-│   任务状态跟踪(feature_list → 任务状态机[规划])                     │
-│   语义检索[规划]: 字符n-gram v0 → 国产向量库/embedding 可插拔        │
+│   会话资产/事件日志(rollout jsonl → 事件记忆[已落地 R4])            │
+│   任务状态跟踪(feature_list → 任务状态机[已落地 R5])               │
+│   语义检索[embed v0 已落(单测在库), L1 注入融合待接]                │
 ├──────────────────────────────────────────────────────────────────┤
 │ 执行循环层 (taskIntent → solveIssue → VerifyCritiqueLoop)          │
 │   意图分类(0.7)：chat 单次直答 / search 只读≤3步 / task 全循环      │
@@ -94,7 +94,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ### 2.2 记忆写入（提炼 → 保存）
 - ~~**信号源 A（循环实时）**：FailureMemory 会话内即时纠偏~~ → **已摘除**（#6，2026-09-05，archive/2026-09-05-removals/）。失败/成功信号唯一归口 = 信号源 B/C。
-- **信号源 B（回合闭环，规划落地 P2）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；一次通过且**验证通过（trajectory.success）**或正向反馈 → success 卡），`save()` 合并去重写盘。→ 修复"现在没有任何生产路径调用 refine 的缺口"。（score 已移除，2026-09-05）
+- **信号源 B（回合闭环，已实现 0.7.2）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；一次通过且**验证通过（trajectory.success）**或正向反馈 → success 卡），`save()` 合并去重写盘。落定点为 `finalizeTaskMemory` 单一收口（runAgentTask result 前，覆盖 SSE/server/headless；Repl 直调三口留统一执行器收口）。（score 已移除，2026-09-05）
 - **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中**验证成功（result.success）**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。（score 已移除，2026-09-05）
 - **用户显式（已实现）**：`/memory remember [--pin]` / forget / import / export / clear / merge。
 
@@ -109,10 +109,10 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ### 2.4 已知差距与补齐路线（详见 MEMORY-DESIGN.md）
 | 缺口 | 补齐（里程碑） |
 |---|---|
-| 无回合写入闭环（refine 无生产调用点） | P2：任务落定调用 refine+save（markInjected/markVerified 已落地，见 bf5f4a7） |
-| 无语义检索（仅 keyword 子串） | P3：字符 2-gram 词袋余弦 v0 → 国产向量库/openPangu embedding 可插拔 |
-| 无业务事件层（rollout jsonl 是回合级） | P3：语义事件流（decision/constraint/requirement/verified/failure/progress） |
-| 无跨轮任务状态机 | P3：TaskState（原始需求长期锚/决策/未决/进度/已验证），防决策偏离原始需求 |
+| ~~无回合写入闭环（refine 无生产调用点）~~ | ✅ 已修复（0.7.2：finalizeTaskMemory 单一落定点；markInjected/markVerified 已落地，见 bf5f4a7；Repl 直调三口待统一执行器收口） |
+| ~~无语义检索（仅 keyword 子串）~~ | 部分：embed.ts 字符 2-gram 词袋余弦 v0 已落地（赵天昂，含单测）；L1 注入融合未接线（→ 国产向量库/openPangu embedding 可插拔） |
+| ~~无业务事件层（rollout jsonl 是回合级）~~ | ✅ 已落地（R4 `memory/events.ts`，0.6.5；AgentEvent 接线 11dbea3；`/memory events` 查询子命令未挂载） |
+| ~~无跨轮任务状态机~~ | ✅ 已落地（R5 `memory/taskState.ts`，0.6.5；运行时注入接线 11dbea3） |
 | 一次性摘要（非多级滚动） | P3：粗粒度长期 + 结构化中期 + 逐字近期 |
 | ~~loadFiltered 不刷新 lastUsedAt 且无 markUsed~~ | ✅ 已修复（接口契约 v3）：二态 markInjected（记账）/markVerified（保鲜）+ 衰减锚 max(lastSeen,lastUsedAt) + archived 过滤 |
 
@@ -151,7 +151,7 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
         max-steps / 连错上限 / signal abort / 异常 → error(0.7.4)
     budget 软限：estimatedUsedTokens 按每次模型调用累加（0.7 修复恒 0）
   │
-  ▼ 任务落定（回合写闭环 · P2 规划）
+  ▼ 任务落定（回合写闭环 · 0.7.2 已落地）
     refine(信号=stopReason==='completed' + attemptCount + 反馈) → save → invalidateProjection
     （0.7 记忆信号收紧：纯问答/闲聊 answered 不产生 success 卡）
     会话 addTurn + rollout append + (需要时)后台预压缩
@@ -195,11 +195,11 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 3. **参照文件交集过滤（P2-D）**：不是"什么都注入"，而是按"本任务实际触碰的文件"只载入相关记忆，命中为空自动回退——精准防上下文污染。
 4. **确定性记忆维护**：四段阶梯衰减 × 类别半衰期、同主题 2-gram 合并(原卡归档可回滚)、容量上限、投影缓存快照——离线可测，不依赖 LLM 判断记忆要不要留。
 5. **上下文压缩 + 补漏提炼**：压缩不只丢历史——被移除轮次中的成功信号被确定性地补提为记忆卡(hash 去重)，压缩反而成为记忆沉淀入口。
-6. **事件日志 + 任务状态 + 会话资产**（规划里程碑补齐）：追加式语义事件、跨轮任务状态机、resume/branch——把"长周期持续跟踪"做成可审计、可续接的资产。
+6. **事件日志 + 任务状态 + 会话资产**：追加式语义事件（R4）与跨轮任务状态机（R5）已落地并接线运行时，resume/branch——把"长周期持续跟踪"做成可审计、可续接的资产。
 7. **国产软硬件亲和**：模型层为 OpenAI 兼容抽象 → openPangu on 昇腾(MindIE/vLLM-ascend)/本机端点即插即用；工具协议三路自适应探测让模型格式差异不再是接入门槛。
 
 ---
 
 ## 7. 下一步（按 ROADMAP.md）
 
-P1 openPangu 泛化接入（✅ env 三件套/tool_calls 透传已落地）→ P2 记忆写闭环（✅ 使用语义二态已落地，refine 调用点待接）→ P3 事件记忆+任务状态机（类型契约已落 types.ts）+语义检索 v0 → P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移收口。真机评估数据持续回填本文档与 EVALUATION.md。真机评估数据持续回填本文档与 EVALUATION.md。
+P1 openPangu 泛化接入（✅ env 三件套/tool_calls 透传已落地）→ P2 记忆写闭环（✅ 0.7.2 起 refine→save 单一落定点已接）→ P3 事件记忆+任务状态机（✅ events.ts/taskState.ts 已落地并接线；`/memory events` CLI 与语义检索融合待接）→ P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移收口。真机评估数据持续回填本文档与 EVALUATION.md。

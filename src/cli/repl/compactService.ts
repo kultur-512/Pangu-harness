@@ -194,7 +194,7 @@ export function shouldAutoCompact(session: Session, ctxRatio: number): boolean {
   return ctxRatio >= 0.85 && session.turns.length > 12;
 }
 
-// ==================== P3-3.7: background pre-compaction ====================
+// ==================== background pre-compaction ====================
 // The summary is computed on a SNAPSHOT of the removed turns, in the
 // background, WITHOUT mutating session.turns (no races). The interactive
 // layer applies the ready result at a task boundary via applyCompactResult.

@@ -15,9 +15,9 @@
 const rawArgs = process.argv.slice(2);
 
 /**
- * dist-fresh 启动检查（0.7.4 任务 A2）：npm link 的全局 bin 指向 dist/cli.js，
- * 若 src 有比 dist 更新的改动而未重建，用户实际跑的是旧代码（0.7.4 实测事故：
- * dist 停在 0.7.1 批次 B 中途，0.7.2/0.7.3 修复全部不在）。只在交互模式
+ * dist-fresh 启动检查：npm link 的全局 bin 指向 dist/cli.js，
+ * 若 src 有比 dist 更新的改动而未重建，用户实际跑的是旧代码（实测事故：
+ * dist 停在 0.7.1 构建中途，0.7.2/0.7.3 修复全部不在）。只在交互模式
  * （args 为空、stdout 为 TTY、非 headless）下打一行灰字提醒，不阻塞启动。
  */
 function warnIfDistStale(): void {
@@ -53,9 +53,9 @@ warnIfDistStale();
 let forceClassic = false;
 // --resume [id|last] — restore a rollout before starting the interactive REPL.
 let resumeArg: string | null = null;
-// P3-3.5: --branch <name> — fork the resume target into a new branch session.
+// --branch <name> — fork the resume target into a new branch session.
 let branchArg: string | null = null;
-// dogfood-①: --headless — explicit escape hatch for the isTTY mock gate.
+// --headless — explicit escape hatch for the isTTY mock gate.
 // Set BEFORE any engine import so isSmokeEnvironment() reads it on first call.
 let headlessFlag = false;
 const args: string[] = [];

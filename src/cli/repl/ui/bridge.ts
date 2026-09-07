@@ -101,7 +101,7 @@ export function createBridge(
     currentDispatch({ type: 'RESET_STREAM', kind });
   };
 
-  // P4-4.2: queued-messages badge (rich bottom bar)
+  // queued-messages badge (rich bottom bar)
   const setQueueCount = (total: number, tasks: number, steers: number) => {
     if (!currentDispatch) return;
     currentDispatch({ type: 'SET_QUEUE_COUNT', total, tasks, steers });
@@ -203,7 +203,7 @@ export function createBridge(
   // Simple confirm using a promise + dispatch
   let confirmResolver: ((yes: boolean) => void) | null = null;
 
-  // @deprecated (fix-p2): legacy confirm helper — the real approval flow uses
+  // @deprecated: legacy confirm helper — the real approval flow uses
   // setConfirm()/resolveConfirm(). No caller remains; kept for compat.
   const requestConfirm = (message: string): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -230,7 +230,7 @@ export function createBridge(
     }
   };
 
-  // fix-rich-local-cmds (②B): provider→model options are PURELY LOCAL — the
+  // provider→model options are PURELY LOCAL — the
   // startup prefetch (providerPrefetch) fills .panshalach.json providers[].models,
   // so this reads only the local config (millisecond, no per-keypress network).
   const providerOptions = async (): Promise<{ providers: Array<{ name: string; models: string[] }> }> => {
@@ -270,7 +270,7 @@ export function createBridge(
     pushBudget,
     requestConfirm,
     addHistory,
-    // fix-picker-3 (②): provider→model options for the /model two-stage picker
+    // provider→model options for the /model two-stage picker
     providerOptions,
   };
 

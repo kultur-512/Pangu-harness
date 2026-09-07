@@ -101,7 +101,7 @@ export function createHeadlessApprovalBridge(mode: 'y-all' | 'n-all') {
   return async (_req: ApprovalRequest): Promise<ApprovalDecision> => (mode === 'y-all' ? 'y' : 'n');
 }
 
-// ---- P0-1.4 / P0-3：模块级审批活动钩子 ----
+// ---- 模块级审批活动钩子 ----
 // line 模式 REPL（sseInteractive）通过这些钩子实现：
 // - process SIGINT 兜底 → 立即拒绝当前挂起的审批（不再卡满 60s）
 // - gerund 重绘暂停 / 恢复（审批提示行不被 spinner 覆盖）
@@ -134,7 +134,7 @@ export function setApprovalActivityListener(fn: ((active: boolean) => void) | nu
  * - n / anything else / Esc / 60s visible countdown → n (safe default)
  * - Ctrl+C（经 sseInteractive 的 SIGINT 兜底调 cancelActiveApproval）→ n
  * - 拒绝后可附一句指导语，返回 `n:<指导语>`（engineAdapter 拼进拒绝反馈）。
- * P0-3：审批期间经 approvalActivityListener 通知宿主暂停 gerund 并交接 stdin；
+ * 审批期间经 approvalActivityListener 通知宿主暂停 gerund 并交接 stdin；
  * 倒计时每秒 \r 原地重写选项行（配合 \x1b[K 清行纪律）。
  */
 export function createCliApprovalBridge(opts: { timeoutMs?: number } = {}): (req: {
@@ -167,17 +167,17 @@ export function createCliApprovalBridge(opts: { timeoutMs?: number } = {}): (req
       resolve(d);
     };
 
-    // P0-1.4: SIGINT → 立即拒绝（由 sseInteractive 的 SIGINT 兜底经
+    // SIGINT → 立即拒绝（由 sseInteractive 的 SIGINT 兜底经
     // cancelActiveApproval 转接进来；审批不再吞掉 Ctrl+C 卡满 60s）。
     activeApprovalCancel = () => {
       answered = true; // 本路径已自带换行收尾，finish 不再补 '\n'
       try { process.stdout.write('\n' + dimWrap('⏹ 已中断：本次审批按拒绝处理') + '\n'); } catch {}
       finish('n');
     };
-    // P0-3.1: 通知宿主（暂停 gerund + 主 readline 让出 stdin）
+    // 通知宿主（暂停 gerund + 主 readline 让出 stdin）
     try { approvalActivityListener?.(true); } catch {}
 
-    // P0-3.3: 每秒可见倒计时 — \r 原地重写选项行；同步 rl.setPrompt 保持
+    // 每秒可见倒计时 — \r 原地重写选项行；同步 rl.setPrompt 保持
     // readline 内部 prompt 与屏幕一致（避免按键时光标错位）。
     ticker = setInterval(() => {
       remaining -= 1;
@@ -208,7 +208,7 @@ export function createCliApprovalBridge(opts: { timeoutMs?: number } = {}): (req
       const a = String(answer || '').trim().toLowerCase();
       if (a === 'y' || a === 'yes') { finish('y'); return; }
       if (a === 'a') { finish('a'); return; }
-      // P0-3.4: n / 回车 / 其它 → 拒绝，追加可选的一句指导语
+      // n / 回车 / 其它 → 拒绝，追加可选的一句指导语
       rl.question(guidePrompt, (g) => {
         const guidance = String(g || '').trim();
         finish(guidance ? `n:${guidance}` : 'n');

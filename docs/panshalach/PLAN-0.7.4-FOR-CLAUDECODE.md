@@ -1,5 +1,7 @@
 # 0.7.4 执行计划：部署陈旧 dist 修复 + 中断语义修正 + `?` 行为（交付 Claude Code 执行）
 
+> **执行状态：已全部执行**（commit bdcddd4，0.7.4）——任务 A/B1-B6/C/D 全部落地，验收记录见 CHANGELOG「0.7.4」段（716 例 715+1skip+0 fail，2026-09-06）。
+
 > 执行者：Claude Code。本文件自包含，无需其他对话上下文。
 > 仓库：P:\MY_codes\Pangu（Windows，Git Bash，TypeScript ESM，node --test + tsx）。起点分支 zhaiyuanhao1，HEAD=0088d87，工作区干净。
 > 纪律：不 commit/push（留给控制人）；不碰王佐领地（src/memory/events.ts、taskState.ts、TaskCommand）、赵天昂领地（scripts/eval、src/memory/embed.ts）；不新增 npm 依赖；types.ts 允许**加性**变更（TurnStopReason 新增值，需在 REFACTOR-ASSESSMENT.md §4 申报）。

@@ -180,7 +180,7 @@ export class OutputRendererImpl implements OutputRenderer {
   }
 
   table(headers: string[], rows: string[][]): void {
-    // P3-1（批次 B）：列宽/补空格按显示宽度（CJK=2 列）计算，替换裸 .length/padEnd
+    // 列宽/补空格按显示宽度（CJK=2 列）计算，替换裸 .length/padEnd
     const all = [headers, ...rows];
     const widths = headers.map((_, i) =>
       Math.max(...all.map(r => stringWidth(r[i] || '')))
@@ -239,8 +239,8 @@ export class OutputRendererImpl implements OutputRenderer {
     this.pushToFeedIfAny(text);
   }
 
-  // P2-B + progress bar gated by TTY + capabilities.progress
-  // @deprecated (fix-p2): no caller remains in the codebase — the rich UI
+  // progress bar gated by TTY + capabilities.progress
+  // @deprecated: no caller remains in the codebase — the rich UI
   // uses TopBar budget bars and the line mode uses the gerund spinner. Kept
   // for API compatibility; consider removing in a future major bump.
   progressBar(current: number, total: number, label?: string): ProgressBarHandle {

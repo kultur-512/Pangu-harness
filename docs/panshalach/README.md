@@ -24,12 +24,22 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 系统分层架构、记忆模块设计、推理流程、资源消耗、核心创新点 | **命题提交物 (1) 架构设计文档**（雏形） |
 | [MEMORY-DESIGN.md](MEMORY-DESIGN.md) | 记忆增强层深挖：卡片 schema、提炼/过滤/衰减/注入、差距与补齐路线 | 记忆子系统设计说明 |
 | [EVALUATION.md](EVALUATION.md) | 场景设定、评测方法、基线对比指标、openPangu 运行步骤与数据表 | **命题提交物 (2) 效果评估报告**（骨架，待真实数据） |
+| [SUBMISSION.md](SUBMISSION.md) | 国创赛项目书：概述/完整方案/创新点/差异化对比/部署/评测 | 命题提交物初稿（项目书） |
+| [DEPLOY-CN.md](DEPLOY-CN.md) | 从零到一部署：本机已验证路径 + 昇腾/麒麟框架（待实测）+ PANSHA_* 全集 + FAQ | 部署指南 |
 | [USER-GUIDE.md](USER-GUIDE.md) | 安装、配置 openPangu、命令总表、档位/审批/记忆命令 | 用户手册 |
-| [ROADMAP.md](ROADMAP.md) | 从"评估基线"到"完整命题交付"的里程碑 | 执行计划 |
+| [PROJECT-BRIEF.md](PROJECT-BRIEF.md) | 项目总览：模块表、一句话架构、初学者版、上级汇报版 | 汇报底稿 |
+| [ROADMAP.md](ROADMAP.md) | 从"评估基线"到"完整命题交付"的里程碑（P0-P7） | 执行计划 |
 | [ROADMAP-NEXT.md](ROADMAP-NEXT.md) | U1-U9 时间盒内的 R0-R9 剩余路线 + 实施合同 + 遗留表 | 当前执行路线 |
 | [FIX-0.7-TERMINATION.md](FIX-0.7-TERMINATION.md) | 0.7.0 终止语义重构方案（根因 R1-R7 / 三态 / 意图 / AbortSignal） | 0.7 设计依据 |
+| [UI-UX-REVAMP-0.7.1.md](UI-UX-REVAMP-0.7.1.md) | UI/UX 手感改良全量方案（0.7.1 两批次，P0-P3） | 0.7.1 设计依据 |
+| [REFLECTION-0.7.2.md](REFLECTION-0.7.2.md) | 反思迭代方案（8 维度诊断 → 意图前移 + 记忆落定） | 0.7.2 设计依据 |
+| [USABLE-PLAN-0.7.3.md](USABLE-PLAN-0.7.3.md) | 基本可用实施方案（五报告收敛 13 项三梯队） | 0.7.3 设计依据 |
+| [ALIGNMENT-REVIEW-0.7.3.md](ALIGNMENT-REVIEW-0.7.3.md) | 企业命题偏离审查报告（五报告共识 + 风险销项跟踪） | 0.7.3 审查报告 |
 | [PLAN-0.7.4-FOR-CLAUDECODE.md](PLAN-0.7.4-FOR-CLAUDECODE.md) | 0.7.4 执行计划（部署陈旧 dist / 中断语义 / `?` 透传 / hermes 调研） | 0.7.4 设计依据 |
 | [HERMES-ALIGN-0.7.4.md](HERMES-ALIGN-0.7.4.md) | hermes-agent 二次对齐调研（上轮未采纳项五项判定） | 对齐调研 |
+| [GAP-MATRIX-0.8.md](GAP-MATRIX-0.8.md) | 烛龙 × Claude Code × hermes 交叉对比矩阵（CC 15 维 + hermes 11 机制） | 0.8 立项输入 |
+| [PLAN-0.8-FOUNDATION.md](PLAN-0.8-FOUNDATION.md) | 0.8 迭代设计：换地基（M1 协议地基 / M2 执行层七项 / M3 余量） | 0.8 设计方案 |
+| [solution/](solution/) | 命题方案系列 10 篇（01 命题与证据边界 … 10 交付实施与后续） | 方案深化系列 |
 | [REFACTOR-ASSESSMENT.md](../../REFACTOR-ASSESSMENT.md) | 现有工程代码逐模块对照命题的改造路径评估 | 重构依据 |
 
 ## 目录（仓库根）

@@ -1,5 +1,5 @@
 // src/cli/repl/providerPrefetch.ts
-// fix-rich-local-cmds (②A): startup background prefetch of provider model
+// startup background prefetch of provider model
 // lists. Reads the project .panshalach.json, and for every provider whose `models`
 // array is empty, fetches the remote model list and writes it BACK into the
 // same file — PRESERVING all existing fields (apiKey/baseUrl/type/modelContexts

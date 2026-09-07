@@ -166,7 +166,7 @@ export function pickerClamp(v: number, min: number, max: number): number {
  * CC windowStart: focused item stays visible, window scrolls so it's near the
  * bottom of the visible slice (prevents overflow flicker on every arrow key).
  *
- * fix-picker-4 (①): direction matters —
+ * Direction matters —
  *   'down' (CC original): windowStart = focusedIndex - visibleCount + 1
  *          (focused sits at the BOTTOM of the window)
  *   'up'   (atuin, reversed render): windowStart = focusedIndex
@@ -253,7 +253,7 @@ export function leadingSlashTrigger(text: string): { query: string; start: numbe
   return { query: m[1] ?? '', start: 0 };
 }
 
-// ==================== /model two-stage picker (fix-picker-3 ②③) ====================
+// ==================== /model two-stage picker ====================
 // Hermes modelPicker stage parity: `/model ` → provider list (stage 1); select
 // provider → that provider's model list (stage 2); Enter executes
 // `/model <provider>:<model>`.
@@ -266,7 +266,7 @@ export interface ProviderOption {
 export type ArgStage = 'provider' | 'model' | null;
 
 /**
- * Lenient command+arg parse (fix-picker-4 ③): '/model' (NO trailing space) is
+ * Lenient command+arg parse: '/model' (NO trailing space) is
  * still a command candidate — the picker can descend to its arg stage without
  * waiting for a space. Used by the rich picker; argMenuFor (strict trailing
  * space) stays for line-mode/other consumers.

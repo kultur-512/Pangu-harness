@@ -1,5 +1,5 @@
 // src/cli/repl/PasteGuard.ts
-// P4-4.4: paste detection + folding (pure logic).
+// paste detection + folding (pure logic).
 // >3 lines OR >2000 chars → isPaste. The caller folds the content behind a
 // placeholder; Enter confirms, Esc cancels.
 

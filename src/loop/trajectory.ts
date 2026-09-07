@@ -57,7 +57,7 @@ export function syntheticFailureTrajectory(lastError?: string): Trajectory {
 }
 
 /**
- * 异常类别判定（0.7.4 任务 B2）：只有"用户/信号主动中止"才算 aborted；
+ * 异常类别判定：只有"用户/信号主动中止"才算 aborted；
  * 其余一切异常（EMPTY_RESPONSE、网络、5xx、解析）归入 'error'——
  * 模型故障不得被伪装成用户中断（"已中断·现场已保留"只为真中断保留）。
  */

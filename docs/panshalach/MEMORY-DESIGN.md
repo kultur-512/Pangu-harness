@@ -17,16 +17,16 @@
 | L0 会话内实时 | 轨迹/验证信号 | 单任务内 | 已实现（FailureMemory 轨道已摘除 2026-09-05） |
 | L1 结构化记忆卡 | `.panshalach-memory.json`（failure/success/preference） | 跨会话（天~月） | 已实现 |
 | L2 压缩摘要 | `[COMPACT]` 合成轮（模型摘要 + 逐轮 brief） | 长会话 | 已实现 |
-| L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **规划(P3)** |
-| L4 任务状态 | TaskState（原始需求/决策/未决/进度） | 跨多轮任务 | 雏形(feature_list) → **规划(P3)** |
-| L5 语义索引 | n-gram 向量 v0 → 国产向量库/embedding | 检索 | **规划(P3)** |
+| L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **已落地**（R4 `memory/events.ts`，0.6.5；AgentEvent 接线 11dbea3；`/memory events` 查询子命令未挂载） |
+| L4 任务状态 | TaskState（原始需求/决策/未决/进度） | 跨多轮任务 | **已落地**（R5 `memory/taskState.ts`，0.6.5；运行时注入接线 11dbea3） |
+| L5 语义索引 | n-gram 向量 v0 → 国产向量库/embedding | 检索 | **embed v0 已落地**（赵天昂，含单测）；L1 注入融合未接线 |
 
 ## 3. 数据模型
 
 ### 3.1 RefinedMemoryCard（src/memory/RefinedMemoryCard.ts）
 见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(档位可见性+分类半衰期) / summary(建设性一句话) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers / referencedFiles / pinned / status·mergedFrom。容量每类10·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
 
-### 3.2 事件记忆（规划 schema，`memory/events.ts`）
+### 3.2 事件记忆（已落地 · R4，`memory/events.ts`；下为立项时规划 schema）
 ```ts
 interface MemoryEvent {
   id: string;            // sha1(ts+kind+topic+sessionId)
@@ -42,7 +42,7 @@ interface MemoryEvent {
 ```
 写入点：P2 回合写闭环、压缩补漏、用户偏好、每轮 verify PASS/FAIL 摘要。注入：近事件 + 高重要性 + topic 命中，预算受限。
 
-### 3.3 任务状态 TaskState（规划，演进自 FeatureTracker）
+### 3.3 任务状态 TaskState（已落地 · R5 `memory/taskState.ts`，演进自 FeatureTracker；下为立项时规划 schema）
 ```ts
 interface TaskState {
   featureId: string;
@@ -63,11 +63,11 @@ interface TaskState {
 | 源 | 时机 | 产出 | 状态 |
 |---|---|---|---|
 | 循环实时信号 | 每步违规/失败 | ~~FailureMemory~~ 已摘除——收敛到回合提炼（信号源 B） | 已摘除（2026-09-05） |
-| **回合提炼** | 任务落定（拿到 bestTrajectory + 验证成败 + attemptCount + 反馈） | refine→卡→save | **规划(P2)**（当前无生产调用点，是最紧要缺口） |
+| **回合提炼** | 任务落定（拿到 bestTrajectory + 验证成败 + attemptCount + 反馈） | refine→卡→save | **已实现（0.7.2）**：`finalizeTaskMemory` 单一落定点（runAgentTask result 前），覆盖 SSE/server/headless；Repl 直调三口留统一执行器收口 |
 | 压缩补漏 | compact 移除轮次中验证成功（result.success） | success 卡（evidence=任务摘要，hash 去重） | 已实现 |
 | 用户 | /memory remember [--pin] / forget / import | preference/删除/批量 | 已实现 |
 | 合并 | /memory merge 或后台 | 2-gram 同主题合并（原卡 archived） | 已实现 |
-| 事件/状态 | P2/P3 各落定点 | events/TaskState | 规划 |
+| 事件/状态 | P2/P3 各落定点 | events/TaskState | 已落地（R4/R5，0.6.5；运行时接线 11dbea3） |
 
 ## 5. 读取与注入（loadFiltered 全链）
 
@@ -111,24 +111,24 @@ interface TaskState {
 
 ## 7. 已知差距 → 补齐路线（逐条）
 
-### 7.1 回合写入闭环缺失（P2 · 最紧要）
-- **现状**：`RefinedMemoryStore.refine()` 无生产调用点；任务结束了却不沉淀。
-- **修复**：在 `Repl.executeTask` 完成分支 / `runAgentTask` / sseInteractive 回合落定，调 `refine({trajectory: bestTrajectory, taskStyle, applicableTiers:[tier], attemptCount, userFeedback})` → `save()` → `invalidateProjection()`。attemptCount 语义：1 = 一次通过（触发 success 提炼信号）。
+### 7.1 回合写入闭环缺失（✅ 已修复，0.7.2）
+- **现状（已闭环）**：`finalizeTaskMemory` 单一落定点（runAgentTask result 前）——completed 时 refine→save，注入卡与轨迹写集交集触发 markVerified；覆盖 SSE/server/headless 路径。
+- **剩余**：Repl 直调 PanshalachChaser 的三口留统一执行器收口；端到端真机验证待端点。
 
 ### 7.2 使用语义二态化（✅ 已落地，接口契约 v3 · 2026-09-04）
 - **已修复**：`markUsed` 落地为二态（`RefinedMemoryStore.ts`）——`markInjected(cardIds)` 纯记账（仅内存账本，不写盘、不影响衰减/count，防"注入≠使用"自激励）；`markVerified(cardIds, now?)` 为唯一保鲜通道（lastUsedAt=now + count+1 + 直写持久化），判定来源由调用方确定性提供（任务内工具写入/验证文件集 ∩ 卡.referencedFiles）。衰减锚同步修复为 `max(lastSeen, lastUsedAt)`。
 - **推迟**：`markCited`（模型显式引用检测）——需 [M1] 卡号引用协议（注入已带编号，7B 引用实验 9/24 后做）。
-- **仍缺**：`markVerified` 的生产信号源接线（工具验证 → cardIds 回链），见 §7.1。
+- **已接线（0.7.2）**：markVerified 的生产信号源 = `injectedCardIds ∩ 任务真实写集`（finalizeTaskMemory 内判定，被触碰的注入卡自动保鲜并发 `memory.finalized` 事件）。
 
-### 7.3 无语义检索（P3）
-- **v0 零依赖**：`memory/embed.ts` 字符 2-gram 词袋向量（对 summary 建索引，离线构建 O(n·k)），注入候选先召回 top-K，再与关键词相关性融合。
+### 7.3 无语义检索（部分落地）
+- **已落**：`memory/embed.ts` 字符 2-gram 词袋向量 v0（赵天昂，含单测 `tests/memory/embed.test.ts`/`cosine.test.ts`）；L1 注入融合尚未接线。
 - **v1 可插拔**：接口留 provider 位，可选国产向量库 / openPangu embedding；注入层不变。
 
-### 7.4 无业务事件层（P3）
-- rollout jsonl 是回合审计；补 `MemoryEvent`（§3.2）按业务语义抽事件，`/memory events [--since|--topic]` 可查，注入按 近+高重要性+topic 命中。事件与卡的关系：事件是"流水账"，卡是"归纳结论"；P2 回合提炼可从事件流再归纳。
+### 7.4 无业务事件层（✅ 已落地，R4）
+- `memory/events.ts`（0.6.5 王佐）：AgentEvent append-only jsonl + kind/topic/session/taskId/时间窗有界查询；AgentEvent 接线见 11dbea3。剩余：`/memory events` 查询子命令未挂载。事件与卡的关系：事件是"流水账"，卡是"归纳结论"；回合提炼可从事件流再归纳。
 
-### 7.5 无跨轮任务状态机（P3）
-- FeatureTracker 只有一个 in-progress + nextStep；补 TaskState（§3.3），把"原始需求/决策/未决/进度/已验证/风险"做成长轮任务的注入锚（优先级高于普通卡），这也是评估报告"任务状态续接"维度的支撑。
+### 7.5 无跨轮任务状态机（✅ 已落地，R5）
+- `memory/taskState.ts`（0.6.5 王佐）：TaskStateStore + 事件折叠重建；运行时注入接线见 11dbea3。把"原始需求/决策/未决/进度/已验证/风险"做成长轮任务的注入锚（优先级高于普通卡），支撑评估报告"任务状态续接"维度。
 
 ### 7.6 一次性摘要 → 多级滚动（P3）
 - 现压缩=一次摘要+保 6 轮；滚动多级：长期粗粒度(每 ≥N 轮对早期再摘要) + 中期结构化(卡片/事件) + 近期逐字。压缩时保留"被移除轮"的成功信号补提卡已实现，可复用。

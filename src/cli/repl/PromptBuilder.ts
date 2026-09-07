@@ -238,8 +238,8 @@ export class PromptBuilder {
       this.tryInject('tier-runtime-contract', `\n【档位契约】\n${this.buildTierContract()}`, lines);
     }
 
-    // === fix-#9-①: negative tool list — names in the prompt are NOT tools ===
-    // Root cause of the T7 dogfood drift: the model called iron_law_check /
+    // === negative tool list — names in the prompt are NOT tools ===
+    // Root cause of the observed drift: the model called iron_law_check /
     // thinking / plan / critique as if they were tools, because those words
     // appear in the tier contract text. Inject an explicit non-tool
     // declaration for ALL tiers (drift knows no tier).
@@ -276,7 +276,7 @@ export class PromptBuilder {
       }
     }
 
-    // === P4-4.7: plan-mode hard constraint (append-only block) ===
+    // === plan-mode hard constraint (append-only block) ===
     if ((this.session as any).planMode === true) {
       this.tryInject(
         'plan-mode',
@@ -306,7 +306,7 @@ export class PromptBuilder {
     const memAdded = await this.appendMemoryCardsDedup(lines, currentWsFiles, issue);
     // memoryCardCount will be computed from actual cards later if needed
 
-    // === P5-5.1: skills injection (task-matched, dedup by key) ===
+    // === skills injection (task-matched, dedup by key) ===
     try {
       const { loadSkills, matchSkills, truncateSkillContent } = await import('./skillsLoader.js');
       const matched = matchSkills(loadSkills(this.session.workspace), issue);

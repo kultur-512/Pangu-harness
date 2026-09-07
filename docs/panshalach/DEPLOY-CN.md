@@ -26,7 +26,7 @@ npm link           # 全局部署：生成 zhulong / panshalach 全局 bin（旧
 ```
 
 - 三个 bin（`zhulong` 对外主名 / `panshalach` / `zorge` 兼容别名）均指向 `dist/cli.js`。
-- 重新拉取代码后需重跑 `npm run build`（bin 运行的是 dist 产物）。
+- 重新拉取代码后需重跑 `npm run build`（bin 运行的是 dist 产物）。**0.7.4 起 dist-fresh 启动检查兜底**：交互模式启动时若存在比 `dist/cli.js` 更新的 src 改动，会打一行黄字提醒"⚠ dist 落后于 src，请执行 npm run build"（headless/一次性执行不打扰，检查异常不阻塞启动）——见到提醒重跑 `npm run build` 即可。
 
 ### 2.2 本地模型端点（LM Studio，实测路径）
 
@@ -223,8 +223,8 @@ openPangu-Embedded 实测偶发"content 空但 reasoning_content 非空"的 200 
 **Q4：任务显示"✗ 任务执行失败 · EMPTY_RESPONSE…"（0.7.4 新排障项）**
 加载的模型是 **diffusion/embedding 类**（如 `openpangu-7b-diffusion-base-i1`）——LM Studio 对此类模型的 `/v1/chat/completions` 返回 200-garbage（`Unexpected endpoint or method. Returning 200 anyway`），0.7.4 起该故障被正确识别为 `error` 终态（此前被伪装成"已中断"）。处置：在 LM Studio 加载**标准自回归对话模型**（如 openpangu-7b 非 diffusion 版）后重试。
 
-**Q4：`--approval readonly` 下写文件被拒**
+**Q5：`--approval readonly` 下写文件被拒**
 设计行为，不是故障：readonly 档写文件/执行类一律拒绝。headless/一次性执行需要显式提权：`zhulong --headless --approval full run "…"` 或 `PANSHA_APPROVAL=full`；REPL 内用 `/approvals full`。另注意非 TTY 一次性执行必须带 `--headless`，否则工具走 mock 守卫不真实落盘。
 
-**Q5：`zhulong` 命令找不到**
+**Q6：`zhulong` 命令找不到**
 `npm link` 未执行或构建产物缺失：重跑 `npm run build && npm link`；Windows 下需新开终端使全局 bin 生效。

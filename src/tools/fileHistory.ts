@@ -124,7 +124,7 @@ export function recentCheckpoints(workspaceRoot: string, n = 5): CheckpointEntry
   return readIndex(workspaceRoot).slice(-n).reverse();
 }
 
-// ==================== P3-3.6: turn-level rewind ====================
+// ==================== turn-level rewind ====================
 
 export interface TurnCheckpointGroup {
   turnId: string | null;        // null = 杂项

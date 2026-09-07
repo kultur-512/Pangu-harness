@@ -1,5 +1,5 @@
 // src/cli/repl/skillsLoader.ts
-// P5-5.1: skills directory convention — user-level ~/.panshalach/skills/<name>/SKILL.md
+// skills directory convention — user-level ~/.panshalach/skills/<name>/SKILL.md
 // plus project-level <workspace>/.panshalach/skills/<name>/SKILL.md (project wins on
 // same-name collisions). Loaded once per task build and injected into the
 // prompt when the task matches a skill's triggers/description.

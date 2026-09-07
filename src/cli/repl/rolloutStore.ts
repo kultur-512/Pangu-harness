@@ -192,7 +192,7 @@ export interface RolloutSummary {
   firstUserInput?: string;
   tier?: string;
   workspace?: string;
-  /** P3-3.5: set when this rollout is a branch of another session */
+  /** set when this rollout is a branch of another session */
   branchOf?: string;
 }
 
@@ -280,7 +280,7 @@ export function deleteRollout(sessionId: string): void {
   try { fs.rmSync(fileFor(sessionId), { force: true }); } catch {}
 }
 
-// ==================== P3-3.5: session branching ====================
+// ==================== session branching ====================
 // A branch is a READ-ONLY fork of the origin's jsonl event stream: the origin
 // file is never touched. The branch file starts with a meta event carrying
 // `branchOf: <originId>`, followed by a verbatim replay of the origin events.

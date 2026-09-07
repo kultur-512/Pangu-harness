@@ -1,5 +1,5 @@
 // src/cli/repl/commands/RewindCommand.ts
-// P3-3.6: /rewind — turn-granular rollback over file-history checkpoints.
+// /rewind — turn-granular rollback over file-history checkpoints.
 //
 //   /rewind              → list the last 5 turn groups
 //   /rewind <N|last>     → preview diff summary + confirm (y/n)

@@ -1,5 +1,5 @@
 // src/cli/repl/GerundSpinner.ts
-// 趣味动名词 spinner 标签（P3-2 批次 B：纯中文词表）。
+// 趣味动名词 spinner 标签（纯中文词表）。
 // nextGerund() never repeats the previous word. Pure logic — the caller owns
 // the 4s interval and elapsed-time formatting (timers are gate-relevant).
 

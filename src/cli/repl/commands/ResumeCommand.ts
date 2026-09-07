@@ -1,5 +1,5 @@
 // src/cli/repl/commands/ResumeCommand.ts
-// P3-3.5: /resume — list recent rollouts (branches tagged [branch of <origin>]);
+// /resume — list recent rollouts (branches tagged [branch of <origin>]);
 // `/resume <id|N>` prints the switch hint (interactive switch happens by
 // exiting and running `pangu --resume <id>` — one process per session, CC-style).
 

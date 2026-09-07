@@ -1,5 +1,7 @@
 # PLAN-0.8 迭代设计：换地基（协议重构 + TurnController + 执行层强化）
 
+> **执行状态：立项中**——M1 第 1 步（行为锁定测试 `tests/repl/turn/TurnBehavior.lock.test.ts`，455 行）已落地（commit df6e39f"步进调整"）；第 2 步四模块搬家（`src/cli/repl/turn/` 目录尚不存在）与 M1-PROTOCOL/M2 待执行。
+
 > 依据：`docs/panshalach/GAP-MATRIX-0.8.md`（CC 15 维 × hermes 11 机制交叉对比）。
 > 版本目标：v0.8.0。设计纪律：**换地基、保语义**——S 级架构重构与三态终止语义/意图分类/记忆二态/R6 评测契约互不侵犯。
 > 交付约束：9/24 前完成本方案的 M1+M2（核心地基）；M3 为带宽余量。分支 `zhaiyuanhao1`，与 R6 评测域（`scripts/eval/`）零交集。

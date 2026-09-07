@@ -42,6 +42,11 @@
 - sseInteractive 活路径 aborted turn 现依赖 runPromise settle 后的 `stopReason==='aborted'` 分支落 partialText——若 abort 发生在 runAgentTask 之外的更早窗口（如审批挂起），落盘路径仍走 catch 分支（无 partialText，可接受）。
 - `?` 透传后，弱模型对 `?` 输入的回答质量取决于模型本身（1B 可能返回空泛答复）——语义上"给模型的信息"由模型消化，不再有本地兜底文案。
 
+**补记（0.7.4 之后的小修与前置，未单列版本号）**
+- rich 桥 `setRunning(false)` 双重下发去重：`TurnContext.runningBadgeOn` 徽标守卫（commit 92acc25）——同一回合同一状态只下发一次，结束横幅不再闪烁两次。
+- `.panshalach-task-state.json`（TaskState 运行时产物）移出版本库并入 `.gitignore`（commit 9dfe7ea）。
+- 0.8 前置 M1 第 1 步：行为锁定测试 `tests/repl/turn/TurnBehavior.lock.test.ts`（455 行）落地（commit df6e39f"步进调整"，sseInteractive 步进重排、零行为变更）；当前全量基线 **749 例（748 pass + 1 skip + 0 fail）**。0.8 立项见 `docs/panshalach/PLAN-0.8-FOUNDATION.md`。
+
 ## 0.7.3 (主链确定性：真实成功信号入册 + 三入口审批/中断透传 + 窗口预算挂真值 + 中断现场落盘)
 
 方案：`docs/panshalach/USABLE-PLAN-0.7.3.md`（5 份子智能体审查报告收敛——CC / dsh / hermes / oh-my-pi / 红队对抗自审）。红队用可复现探针实测出**两个被 629 例绿灯密封的 P0**：真实工具成功被误判为失败（唯一 PASS 产出方是 smoke mock，真实引擎的 `EXIT_CODE:0`/`WRITE_SUCCESS:` 被判 FAIL，勤奋模型被连败掐死、只说话的模型反而 `answered` 计成功）、completed 真机不可达导致记忆闭环死码；外加文档主验证命令的审批断链（A3）与 classic 假中止（A4）。本轮 13 项三梯队全部落地，回答一个问题：**砍掉什么、修什么，才能让评委/新用户明天拿真实模型跑通一天**。
@@ -87,14 +92,6 @@
 
 **Tests**: `npx tsc --noEmit` EXIT=0；`node --test --import tsx --test-concurrency=4 "tests/**/*.test.ts"` **663 例：662 pass + 1 skip + 0 fail**（2026-09-06，Windows/Node 22）。新增 5 个测试文件：`tests/integration/realEngineLoop.test.ts`、`tests/loop/RealSignal.test.ts`、`tests/loop/Resilience073.test.ts`、`tests/model/openai-compatible.073.test.ts`、`tests/server/Resilience073.test.ts`；`tests/loop/CritiqueContext.test.ts`（T2#9 新契约：>4000 才剪 + 头尾保留断言）与 `tests/repl/ModelProviderEnv.test.ts`（未知回落 32768）随契约更新
 **Risks**: 真机四用例待端点（LM Studio 恢复后按 F6 纪律执行，禁止预填 PASS）；记忆闭环本版仅 runAgentTask 路径（SSE/server/headless）生效，Repl 直调 PanshalachChaser 三口 finalize 待统一执行器收口；MCP 工具结果无验证尾标（尾标只覆盖内置工具，MCP 调用不参与 PASS 判定）；fetch 发出后 abort 网关侧生成可能仍算完（0.7 既有边界）
-
-## 0.6.5 (R4+R5：事件查询层 + TaskState 持久化，王佐 U1-U2)
-
-王佐 U1-U2 落地（存储层；/task CLI 为赵天昂 R5 另半，依赖本层）：
-- **R4 MemoryEventStore**：新增 `src/memory/events.ts`——在 rolloutStore 底座（`appendAgentEvent`/`readAgentEvents`，df7a119）之上提供 kind/topic/session/taskId/时间窗的有界查询 + `latest`/`countByKind`/`activeTaskIds`/`topicStats`/`taskSummaries`；只读、损坏行/缺会话容错、不绕过底座自行读 JSONL（测试 5 例）
-- **R5 TaskState 持久化**：新增 `src/memory/taskState.ts`——`TaskStateStore`（create/get/update/applyEvents）+ `rebuildFromEvents`/`foldEvent`；履约 R5 落地合同：`originalRequirement` 不可漂移、version 乐观锁（冲突抛错）、原子写盘（tmp→rename 无残留）、事件折叠幂等（foldedEventIds 记账去重）
-- `types.ts`：`TaskState` 增可选 `foldedEventIds`（幂等记账，向后兼容）
-- 测试：R5 10 例；全套 557（556 pass + 1 skip + 0 fail）
 
 ## 0.7.2 (反思迭代：意图分类前移接线 + 记忆落定主线版 + 集成测试锁死 + 提交物定稿)
 
@@ -172,6 +169,16 @@
 - 验证（2026-09-05，Windows/Node 22）：`npx tsc --noEmit` 干净（EXIT=0）；`node --test --import tsx --test-concurrency=4`（显式 glob 全目录）**545 例：544 pass + 1 skip + 0 fail**；`node verify-panshalach-cleanup.mjs` **OVERALL CLEANUP STATUS (static checks): PASS**（收尾复验 2026-09-05：三项命令原样重跑，结果与上述一致）
 - 待实测（用户侧，需真实端点；负责人：翟苑皓 F6）：REPL 输入 `1`/`你好，回答我你是谁` → 单次出正文；运行中 Ctrl+C → 任务真停、网关停 POST；`hello.txt` → 先只读搜索、搜不到询问具体用意
 
+## 0.6.5 (R4+R5：事件查询层 + TaskState 持久化，王佐 U1-U2)
+
+> 与下方"0.6.5 部署落地"为同版号两次录入（本批更晚），按时间序排列于此。
+
+王佐 U1-U2 落地（存储层；/task CLI 为赵天昂 R5 另半，依赖本层）：
+- **R4 MemoryEventStore**：新增 `src/memory/events.ts`——在 rolloutStore 底座（`appendAgentEvent`/`readAgentEvents`，df7a119）之上提供 kind/topic/session/taskId/时间窗的有界查询 + `latest`/`countByKind`/`activeTaskIds`/`topicStats`/`taskSummaries`；只读、损坏行/缺会话容错、不绕过底座自行读 JSONL（测试 5 例）
+- **R5 TaskState 持久化**：新增 `src/memory/taskState.ts`——`TaskStateStore`（create/get/update/applyEvents）+ `rebuildFromEvents`/`foldEvent`；履约 R5 落地合同：`originalRequirement` 不可漂移、version 乐观锁（冲突抛错）、原子写盘（tmp→rename 无残留）、事件折叠幂等（foldedEventIds 记账去重）
+- `types.ts`：`TaskState` 增可选 `foldedEventIds`（幂等记账，向后兼容）
+- 测试：R5 10 例；全套 557（556 pass + 1 skip + 0 fail）
+
 ## 0.6.5 (部署落地：全局唤起 + 原生 function calling 请求侧 + 写工具全档位 + CC 风格提示词)
 
 产品主"部署后无法唤起"排查引出的全链路修复（本地 LM Studio openPangu-Embedded 实测驱动）：
@@ -195,7 +202,6 @@
 **验证边界（如实记录）**：openpangu-embedded-1b-i1 的 chat template 不支持 tool use（`tool_choice:required` 亦无法诱导 tool_calls）；文本协议 + few-shot 下可完成简单写文件任务（hello.txt 实测落盘、RBW/UNKNOWN_TOOL 反馈回路工作），但成功率与示例遵循度受 1B 能力限制。端到端验收建议使用支持 tool use / 指令遵循更强的模型（openPangu 7B+）。
 
 全套 545 例通过（另：node --test 全量高并发在 Windows 下有进程级崩溃假象，单文件或 `--test-concurrency=4` 均绿）。
->>>>>>> origin/develop
 
 ## 0.6.4 (R0：双层终止语义 + 三先决修复)
 

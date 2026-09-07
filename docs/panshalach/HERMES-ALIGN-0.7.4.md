@@ -1,6 +1,6 @@
 # HERMES 二次对齐调研（0.7.4）
 
-> 性质：**纯调研，不实施**。对上轮（0.6.x 时期）hermes-agent（NousResearch/hermes-agent）对齐调研中**未采纳项**的二次判定。
+> 性质：**调研报告（0.7.4）——纯调研，不实施**。对上轮（0.6.x 时期）hermes-agent（NousResearch/hermes-agent）对齐调研中**未采纳项**的二次判定。
 > 仓库：Pangu / 烛龙 Zhulong，当前版本 0.7.3（HEAD=0088d87）。竞赛语境：9/24 交付时间盒（`WORK-PLAN-2DAY-UNITS.md` U1-U9），评测证据链（R6）是唯一得分来源，工程美观从属于证据链。
 > 裁决基线：`docs/panshalach/ROADMAP-NEXT.md` §3.2 缺陷登记表 + §4「已裁决不做/推迟」表；`USABLE-PLAN-0.7.3.md` 的 L 级六项「明确不进本轮」。
 

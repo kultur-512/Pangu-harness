@@ -1806,7 +1806,7 @@ export async function handleLocalCommand(ctx: TurnContext, line: string): Promis
     return true;
   }
 
-  // 0.7.4 任务 C：`?` 不再截获——输入问号也是给模型的信息（控制人裁决），
+  // `?` 不再截获——输入问号也是给模型的信息（控制人裁决），
   // `?` 作为普通任务文本透传；帮助只走 /help（buildQuickHelpLines 保留供 /help 复用）。
 
   if (trimmed === '/help' || trimmed === '/h') {

@@ -340,7 +340,7 @@ export class DefaultModelProvider implements ModelProvider {
     if (pr) {
       try {
         const any = pr as any;
-        // fix-model-abc (Bug A): the real method is listProviderNames()
+        // the real method is listProviderNames()
         if (typeof any.listProviderNames === 'function') {
           for (const p of any.listProviderNames() || []) {
             if (pr.isProviderConfigured(p) && !base.includes(p)) base.push(p);

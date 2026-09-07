@@ -32,7 +32,7 @@
 
 1. ~~R6 评测合入与真机数据~~ → **zhaotianang1 已 merge develop（6d09528）并在其上实体化 T1-T3 fixture**；wanghaoyu1 亦交付 eval runner 完整骨架 + PANSHA_NO_MEMORY 消融开关。剩余：端点恢复后跑真实数据 + 两人 eval 域分工仲裁。
 2. **真机四用例**（F6，端点恢复即执行）——完成"15 分钟首跑 + 记忆卡真机可见"的最终证据（仍未兑现）。
-3. ~~三队友分支合入序~~ → wanghaoyu1（R3 结构化 + eval runner）**已 rebase 至 0.7.3 主线**（behind 0）；zhaotianang1 同步；**仅 wangzuo1（R4/R5）仍在 0.6.4 基座（behind 7）**，需通知 rebase。
+3. ~~三队友分支合入序~~ → wanghaoyu1（R3 结构化 + eval runner）**已 rebase 至 0.7.3 主线**（behind 0）；zhaotianang1 同步；**仅 wangzuo1（R4/R5）仍在 0.6.4 基座（behind 7）**，需通知 rebase。（0.9.7 更新：四分支已全部基于 develop=f9219ee 对齐，wangzuo1 R4/R5 已 merge develop 并在此基础上推进）
 4. **L 级路线**（消息数组协议/巨函数拆分/使用观测）——1.x 或评测后视窗口执行。
 
 一句话：**架构与命题对齐、诚实边界清晰；把评测跑起来，是把"对齐"变成"得分"的唯一剩余动作。**

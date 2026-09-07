@@ -100,7 +100,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 | 命令 | 作用 |
 |---|---|
 | `/tier <t>` | 六档强度 quick/standard/high/max/ex/pangu（默认 high） |
-| `/model list | <name>` | 拉模型/切换模型 |
+| `/model list` / `/model <name>` | 拉模型/切换模型 |
 | `/approvals <mode>` | 审批 readonly/default/full |
 | `/undo` `/rewind` | 撤销最近写盘 / 按回合回放 |
 | `/compact` | 压缩会话历史（保留最近 6 轮 + 摘要） |

@@ -1,5 +1,5 @@
 // src/cli/repl/stringWidth.ts
-// P4-4.5: display-width calculation for prompt cursor alignment.
+// display-width calculation for prompt cursor alignment.
 // CJK / full-width = 2 columns; everything else = 1. Emoji surrogate pairs
 // count as 2 (one code point, wide glyph). Handwritten, zero deps.
 
@@ -29,8 +29,8 @@ export function stringWidth(text: string): number {
     // Zero-width: combining marks + ZWJ/ZWNJ/ZWSP + variation selectors
     if (
       (cp >= 0x0300 && cp <= 0x036f) || // combining diacritics
-      cp === 0x200b ||                   // ZWSP (dogfood-T3)
-      cp === 0x200c ||                   // ZWNJ (dogfood-T3)
+      cp === 0x200b ||                   // ZWSP
+      cp === 0x200c ||                   // ZWNJ
       cp === 0x200d ||                   // ZWJ
       cp === 0x2060 ||                   // word joiner
       (cp >= 0xfe00 && cp <= 0xfe0f)     // variation selectors
@@ -42,7 +42,7 @@ export function stringWidth(text: string): number {
   return width;
 }
 
-/** P3-1（批次 B）：按显示宽度右侧补空格到 w 列（超宽原样返回，不截断）。 */
+/** 按显示宽度右侧补空格到 w 列（超宽原样返回，不截断）。 */
 export function padByWidth(text: string, w: number): string {
   const s = String(text ?? '');
   const pad = w - stringWidth(s);

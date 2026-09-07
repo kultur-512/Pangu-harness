@@ -104,7 +104,7 @@ function foldContext(ops: RawOp[], contextLines: number): DiffHunk[] {
   let skipped = 0;
 
   const flushSkip = () => {
-    // dogfood-T1: at contextLines=0 the caller asked for ZERO context —
+    // at contextLines=0 the caller asked for ZERO context —
     // skipped runs emit NOTHING (a fold marker is context noise there).
     if (skipping) {
       if (contextLines !== 0) {
@@ -132,7 +132,7 @@ function foldContext(ops: RawOp[], contextLines: number): DiffHunk[] {
  * Structured line diff between old and new text.
  * Rendering (+/− coloring, folding) is the caller's (ToolCard's) job.
  *
- * dogfood-T7: optional `maxHunks` (default 5) caps the hunk count. The cap
+ * Optional `maxHunks` (default 5) caps the hunk count. The cap
  * counts CHANGE hunks (add/del) only — context lines never consume the budget.
  * When exceeded, the MIDDLE changes collapse into a single ctx marker while
  * head and tail changes stay visible. A full-file replace (no context at all,

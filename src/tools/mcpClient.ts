@@ -1,5 +1,5 @@
 // src/tools/mcpClient.ts
-// P5-5.2: minimal MCP (Model Context Protocol) stdio client — hand-written
+// minimal MCP (Model Context Protocol) stdio client — hand-written
 // JSON-RPC 2.0 over a spawned child process. Zero dependencies.
 //
 // Protocol (per MCP spec subset):

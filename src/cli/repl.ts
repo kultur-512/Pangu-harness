@@ -3,7 +3,7 @@
 //
 // Behavior:
 // - startRepl({resume}) → 默认进入 **流式交互模式**（对标 Hermes）
-//   - 进程内事件直连（P0.2），富 UI 优先、行模式兜底；非 TTY 静默降级经典
+//   - 进程内事件直连，富 UI 优先、行模式兜底；非 TTY 静默降级经典
 //   - --resume [id|last] 恢复 rollout（turns + 审批状态）
 // - runOneShot() → 单条命令执行（保持原有兼容行为）
 
@@ -14,12 +14,12 @@ import { Repl } from './repl/Repl.js';
 export interface StartReplOptions {
   /** 'last' | specific rollout/session id */
   resume?: string;
-  /** P3-3.5: fork the resume target into `<id>--branch-<name>` before starting */
+  /** fork the resume target into `<id>--branch-<name>` before starting */
   branch?: string;
 }
 
 /**
- * fix-a6-routing: PANSHA_MODEL env seeds a session's model (headless one-shot
+ * PANSHA_MODEL env seeds a session's model (headless one-shot
  * multi-provider, e.g. PANSHA_MODEL="a6:openPangu-7B"). Testable unit.
  */
 export function applyEnvModel(session: Session): Session {
@@ -36,7 +36,7 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
   const provider = createDefaultModelProvider();
   try { setSharedModelProvider(provider as any); } catch {}
 
-  // fix-rich-local-cmds (②A): background prefetch of provider model lists into
+  // background prefetch of provider model lists into
   // .panshalach.json (fire-and-forget; offline/slow endpoints skipped silently).
   try {
     const { prefetchProviderModels } = await import('./repl/providerPrefetch.js');
@@ -44,7 +44,7 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
   } catch {}
 
   // resolve --resume into a restored Session (best-effort, never blocks startup)
-  // P3-3.5: --branch forks the resolved target into a NEW rollout (origin untouched)
+  // --branch forks the resolved target into a NEW rollout (origin untouched)
   let session: Session | undefined;
   if (opts.resume || opts.branch) {
     try {

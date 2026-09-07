@@ -1,6 +1,6 @@
 # 烛龙 × Claude Code × hermes 交叉对比矩阵（GAP-MATRIX · 2026-09-06，面向 0.8 立项）
 
-> 性质：三方交叉对比调研 + 0.8 迭代设计输入。**纯调研**，本文档不宣告任何代码已改。
+> 性质：**调研矩阵（0.8 立项输入）**。三方交叉对比调研 + 0.8 迭代设计输入。**纯调研**，本文档不宣告任何代码已改。
 > 参照系：Claude Code（CC）2.x 公开可观察行为与架构惯例；hermes-agent（NousResearch，Python，v0.19.0，PyPI wheel 直读）。
 > 本仓库基线：v0.7.4（HEAD=1c36a00），src 113 文件 / 21242 行，tests 85 文件（基线 716 例全绿）。
 > 证据口径：本地 `file:line` 均来自真实读码；hermes `file:line` 来自 PyPI wheel 解包实读；CC 侧为公开行为对照（无源码行号）。

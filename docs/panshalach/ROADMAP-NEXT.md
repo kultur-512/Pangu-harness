@@ -2,7 +2,7 @@
 
 > 内部代号 盤沙拉克 Panshalach（包名/类名/存储/env）/ 外部产品 烛龙 Zhulong（CLI/欢迎/身份串/对外文档）。
 > 命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》。场景：软件工程长期维护。
-> 当前版本 **v0.7.4**：0.7.0 摘除判官/TestTimeOrchestrator（单层终止 + 单次 loop.run）；0.7.2 意图前移接线（4/4 入口）+ 记忆落定主线版（finalizeTaskMemory）；0.7.3 主链确定性——真实成功信号入册（completed 真机可达）、三入口审批/中断透传、窗口预算挂真值（未知回落 32768）、中断现场落盘（partialText）；0.7.4 部署陈旧 dist 修复（dist-fresh 提醒）+ 中断语义修正（TurnStopReason 加性 'error'，模型故障不再伪装用户中断）+ `?` 透传 + hermes 二次对齐调研（HERMES-ALIGN-0.7.4.md）。打分体系与性能叙事装置已全部摘除（archive/2026-09-05-*），成败唯一由验证信号判定。
+> 当前版本 **v0.7.4**：0.7.0 摘除判官/TestTimeOrchestrator（单层终止 + 单次 loop.run）；0.7.2 意图前移接线（4/4 入口）+ 记忆落定主线版（finalizeTaskMemory）；0.7.3 主链确定性——真实成功信号入册（completed 真机可达）、三入口审批/中断透传、窗口预算挂真值（未知回落 32768）、中断现场落盘（partialText）；0.7.4 部署陈旧 dist 修复（dist-fresh 提醒）+ 中断语义修正（TurnStopReason 加性 'error'，模型故障不再伪装用户中断）+ `?` 透传 + hermes 二次对齐调研（HERMES-ALIGN-0.7.4.md）。**9/7 团队对齐**：四分支全部基于 develop=f9219ee（王佐已 merge develop 吸收 0.7.3；王浩宇 U4 补全 T2/T3 fixture 实体 + run-eval 字段收敛；赵天昂 R6 域 0.7.4 销项）。打分体系与性能叙事装置已全部摘除（archive/2026-09-05-*），成败唯一由验证信号判定。
 > 交付时间盒：`WORK-PLAN-2DAY-UNITS.md`（U1-U9，9/24 交付）。技术审查基线：`docs/agent/handover/feature-zhaiyuanhao-long-context-memory-review.md`。
 
 ## 0. 当前执行管线（已定型）
@@ -100,9 +100,9 @@
 | **0.7.3 登记不进本轮（L 级）**：消息数组协议重构（complete/streamChat 仅 prompt 字符串单入口，无 messages 数组通道） | `openai-compatible.ts` / `VerifyCritiqueLoop.ts` | L 级跨文件手术，与"明天跑通一天"无直接因果；按需立项（USABLE-PLAN-0.7.3 §一） |
 | **0.7.3 登记（L 级）**：sseInteractive 巨函数拆分（现 2147 行，单函数占比过高、巨函数体覆盖薄弱） | `sseInteractive.ts` | L 级；拆分须测试先行 |
 | **0.7.3 登记（L 级）**：subagent 委派 / hooks 总线 / 后台 bash | — | L 级，明确不进 0.7 本轮（USABLE-PLAN-0.7.3 §一）；**0.8 立项部分解锁**——巨函数拆分与消息数组协议进 PLAN-0.8-FOUNDATION M1（依据 GAP-MATRIX-0.8.md），subagent/hooks 仍推 0.9+ |
-| **0.8 立项（2026-09-06，GAP-MATRIX-0.8 交叉对比驱动）**：M1 地基（sseInteractive 拆分 TurnController + messages 数组通道）+ M2 执行层七项（并行分段/卡死硬闸/结果落盘/usage 计量/错误分类/敏感路径/Turn.role） | `sseInteractive.ts` / `openai-compatible.ts` / `VerifyCritiqueLoop.ts` / `engineAdapter.ts` | 方案 `docs/panshalach/PLAN-0.8-FOUNDATION.md`；硬边界=三态语义/R6 契约/记忆信号/审批安全不变；M1+M2-2/M2-6 为最小不可分割集 |
+| **0.8 立项（2026-09-06，GAP-MATRIX-0.8 交叉对比驱动）**：M1 地基（sseInteractive 拆分 TurnController + messages 数组通道）+ M2 执行层七项（并行分段/卡死硬闸/结果落盘/usage 计量/错误分类/敏感路径/Turn.role） | `sseInteractive.ts` / `openai-compatible.ts` / `VerifyCritiqueLoop.ts` / `engineAdapter.ts` | 方案 `docs/panshalach/PLAN-0.8-FOUNDATION.md`；硬边界=三态语义/R6 契约/记忆信号/审批安全不变；M1+M2-2/M2-6 为最小不可分割集。**进展：M1 第 1 步已落**（df6e39f 行为锁定测试 `tests/repl/turn/TurnBehavior.lock.test.ts` 455 行 + setRunning 双发去重 92acc25）；第 2 步四模块搬家（turn/ 目录）未做 |
 | **0.7.3 引入边界**：MCP 工具结果无验证尾标（`describeResult` 尾标只覆盖内置 bash/write_file/edit_file/read_file/glob/grep；MCP 调用成功不计 PASS） | `engineAdapter.ts` | 遗留：MCP 结果验证分类策略待定（宁缺毋滥，防 MCP 自述伪装真实验证） |
-| **0.7.4 契约漂移（R6 域销项）**：`scripts/eval/results/schema.mjs` TURN_STOP_REASONS 仍是 v0.6.5 方言（含 `verification-failed-continue`、缺 `answered`/`error`），且 `continueCount` 字段引用致 `verify-panshalach-cleanup.mjs` 0.7 段 FAIL | `scripts/eval/results/schema.mjs:29-37,190,327` / `scripts/eval/smoke-eval.mjs:106-110` | 待王浩宇（R6 schema owner）对齐 0.7 四态契约（answered/error 加性）+ 删除 continueCount 死字段（判官已摘除，恒 0）；销项后 cleanup 脚本恢复全绿 |
+| ~~**0.7.4 契约漂移（R6 域销项）**：schema TURN_STOP_REASONS 仍是 v0.6.5 方言 + continueCount 死字段致 cleanup 0.7 段 FAIL~~ | `scripts/eval/results/schema.mjs` | ✅ **双分支各自落地（9/7）**：zhaotianang1 49bf59d/d3f8eb8（continueCount 删除 + attemptCount 替代）、wanghaoyu1 43be123（TurnStopReason 双向同步到 0.7 口径）——**注意两分支互不包含，schema.mjs 同文件改动需在 develop 合入时人工并集**；全部合入后 cleanup 0.7 段恢复全绿 |
 | **0.7.4 hermes 调研唯一建议采纳项**：classic/Repl 路径 `solveIssue` 漏传 `windowTokens`（0.7.3 窗口预算在 classic/`--headless` 单条命令路径不生效） | `Repl.ts:427`（对照 `runAgentTask.ts:173`） | ~40 行小改，待排期（HERMES-ALIGN-0.7.4.md §5） |
 | 未采纳（记录在案）：事件 hash-chain、持久化幂等键、auditStatus 完整机制、SummaryNode 全量血缘、`compaction.mode` 四段开关 | — | 9/24 后按需立项 |
 | **0.7.4 登记（低优先，不进本轮）**：6 工具 schema ≈2K token/请求（8K 窗口占 25%），对不支持 native FC 的模型（diffusion/1B 实测）纯开销且有行为牵引 | `engineAdapter.ts:249-319`（BUILTIN_TOOL_SCHEMAS 单点）/ `VerifyCritiqueLoop.ts:313-321`（注入点） | 若做（9/24 评测后按消融需求立项）：①toolSchemas 按 intent 过滤（search 只读三件，chat 已零工具）②`PANSHA_TOOLS_MODE=text\|native\|off` 开关（off=请求体不带 tools，兼评测消融维度）③schema description 一行化。见 PLAN-0.7.4 §5 |

@@ -378,7 +378,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
   }
 
   return {
-    /** streamChat 回退专用（0.7.4 任务 B4）：与 complete() 同语义的非流式回退。 */
+    /** streamChat 回退专用：与 complete() 同语义的非流式回退。 */
     async completeLikeFallback(prompt: string, opts: CompleteOptions): Promise<string | OpenAICompatOutput> {
       try {
         return await withRetry(() => doComplete(prompt, opts));

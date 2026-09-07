@@ -1,7 +1,7 @@
 // src/cli/repl/commands/HelpCommand.ts
 import type { Command, ColorName, CommandContext, CommandResult } from '../types.js';
 
-// P2-3（批次 B）：分组渲染抽取为纯函数 — classic（registry）/ line（sseInteractive）
+// 分组渲染抽取为纯函数 — classic（registry）/ line（sseInteractive）
 // / 统一派发器三处共用同一份视图，保证输出一致。
 export interface HelpLine {
   text: string;
