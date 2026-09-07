@@ -77,6 +77,7 @@ export interface SessionFile {
   tier: Tier;
   workspace: string;
   model: string;
+  currentTaskId?: string;
   // (append-only): approval state persists with the session
   approvalMode?: 'readonly' | 'default' | 'full';
   sessionApprovalAllowlist?: string[];

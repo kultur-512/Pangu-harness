@@ -187,6 +187,11 @@ export class TaskStateStore {
     return s;
   }
 
+  /** 读取已有台账；不存在时创建并返回（供 CLI/评测入口使用）。 */
+  getOrCreate(taskId: string, originalRequirement: string, now = Date.now()): TaskState {
+    return this.get(taskId) ?? this.create(taskId, originalRequirement, now);
+  }
+
   /** 带期望版本的整卡更新（乐观锁）：version 不符即抛；originalRequirement 被改即抛。 */
   update(taskId: string, updater: (s: TaskState) => TaskState, expectedVersion?: number): TaskState {
     const file = this.load();
