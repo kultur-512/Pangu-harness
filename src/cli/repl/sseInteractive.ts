@@ -474,6 +474,12 @@ export interface TurnContext {
    * `import('../../server/runAgentTask.js')`，运行时行为不变。
    */
   loadRunAgentTask?: () => Promise<{ runAgentTask: typeof import('../../server/runAgentTask.js')['runAgentTask'] }>;
+  /**
+   * rich 桥 running 徽标状态：setRunning(true) 置位，result/done/error 任一复位清零。
+   * 任务收尾的兜底复位只在仍为 true 时执行——防 result+done 双终态事件导致
+   * setRunning(false) 重复下发（行为锁定测试断言 [true,false]）。
+   */
+  runningBadgeOn?: boolean;
 }
 
 export function createTurnContext(init: {
@@ -1179,6 +1185,7 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
     ctx.renderer.writeLine(ctx.renderer.color(`\n[提交任务] ${task.split('\n\n【用户插话')[0]}`, 'cyan'));
   } else if (typeof bridge.setRunning === 'function') {
     try { bridge.setRunning(true); } catch {}
+    ctx.runningBadgeOn = true;
   }
 
   // Abort support: signal 贯穿 solveIssue → loop → 模型 fetch / 工具执行，
@@ -1321,7 +1328,7 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
           }
 
           if (useRich) {
-            mapSseToBridge(ev.type || 'event', ev, bridge);
+            mapSseToBridge(ev.type || 'event', ev, bridge, ctx);
           } else {
             renderSseEvent(ctx, ev.type || 'event', ev, ctx.renderer);
           }
@@ -1414,7 +1421,9 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
         try { ctx.renderer.writeLine(ctx.renderer.color(`Tip: 上下文占用约 ${Math.round(ratio * 100)}% · /compact 可立即压缩`, 'gray')); } catch {}
       }
     }
-    if (useRich && typeof bridge.setRunning === 'function') {
+    // 兜底复位只在徽标仍处于 true 时执行——result/done/error 事件已复位的
+    // 情况下不再重复下发 setRunning(false)（行为锁定断言 [true,false]）。
+    if (useRich && ctx.runningBadgeOn !== false && typeof bridge.setRunning === 'function') {
       try { bridge.setRunning(false); } catch {}
     } else {
       // Line path: restore prompt so the user can type the next task.
@@ -1438,12 +1447,13 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
 }
 
 // Map normalized SSE events (from agentServer) to the rich bridge (Ink UI).
-function mapSseToBridge(event: string, data: any, b: any) {
+function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnContext) {
   if (!b) return;
   const t = (data && data.type) || event;
 
   if (t === 'start' || event === 'start') {
     if (typeof b.setRunning === 'function') { try { b.setRunning(true); } catch {} }
+    if (ctx) ctx.runningBadgeOn = true;
     if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `开始执行: ${data.task || ''}`, level: 'info' });
     return;
   }
@@ -1528,6 +1538,7 @@ function mapSseToBridge(event: string, data: any, b: any) {
       if (typeof b.pushBudget === 'function') b.pushBudget(data.budgetReport.usageRatio);
     }
     if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
+    if (ctx) ctx.runningBadgeOn = false;
     return;
   }
   if (t === 'done' || event === 'done') {
@@ -1537,6 +1548,7 @@ function mapSseToBridge(event: string, data: any, b: any) {
       b.pushFeed({ type: 'text', text: `⏱ 用时 ${(data.durationMs / 1000).toFixed(1)}s`, level: 'info' });
     }
     if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
+    if (ctx) ctx.runningBadgeOn = false;
     return;
   }
   if (t === 'error' || event === 'error') {
@@ -1544,6 +1556,7 @@ function mapSseToBridge(event: string, data: any, b: any) {
     const msg = data && (data.message || JSON.stringify(data));
     if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: '错误: ' + msg, level: 'error' });
     if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
+    if (ctx) ctx.runningBadgeOn = false;
     return;
   }
   // Fallback generic

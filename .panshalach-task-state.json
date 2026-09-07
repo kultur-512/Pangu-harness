@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": 1788793906288,
+  "tasks": {
+    "task-mtrdghyf-ab98fad9": {
+      "taskId": "task-mtrdghyf-ab98fad9",
+      "originalRequirement": "say hi",
+      "decisions": [],
+      "openQuestions": [],
+      "milestones": [],
+      "verified": [],
+      "risks": [],
+      "foldedEventIds": [],
+      "version": 1,
+      "createdAt": 1788793489385,
+      "updatedAt": 1788793489385
+    },
+    "task-mtrdghyo-b40f653f": {
+      "taskId": "task-mtrdghyo-b40f653f",
+      "originalRequirement": "say hi",
+      "decisions": [],
+      "openQuestions": [],
+      "milestones": [],
+      "verified": [],
+      "risks": [],
+      "foldedEventIds": [],
+      "version": 1,
+      "createdAt": 1788793489394,
+      "updatedAt": 1788793489394
+    },
+    "task-mtrdpfml-c78f84b5": {
+      "taskId": "task-mtrdpfml-c78f84b5",
+      "originalRequirement": "say hi",
+      "decisions": [],
+      "openQuestions": [],
+      "milestones": [],
+      "verified": [],
+      "risks": [],
+      "foldedEventIds": [],
+      "version": 1,
+      "createdAt": 1788793906274,
+      "updatedAt": 1788793906274
+    },
+    "task-mtrdpfn2-bb1b86d6": {
+      "taskId": "task-mtrdpfn2-bb1b86d6",
+      "originalRequirement": "say hi",
+      "decisions": [],
+      "openQuestions": [],
+      "milestones": [],
+      "verified": [],
+      "risks": [],
+      "foldedEventIds": [],
+      "version": 1,
+      "createdAt": 1788793906288,
+      "updatedAt": 1788793906288
+    }
+  }
+}
