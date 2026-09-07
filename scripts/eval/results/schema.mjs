@@ -4,7 +4,9 @@
 // 字段来源：
 //   1. ROADMAP-NEXT §3.1 R6 合同（runId/source/seedSupport/verdict/verification/memory/prompt/failureTaxonomy/artifacts）
 //   2. v0.6.4 接口契约 v3.1 双层终止语义（TurnStopReason 6 态 + attemptCount + lastError）
-//      注：continueCount 在 0.7 判官摘除后已是死字段（恒 0），由 attemptCount（v0.6.5 防伪造约束）替代
+//      - continueCount 已在 0.7.4 销项（恒 0），attemptCount（v0.6.5 防伪造约束）替代
+//      - TurnStopReason 双向同步 0.7 口径：verification-failed-continue → answered
+//        （types.ts 已用 answered；判官 0.7 摘除后该值不再产生）
 //   3. v0.6.5 R1/R2 契约（panshalachVersion / attemptCount / refined 透传 + memory 注入层 vs 落定层）
 //   4. FailureTaxonomy 双层升级（{ primary, secondary? } + normalizeFailureTaxonomy 向后兼容）
 //
@@ -28,12 +30,12 @@ import { createHash, randomUUID } from 'node:crypto';
 
 /** 双层终止语义 6 态（与 src/cli/repl/types.ts TurnStopReason 同步） */
 export const TURN_STOP_REASONS = Object.freeze([
-  'completed',                    // end_turn 且轨迹含验证 PASS
-  'verification-failed-continue', // 判官拦截续跑（本轮结束但任务未完）
+  'completed',                    // 轨迹含真实验证 PASS（验证通过）
+  'answered',                     // end_turn 且有正文答复（信息型/纯问答；0.7 判官摘除后新增）
   'max-steps',                    // 步数耗尽
   'consecutive-failures',         // 连续工具失败保护
   'aborted',                      // 用户/信号中止
-  'no-verification',             // end_turn 但从未产生 PASS（信息型）
+  'no-verification',             // end_turn 但无正文无工具（空白/空转）
 ]);
 
 /** 评测源（隔离 mock 与真模型） */
@@ -135,12 +137,14 @@ export const RESULT_SCHEMA = Object.freeze({
     finishedAt:      { type: 'string', format: 'date-time' },
     durationMs:      { type: 'integer', minimum: 0 },
     /**
-     * verdict 映射规则（v0.6.4 R0 + v0.6.5 R1/R2 对齐）：
+     * verdict 映射规则（v0.6.4 R0 + v0.6.5 R1/R2 对齐；0.7 判官摘除后修订）：
      * ┌─────────────────┬────────────────┬──────────────────────────────────┐
      * │ trajectory.success│ verifiedSteps │ verdict                          │
      * ├─────────────────┼────────────────┼──────────────────────────────────┤
      * │ true            │ *              │ 'completed'                      │
-     * │ false           │ 存在（fail）    │ 'verification-failed-continue'   │
+     * │ false + end_turn│ 存在（fail）    │ 'no-verification'（0.7 前为     │
+     * │                 │                │  'verification-failed-continue'，│
+     * │                 │                │  判官摘除后该值不再产生）       │
      * │ false           │ 不存在         │ 'no-verification'                │
      * │ false + max-steps│ *              │ 'max-steps'                      │
      * │ false + aborted │ *              │ 'aborted'                        │
@@ -184,6 +188,7 @@ export const RESULT_SCHEMA = Object.freeze({
       properties: {
         chars:           { type: 'integer', minimum: 0 },
         estimatedTokens: { type: 'integer', minimum: 0 },
+        // TODO(0.8): realUsageTokens (pending openPangu usage parsing — see PLAN-0.8 M2-4)
         hash:            { type: 'string', description: 'SHA-256 of normalized prompt' },
       },
     },
