@@ -97,7 +97,10 @@ export async function runAgentTask(
     if (req.workspace) session.workspace = req.workspace;
     if (req.model) session.model = req.model;
   }
-  session.currentTaskId = req.taskId ?? session.currentTaskId ?? `task-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  // PANSHA_TASK_ID env var allows external runners (e.g. R6 eval) to supply a
+  // stable, correlation-friendly taskId without touching the RunRequest schema.
+  const envTaskId = process.env.PANSHA_TASK_ID?.trim();
+  session.currentTaskId = req.taskId ?? envTaskId ?? session.currentTaskId ?? `task-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 
   // U2: explicit task requirement event; never infer events from model text.
   appendAgentEvent(session.id, {
@@ -114,7 +117,7 @@ export async function runAgentTask(
   // prompt can carry the task anchor. Existing state is preserved on resume.
   try {
     const { TaskStateStore } = await import('../memory/taskState.js');
-    const taskStore = new TaskStateStore(session.workspace);
+    const taskStore = new TaskStateStore(session.workspace, process.env.PANSHA_TASK_STATE_FILE?.trim() || undefined);
     if (!taskStore.get(session.currentTaskId)) {
       taskStore.create(session.currentTaskId, req.task);
     }
@@ -228,7 +231,7 @@ export async function runAgentTask(
 
     try {
       const { TaskStateStore } = await import('../memory/taskState.js');
-      const stateStore = new TaskStateStore(session.workspace);
+      const stateStore = new TaskStateStore(session.workspace, process.env.PANSHA_TASK_STATE_FILE?.trim() || undefined);
       // Fold the same explicit terminal event into the control-plane state.
       // The event ledger remains the source of truth; folding is best-effort.
       const events = readAgentEvents(session.id)
