@@ -536,14 +536,20 @@ async function runOne(fixture, ablation, opts) {
 
   // ── real-openpangu：spawn harness 子进程 ──
   const isWin = process.platform === 'win32';
+  // R6: 将 prompt 写入临时文件，通过 @path 机制传入——避免 Windows 命令行
+  // 长度/特殊字符限制（spawn EINVAL）。临时文件在进程退出后由 artifact 落盘覆盖。
+  const tmpDir = join(ROOT, '.panshalach-eval-tmp');
+  await mkdir(tmpDir, { recursive: true });
+  const promptFile = join(tmpDir, `prompt-${fixture.id}-${ablation.key}.txt`);
+  await writeFile(promptFile, fixture.prompt, 'utf8');
   const cliArgs = [
     'tsx', 'src/cli.ts',
     '--headless',
     '--approval', 'full',
-    'run', fixture.prompt,
+    'run', `@${promptFile}`,  // @path 机制：eval harness 展开临时文件内容
   ];
 
-  console.log(`  [eval] spawn: npx ${cliArgs.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')}`);
+  console.log(`  [eval] spawn: npx ${cliArgs.slice(0, -1).join(' ')} run @<prompt>`);
   console.log(`  [eval] ablation: inject=${ablation.injectMemory} overflow=${ablation.overflowWindow} semantic=${ablation.semanticSearch}`);
 
   try {

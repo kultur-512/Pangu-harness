@@ -415,6 +415,13 @@ export interface PathExpansionResult {
  * - Also returns a cleaned string with @tokens removed (for task body)
  */
 import { resolve as pathResolve, sep as pathSep } from 'node:path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+
+/**
+ * 最多读取的文件大小（1MB），防止大文件撑爆 prompt。
+ * R6 eval runner 的 prompt 临时文件通常 < 10KB。
+ */
+const MAX_AT_PATH_BYTES = 1_048_576;
 
 export function expandAtPaths(input: string, workspace: string): { result: PathExpansionResult; cleaned: string } {
   if (!input || !workspace) {
@@ -447,15 +454,25 @@ export function expandAtPaths(input: string, workspace: string): { result: PathE
     }
   }
 
-  // Build cleaned task: remove the @token occurrences (keep surrounding text)
+  // Build cleaned task: replace @token with file content when the file exists
+  // and is readable (plain text, ≤ MAX_AT_PATH_BYTES). Otherwise remove the
+  // @token (backward-compatible behaviour: @path is a reference, not content).
   let cleaned = input;
   for (const t of tokens) {
-    // Remove "@t" occurrences (word boundary-ish)
     const esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    cleaned = cleaned.replace(new RegExp('@' + esc, 'g'), '');
+    const abs = pathResolve(wsRoot, t);
+    let replacement = '';
+    try {
+      if (existsSync(abs) && statSync(abs).size <= MAX_AT_PATH_BYTES) {
+        replacement = readFileSync(abs, 'utf8');
+      }
+    } catch {
+      // file not readable → strip token (backward-compatible)
+    }
+    cleaned = cleaned.replace(new RegExp('@' + esc, 'g'), replacement);
   }
-  // Collapse extra spaces that may result
-  cleaned = cleaned.replace(/\s{2,}/g, ' ').trim();
+  // Collapse extra spaces that may result (but keep newlines from file content)
+  cleaned = cleaned.replace(/[ \t]{2,}/g, ' ').trim();
 
   return {
     result: { expanded, rejected },

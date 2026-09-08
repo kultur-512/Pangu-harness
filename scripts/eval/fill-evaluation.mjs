@@ -30,8 +30,9 @@ const END_MARKER = '<!-- R6-AUTO-FILL §4 END -->';
  * @returns {string}
  */
 function formatResultRow(r) {
-  const tier = r.tier || '?';
+  const ablation = r.ablation || r.tier || '?';  // U5 字段收敛：ablation 替代 tier
   const taskId = r.taskId || '?';
+  const taskFamily = r.taskFamily || '';
   const verdict = r.verdict || '?';
   const signal = r.verification?.signal || 'none';
   const memInjected = (r.memory?.injectedCardIds || []).length;
@@ -41,7 +42,7 @@ function formatResultRow(r) {
   const tax = normalizeFailureTaxonomy(r.failureTaxonomy);
   const failure = tax ? `${tax.primary}${tax.secondary ? ' + ' + tax.secondary : ''}` : '—';
 
-  return `| ${taskId} | ${tier} | ${verdict} | ${signal} | ${memInjected}/${memVerified} | ${promptChars} | ${duration} | ${failure} |`;
+  return `| ${taskId} | ${taskFamily} | ${ablation} | ${verdict} | ${signal} | ${memInjected}/${memVerified} | ${promptChars} | ${duration} | ${failure} |`;
 }
 
 /**
@@ -57,7 +58,25 @@ function formatSummary(summary) {
   lines.push(`- **通过率**: ${summary.validSamples > 0 ? (summary.passed / summary.validSamples * 100).toFixed(1) : 'N/A'}%`);
   lines.push('');
 
-  if (summary.byTier) {
+  if (summary.byAblation) {
+    lines.push('### 按消融档位');
+    lines.push('');
+    lines.push('| 档位 | 总数 | 通过 | 失败 | 无效 | 不适用 | 通过率 |');
+    lines.push('|------|------|------|------|------|--------|--------|');
+    for (const [tier, stats] of Object.entries(summary.byAblation)) {
+      if (typeof stats === 'number') {
+        // 简单计数格式（smoke-eval）——无法区分通过/失败，仅列总数
+        if (stats === 0) continue;
+        lines.push(`| ${tier} | ${stats} | — | — | — | — | — |`);
+      } else if (typeof stats === 'object' && stats !== null) {
+        if (stats.total === 0) continue;
+        const rate = stats.total > 0 ? ((stats.passed / stats.total) * 100).toFixed(1) : 'N/A';
+        lines.push(`| ${tier} | ${stats.total} | ${stats.passed} | ${stats.failed} | ${stats.invalid} | ${stats.notApplicable} | ${rate}% |`);
+      }
+    }
+    lines.push('');
+  } else if (summary.byTier) {
+    // 向后兼容旧格式
     lines.push('### 按消融档位');
     lines.push('');
     lines.push('| 档位 | 总数 | 通过 | 失败 | 无效 | 不适用 | 通过率 |');
@@ -101,8 +120,8 @@ function generateSection4(data) {
 
   lines.push('## 详细结果');
   lines.push('');
-  lines.push('| 任务 | 档位 | 结论 | 验证信号 | 注入/验证卡 | Prompt 字符 | 耗时 | 失败分类 |');
-  lines.push('|------|------|------|----------|------------|------------|------|----------|');
+  lines.push('| 任务 | 任务族 | 档位 | 结论 | 验证信号 | 注入/验证卡 | Prompt 字符 | 耗时 | 失败分类 |');
+  lines.push('|------|------|------|------|----------|------------|------------|------|----------|');
   for (const r of data.results || []) {
     lines.push(formatResultRow(r));
   }
