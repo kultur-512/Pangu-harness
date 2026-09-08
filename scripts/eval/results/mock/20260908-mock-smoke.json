@@ -1,0 +1,1032 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-08T00:02:58.510Z",
+    "source": "mock-smoke",
+    "model": "openPangu-7B",
+    "runnerVersion": "0.2.0"
+  },
+  "summary": {
+    "summaryId": "10dce9f1-f570-455d-95f9-c6482ac12d25",
+    "generatedAt": "2026-09-08T00:02:58.508Z",
+    "source": "mock-smoke",
+    "totalRuns": 20,
+    "validSamples": 20,
+    "passed": 20,
+    "failed": 0,
+    "byAblation": {
+      "A": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "B": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "C": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "C4": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      }
+    },
+    "byFailure": {},
+    "runIds": [
+      "3e1d70f0-9152-4753-ab23-078c3ffa1473",
+      "4b78b1c8-0f04-4376-8b63-ca02794d5647",
+      "c1633070-d9f2-4991-b9c6-1978cae845a3",
+      "f8d4f367-a383-4797-9e13-81bef19cb75b",
+      "be1248aa-01ce-40bd-b943-106d61b1216f",
+      "33f4d4f7-569e-4c7e-b599-3b0d08a334c4",
+      "9c944f8e-0f60-4f99-a03b-388e014e5f30",
+      "1945237d-a8e7-420d-8e0d-6658b279e26c",
+      "90311516-5551-41ce-b0d8-afc2da8ee5d3",
+      "8f54b4ff-777e-4c3e-a97c-9c750d729d33",
+      "be7c2b54-0e16-4402-a044-d8feb9c823c8",
+      "8cc41566-175b-4d87-ae07-58aa275abcc1",
+      "ac48ed87-a046-4c5e-b25b-b3522f8cf06f",
+      "9c0fbaad-ea5c-4e62-a054-cb6a7ed7fd2a",
+      "08083a1a-6f62-4075-ac00-f8b76fbc1418",
+      "f6af495a-1429-4d08-b5e2-f24874d824bc",
+      "977b8b2b-edd7-4935-a49a-b77ff6516fb6",
+      "92379d12-164f-4486-b65a-eddc1335998b",
+      "43253d7a-af1e-45f9-afcb-c3f69f6167ad",
+      "051758a0-f468-4b30-a048-25a8464c97a3"
+    ]
+  },
+  "results": [
+    {
+      "runId": "3e1d70f0-9152-4753-ab23-078c3ffa1473",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T1",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.503Z",
+      "finishedAt": "2026-09-08T00:02:58.506Z",
+      "durationMs": 3,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T1"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T1"
+        ]
+      },
+      "prompt": {
+        "chars": 1191,
+        "estimatedTokens": 298,
+        "hash": "817b00571a620ac9945eaa508302af649bbd7525b9ae887c5700ca6b489f1278"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T1.jsonl",
+        "stdoutTail": "mock/logs/T1.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "4b78b1c8-0f04-4376-8b63-ca02794d5647",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T1",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.506Z",
+      "finishedAt": "2026-09-08T00:02:58.506Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T1"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T1"
+        ]
+      },
+      "prompt": {
+        "chars": 1191,
+        "estimatedTokens": 298,
+        "hash": "817b00571a620ac9945eaa508302af649bbd7525b9ae887c5700ca6b489f1278"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T1.jsonl",
+        "stdoutTail": "mock/logs/T1.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "c1633070-d9f2-4991-b9c6-1978cae845a3",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T1",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.506Z",
+      "finishedAt": "2026-09-08T00:02:58.506Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T1"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T1"
+        ]
+      },
+      "prompt": {
+        "chars": 1191,
+        "estimatedTokens": 298,
+        "hash": "817b00571a620ac9945eaa508302af649bbd7525b9ae887c5700ca6b489f1278"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T1.jsonl",
+        "stdoutTail": "mock/logs/T1.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "f8d4f367-a383-4797-9e13-81bef19cb75b",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T1",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.506Z",
+      "finishedAt": "2026-09-08T00:02:58.506Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T1"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T1"
+        ]
+      },
+      "prompt": {
+        "chars": 1191,
+        "estimatedTokens": 298,
+        "hash": "817b00571a620ac9945eaa508302af649bbd7525b9ae887c5700ca6b489f1278"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T1.jsonl",
+        "stdoutTail": "mock/logs/T1.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "be1248aa-01ce-40bd-b943-106d61b1216f",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T2",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.506Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 1,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T2"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T2"
+        ]
+      },
+      "prompt": {
+        "chars": 1485,
+        "estimatedTokens": 372,
+        "hash": "2274562f64af35561c571d6467c28e0d5ddd878d7487bed001479a6dc29eff52"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T2.jsonl",
+        "stdoutTail": "mock/logs/T2.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "33f4d4f7-569e-4c7e-b599-3b0d08a334c4",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T2",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T2"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T2"
+        ]
+      },
+      "prompt": {
+        "chars": 1485,
+        "estimatedTokens": 372,
+        "hash": "2274562f64af35561c571d6467c28e0d5ddd878d7487bed001479a6dc29eff52"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T2.jsonl",
+        "stdoutTail": "mock/logs/T2.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "9c944f8e-0f60-4f99-a03b-388e014e5f30",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T2",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T2"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T2"
+        ]
+      },
+      "prompt": {
+        "chars": 1485,
+        "estimatedTokens": 372,
+        "hash": "2274562f64af35561c571d6467c28e0d5ddd878d7487bed001479a6dc29eff52"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T2.jsonl",
+        "stdoutTail": "mock/logs/T2.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "1945237d-a8e7-420d-8e0d-6658b279e26c",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T2",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T2"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T2"
+        ]
+      },
+      "prompt": {
+        "chars": 1485,
+        "estimatedTokens": 372,
+        "hash": "2274562f64af35561c571d6467c28e0d5ddd878d7487bed001479a6dc29eff52"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T2.jsonl",
+        "stdoutTail": "mock/logs/T2.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "90311516-5551-41ce-b0d8-afc2da8ee5d3",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T3",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T3"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T3"
+        ]
+      },
+      "prompt": {
+        "chars": 1435,
+        "estimatedTokens": 359,
+        "hash": "40c00478d321b93c61900436b58dae40550895cd00f3865a41e6972032478687"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T3.jsonl",
+        "stdoutTail": "mock/logs/T3.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "8f54b4ff-777e-4c3e-a97c-9c750d729d33",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T3",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T3"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T3"
+        ]
+      },
+      "prompt": {
+        "chars": 1435,
+        "estimatedTokens": 359,
+        "hash": "40c00478d321b93c61900436b58dae40550895cd00f3865a41e6972032478687"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T3.jsonl",
+        "stdoutTail": "mock/logs/T3.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "be7c2b54-0e16-4402-a044-d8feb9c823c8",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T3",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T3"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T3"
+        ]
+      },
+      "prompt": {
+        "chars": 1435,
+        "estimatedTokens": 359,
+        "hash": "40c00478d321b93c61900436b58dae40550895cd00f3865a41e6972032478687"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T3.jsonl",
+        "stdoutTail": "mock/logs/T3.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "8cc41566-175b-4d87-ae07-58aa275abcc1",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T3",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T3"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T3"
+        ]
+      },
+      "prompt": {
+        "chars": 1435,
+        "estimatedTokens": 359,
+        "hash": "40c00478d321b93c61900436b58dae40550895cd00f3865a41e6972032478687"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T3.jsonl",
+        "stdoutTail": "mock/logs/T3.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "ac48ed87-a046-4c5e-b25b-b3522f8cf06f",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T4",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T4"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T4"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T4.jsonl",
+        "stdoutTail": "mock/logs/T4.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "9c0fbaad-ea5c-4e62-a054-cb6a7ed7fd2a",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T4",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.507Z",
+      "finishedAt": "2026-09-08T00:02:58.507Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T4"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T4"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T4.jsonl",
+        "stdoutTail": "mock/logs/T4.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "08083a1a-6f62-4075-ac00-f8b76fbc1418",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T4",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.508Z",
+      "finishedAt": "2026-09-08T00:02:58.508Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T4"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T4"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T4.jsonl",
+        "stdoutTail": "mock/logs/T4.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "f6af495a-1429-4d08-b5e2-f24874d824bc",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T4",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.508Z",
+      "finishedAt": "2026-09-08T00:02:58.508Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T4"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T4"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T4.jsonl",
+        "stdoutTail": "mock/logs/T4.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "977b8b2b-edd7-4935-a49a-b77ff6516fb6",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T5",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.508Z",
+      "finishedAt": "2026-09-08T00:02:58.508Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T5"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T5"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T5.jsonl",
+        "stdoutTail": "mock/logs/T5.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "92379d12-164f-4486-b65a-eddc1335998b",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T5",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.508Z",
+      "finishedAt": "2026-09-08T00:02:58.508Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T5"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T5"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T5.jsonl",
+        "stdoutTail": "mock/logs/T5.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "43253d7a-af1e-45f9-afcb-c3f69f6167ad",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T5",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.508Z",
+      "finishedAt": "2026-09-08T00:02:58.508Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T5"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T5"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T5.jsonl",
+        "stdoutTail": "mock/logs/T5.log"
+      },
+      "tags": []
+    },
+    {
+      "runId": "051758a0-f468-4b30-a048-25a8464c97a3",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T5",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": false,
+      "modelId": "openPangu-7B",
+      "panshalachVersion": "0.7.4",
+      "startedAt": "2026-09-08T00:02:58.508Z",
+      "finishedAt": "2026-09-08T00:02:58.508Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "npx tsc --noEmit (mock)"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "mock-card-T5"
+        ],
+        "verifiedCardIds": [
+          "mock-verified-T5"
+        ]
+      },
+      "prompt": {
+        "chars": 78,
+        "estimatedTokens": 20,
+        "hash": "06312d6732eadfffe72eccd9dbc178b819ec6b4c826191dd24b7b1c9dd80618b"
+      },
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      },
+      "artifacts": {
+        "rolloutJsonl": "mock/trajectories/T5.jsonl",
+        "stdoutTail": "mock/logs/T5.log"
+      },
+      "tags": []
+    }
+  ]
+}

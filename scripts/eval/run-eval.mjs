@@ -41,6 +41,7 @@ import { randomUUID } from 'node:crypto';
 // 导入共享 schema
 // U4 字段收敛：runOne 返回结构与 RESULT_SCHEMA 对齐，写盘前跑 validateResult 校验。
 import {
+  ABLATIONS,
   EVAL_SOURCES,
   FAILURE_PRIMARY, FAILURE_SECONDARY,
   normalizeFailureTaxonomy,
@@ -103,10 +104,11 @@ function parseArgs() {
  *   1. issue.md   — T1-T3 实体化后的 issue 正文（赵天昂 80d3f08 起草）
  *   2. fixture.md — `## Prompt` 段（T4/T5 wanghaoyu 格式）
  * 每个 T* 目录含 README.md（任务族契约）+ verify.sh（自动验证）。
+ * fixture.tier 是任务族元数据（展示用），不参与消融配对。
  *
  * @returns {Promise<Array<{id: string, tier: string, title: string, prompt: string, expected: string, workspace?: string, promptSource: string}>>}
  */
-async function loadTaskFixtures({ tier, taskId } = {}) {
+async function loadTaskFixtures({ taskId } = {}) {
   const dirs = await readdir(TASKS_DIR, { withFileTypes: true });
   const fixtures = [];
 
@@ -141,9 +143,9 @@ async function loadTaskFixtures({ tier, taskId } = {}) {
         continue;
       }
 
-      // 过滤：指定 task 或 tier
+      // 过滤：仅按 task 过滤（U5 重构：fixture.tier 是任务族元数据，不再决定消融配对；
+      // 消融维度由 --tier 在 main() 里过滤）
       if (taskId && fixture.id !== taskId) continue;
-      if (tier && fixture.tier !== tier) continue;
 
       fixture.promptSource = promptSource;
       fixtures.push(fixture);
@@ -269,9 +271,11 @@ function parseFixtureMarkdown(content, dirName) {
 function ablationConfig(key) {
   switch (key) {
     case 'A':
-      return { key: 'A', injectMemory: true, overflowWindow: true, semanticSearch: false, description: 'A: 记忆窗口溢出（长上下文）' };
+      // A = baseline（无记忆、无 refine，必须真溢出）——对齐 schema.mjs ABLATIONS 合同
+      return { key: 'A', injectMemory: false, overflowWindow: true, semanticSearch: false, description: 'A: baseline 无记忆（必须溢出）' };
     case 'B':
-      return { key: 'B', injectMemory: false, overflowWindow: false, semanticSearch: false, description: 'B: 零记忆注入（防线失败基准）' };
+      // B = memory on（refine + markVerified）；零注入 = 防线失败
+      return { key: 'B', injectMemory: true, overflowWindow: false, semanticSearch: false, description: 'B: 记忆开启（零注入=防线失败基准）' };
     case 'C':
       return { key: 'C', injectMemory: true, overflowWindow: false, semanticSearch: false, description: 'C: 完整记忆注入（当前主线）' };
     case 'C4':
@@ -295,7 +299,7 @@ function ablationEnv(ablation) {
     env.PANSHA_CTX_WINDOW = '8000';
   }
   if (!ablation.injectMemory) {
-    // B 档：PANSHA_NO_MEMORY=1 → PromptBuilder.buildForTask({forceEmptyInjected: true})
+    // A 档（baseline no-memory）：PANSHA_NO_MEMORY=1 → PromptBuilder.buildForTask({forceEmptyInjected: true})
     env.PANSHA_NO_MEMORY = '1';
   }
   if (ablation.semanticSearch) {
@@ -303,6 +307,23 @@ function ablationEnv(ablation) {
     env.PANSHA_SEMANTIC_SEARCH = '1';
   }
 
+  return env;
+}
+
+/**
+ * 构建 eval 专用 TaskState 隔离 env。
+ * 在 ablationEnv 基础上追加 PANSHA_TASK_ID 和 PANSHA_TASK_STATE_FILE，
+ * 确保评测任务的 TaskState 写入独立文件（.panshalach-task-state.eval.json），
+ * 不与用户日常任务的 .panshalach-task-state.json 串扰。
+ *
+ * @param {object} ablation
+ * @param {string} evalTaskId - 格式 eval-<taskFamily>-<ablation>-<seed>
+ * @returns {Record<string, string>}
+ */
+function evalAblationEnv(ablation, evalTaskId) {
+  const env = ablationEnv(ablation);
+  env.PANSHA_TASK_ID = evalTaskId;
+  env.PANSHA_TASK_STATE_FILE = '.panshalach-task-state.eval.json';
   return env;
 }
 
@@ -420,6 +441,31 @@ function parseFailure(stdout, stderr, exitCode, errorMessage) {
 // ── 核心执行 ──
 
 /**
+ * 写 eval TaskState 的 nextStep 字段（成功态专用）。
+ * 直接操作 .panshalach-task-state.eval.json（不依赖 TypeScript 编译产物）。
+ * best-effort：任何异常不抛给调用方。
+ *
+ * @param {object} opts - CLI opts（含 source 判 mock）
+ * @param {string} evalTaskId
+ * @param {string} nextStep
+ */
+async function writeEvalTaskNextStep(opts, evalTaskId, nextStep, workspace) {
+  if (opts.source === 'mock-smoke') return;
+  try {
+    const statePath = join(workspace || ROOT, '.panshalach-task-state.eval.json');
+    const raw = await readFile(statePath, 'utf8');
+    const file = JSON.parse(raw);
+    const task = file?.tasks?.[evalTaskId];
+    if (task) {
+      task.nextStep = nextStep;
+      task.updatedAt = Date.now();
+      file.lastUpdated = Date.now();
+      await writeFile(statePath, JSON.stringify(file, null, 2), 'utf8');
+    }
+  } catch { /* best-effort */ }
+}
+
+/**
  * 执行单个任务，返回符合 R6 合同的结果记录。
  *
  * 返回形状严格对齐 scripts/eval/results/schema.mjs 的 RESULT_SCHEMA，
@@ -433,6 +479,10 @@ async function runOne(fixture, ablation, opts) {
   // 从 fixture id 提取 taskFamily（如 "T1" → "T1"）
   const taskFamilyMatch = fixture.id.match(/^([A-Z]\d+)/);
   const taskFamily = taskFamilyMatch ? taskFamilyMatch[1] : 'T1';
+
+  // U2/U3: 构建 eval 专用 taskId，格式 eval-<taskFamily>-<ablation>-<seed>
+  // 用于 TaskState 隔离（写入 .panshalach-task-state.eval.json），不与用户任务串扰。
+  const evalTaskId = `eval-${taskFamily}-${ablation.key}-${fixture.seed ?? 42}`;
 
   /** @type {import('./results/schema.mjs').EvalResult} */
   const result = {
@@ -499,7 +549,7 @@ async function runOne(fixture, ablation, opts) {
   try {
     const { stdout, stderr, exitCode, error } = await spawnWithTimeout(
       isWin ? 'npx.cmd' : 'npx', cliArgs, {
-        env: ablationEnv(ablation),
+        env: evalAblationEnv(ablation, evalTaskId),
         cwd: fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT,
         timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS,
       }
@@ -528,8 +578,10 @@ async function runOne(fixture, ablation, opts) {
 
       // 判定 verdict（按 RESULT_SCHEMA 语义：completed / max-steps / aborted / no-verification）
       // 另外用 tags 标注 R6 专用分类（not_applicable / invalid），不进 verdict 枚举
-      if (ablation.injectMemory === false && memory.injectedCardIds.length === 0) {
-        result.tags.push('line-defense-failed');  // B 档零注入 = 防线失败
+      // 防线失败只对 memory-on 档（B/C/C4）有意义：被要求注入却 0 注入 = 防线失守；
+      // A 档（baseline no-memory）0 注入是预期行为，不算失败。
+      if (ablation.injectMemory === true && memory.injectedCardIds.length === 0) {
+        result.tags.push('line-defense-failed');  // 记忆开启档零注入 = 防线失败
         result.verdict = 'no-verification';
         result.stopReason = 'no-verification';
       } else if (ablation.overflowWindow && !/(overflow|truncat|窗口|截断)/i.test(stdout)) {
@@ -540,6 +592,10 @@ async function runOne(fixture, ablation, opts) {
         result.verdict = 'completed';
         result.stopReason = 'completed';
         result.failureTaxonomy = undefined;
+
+        // U2/U3: 成功时写 nextStep = verification done 到 eval TaskStateStore
+        // 失败/异常不写 nextStep（合同约定：nextStep 仅成功态写入）
+        writeEvalTaskNextStep(opts, evalTaskId, 'verification done', fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT).catch(() => {});
       } else if (verification.signal === 'FAIL' || verification.signal === 'TESTS_FAILED') {
         result.verdict = 'no-verification';
         result.stopReason = 'no-verification';
@@ -697,7 +753,7 @@ async function main() {
     console.log(`用法: node scripts/eval/run-eval.mjs [选项]
 
 选项:
-  --tier <A|B|C|C4>    消融档位（默认全部；tier 取自 fixture 元数据，缺省 C）
+  --tier <A|B|C|C4>    消融档位过滤（默认全部 A/B/C/C4；每个任务跑所选档）
   --task <T1|T2|...>   指定任务（默认全部）
   --source <source>    数据来源: real-openpangu | mock-smoke（默认 real-openpangu）
   --mock               等同 --source mock-smoke
@@ -719,17 +775,21 @@ async function main() {
   if (opts.tier) console.log(`[eval] 档位过滤: ${opts.tier}`);
   if (opts.task) console.log(`[eval] 任务过滤: ${opts.task}`);
 
-  const fixtures = await loadTaskFixtures({ tier: opts.tier, taskId: opts.task });
+  const fixtures = await loadTaskFixtures({ taskId: opts.task });
   console.log(`[eval] 加载 ${fixtures.length} 个任务 fixture:`);
   for (const f of fixtures) {
-    const cfg = ablationConfig(f.tier);
-    console.log(`  - ${f.id} [${f.tier}] ${f.title} (prompt ← ${f.promptSource}) (${cfg.description})`);
+    console.log(`  - ${f.id} [${f.tier}] ${f.title} (prompt ← ${f.promptSource})`);
   }
 
   if (fixtures.length === 0) {
     console.log('[eval] 无匹配任务，退出');
     process.exit(0);
   }
+
+  // U5 重构：消融是独立维度——每个任务跑全部所选档位（不再按 fixture.tier 单档配对）
+  const ABLATION_KEYS = Object.keys(ABLATIONS);  // ['A','B','C','C4']
+  const ablationKeys = opts.tier ? [opts.tier] : ABLATION_KEYS;
+  console.log(`[eval] 消融档位: ${ablationKeys.join(', ')} × ${fixtures.length} 任务 = ${ablationKeys.length * fixtures.length} runs`);
 
   if (opts.dry) {
     console.log('[eval] DRY mode — 不执行、不写盘');
@@ -739,22 +799,24 @@ async function main() {
   const results = [];
   let schemaErrors = 0;
   for (const fixture of fixtures) {
-    const cfg = ablationConfig(fixture.tier);
-    console.log(`\n[eval] === ${fixture.id} [${fixture.tier}] ${fixture.title} ===`);
-    console.log(`[eval] 配置: ${cfg.description}`);
-    console.log(`[eval] Prompt (${fixture.prompt.length} chars): ${fixture.prompt.slice(0, 100)}...`);
+    for (const key of ablationKeys) {
+      const cfg = ablationConfig(key);
+      console.log(`\n[eval] === ${fixture.id} [${cfg.key}] ${fixture.title} ===`);
+      console.log(`[eval] 配置: ${cfg.description}`);
+      console.log(`[eval] Prompt (${fixture.prompt.length} chars): ${fixture.prompt.slice(0, 100)}...`);
 
-    const result = await runOne(fixture, cfg, opts);
+      const result = await runOne(fixture, cfg, opts);
 
-    // U4 字段收敛：每条结果过 schema 校验
-    const v = validateResult(result);
-    if (!v.ok) {
-      schemaErrors++;
-      console.error(`  [eval] SCHEMA VIOLATION: ${v.errors.join('; ')}`);
+      // U4 字段收敛：每条结果过 schema 校验
+      const v = validateResult(result);
+      if (!v.ok) {
+        schemaErrors++;
+        console.error(`  [eval] SCHEMA VIOLATION: ${v.errors.join('; ')}`);
+      }
+
+      results.push(result);
+      console.log(`[eval] 结果: verdict=${result.verdict} signal=${result.verification.signal} duration=${result.durationMs}ms`);
     }
-
-    results.push(result);
-    console.log(`[eval] 结果: verdict=${result.verdict} signal=${result.verification.signal} duration=${result.durationMs}ms`);
   }
 
   const summary = generateSummary(results, opts.source);
