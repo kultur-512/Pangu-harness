@@ -23,6 +23,7 @@ import WorkspaceCommand from './commands/WorkspaceCommand.js';
 import ModelCommand from './commands/ModelCommand.js';
 import HistoryCommand from './commands/HistoryCommand.js';
 import RunCommand from './commands/RunCommand.js';
+import TaskCommand from './commands/TaskCommand.js';
 import SimulateCommand from './commands/SimulateCommand.js';
 import ReviewCommand from './commands/ReviewCommand.js';
 import MemoryCommand from './commands/MemoryCommand.js';
@@ -85,6 +86,7 @@ export class Repl {
     this.registry.register(ModelCommand);
     this.registry.register(HistoryCommand);
     this.registry.register(RunCommand);
+    this.registry.register(TaskCommand);
     this.registry.register(SimulateCommand);
     this.registry.register(ReviewCommand);
     this.registry.register(MemoryCommand);
