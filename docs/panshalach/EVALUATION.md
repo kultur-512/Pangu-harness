@@ -60,6 +60,54 @@
 
 ## 4. 结果表（占位 — 待真实 openPangu 数据）
 
+<!-- R6-AUTO-FILL §4 START -->
+
+> 自动生成于 2026-09-08T07:08:19.711Z | 来源: mock-smoke | 模型: mock://smoke
+
+## 汇总
+
+- **总运行数**: 20
+- **有效样本**: 20
+- **通过**: 20 | **失败**: 0
+- **通过率**: 100.0%
+
+### 按消融档位
+
+| 档位 | 总数 | 通过 | 失败 | 无效 | 不适用 | 通过率 |
+|------|------|------|------|------|--------|--------|
+| A | 5 | 5 | 0 | 0 | 0 | 100.0% |
+| B | 5 | 5 | 0 | 0 | 0 | 100.0% |
+| C | 5 | 5 | 0 | 0 | 0 | 100.0% |
+| C4 | 5 | 5 | 0 | 0 | 0 | 100.0% |
+
+
+## 详细结果
+
+| 任务 | 任务族 | 档位 | 结论 | 验证信号 | 注入/验证卡 | Prompt 字符 | 耗时 | 失败分类 |
+|------|------|------|------|----------|------------|------------|------|----------|
+| T1-a-42 | T1 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | 0.0s | overflow-skipped |
+| T2-a-42 | T2 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
+| T3-a-42 | T3 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
+| T4-a-42 | T4 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
+| T5-a-42 | T5 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
+| T1-b-42 | T1 | B | completed | PASS | 2/1 | 19 | ? | none |
+| T2-b-42 | T2 | B | completed | PASS | 2/1 | 19 | ? | none |
+| T3-b-42 | T3 | B | completed | PASS | 2/1 | 19 | ? | none |
+| T4-b-42 | T4 | B | completed | PASS | 2/1 | 19 | ? | none |
+| T5-b-42 | T5 | B | completed | PASS | 2/1 | 19 | ? | none |
+| T1-c-42 | T1 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
+| T2-c-42 | T2 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
+| T3-c-42 | T3 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
+| T4-c-42 | T4 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
+| T5-c-42 | T5 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
+| T1-c4-42 | T1 | C4 | completed | PASS | 1/1 | 20 | 0.0s | none |
+| T2-c4-42 | T2 | C4 | completed | PASS | 1/1 | 20 | ? | none |
+| T3-c4-42 | T3 | C4 | completed | PASS | 1/1 | 20 | ? | none |
+| T4-c4-42 | T4 | C4 | completed | PASS | 1/1 | 20 | ? | none |
+| T5-c4-42 | T5 | C4 | completed | PASS | 1/1 | 20 | ? | none |
+
+<!-- R6-AUTO-FILL §4 END -->
+
 ### 4.1 长程记忆保持（约束召回 / 遵循，中期 1/5/15/30 轮）
 
 | 轮次点 | 基线A 无记忆 召回 | A 遵循 | 基线B 记忆卡 召回 | B 遵循 | 方案C 全能力 召回 | C 遵循 |

@@ -29,10 +29,10 @@ U3 搭好的 R6 eval runner 骨架里，`runOne()` 返回的字段名是 runner 
 ## 阻塞我
 - 无。U4 字段收敛已完成。
 - 待办（U5+）：
-  1. A 档消融定义修正（当前 `injectMemory: true` 反了，A 应该是 no memory baseline）
-  2. fixture × ablation 配对方式重构（每个任务跑所有 ablation，不是只跑自己 tier 的）
-  3. `attemptCount` 真实值透传（等 harness 侧 headless 模式输出结构化事件）
-  4. Repl/RunCommand 三口接线 finalizeTaskMemory（U1 尾巴）
+  1. ✅ A 档消融定义修正（9/8：A → `injectMemory:false`（baseline no-memory），B → `injectMemory:true`（memory on），对齐 schema.mjs ABLATIONS 合同；line-defense-failed 判定同步修正为"memory-on 档零注入"）
+  2. ✅ fixture × ablation 配对重构（9/8：每个任务跑全部 A/B/C/C4（或 `--tier` 过滤），`--tier` 语义从"过滤 fixture.tier"改为"过滤消融档位"）
+  3. ⏳ `attemptCount` 真实值透传（等 harness 侧 headless 模式输出结构化事件）
+  4. ✅ Repl/RunCommand 三口接线 finalizeTaskMemory（9/7 RunCommand 已改走 runAgentTask，吃到 finalizeTaskMemory + TaskState 折叠；仅剩 classic Repl.executeTask 直调 solveIssue）
 
 ## 各分支需要做什么
 - 常规交接，无破坏性变更。

@@ -1,9 +1,6 @@
 // src/cli/repl/commands/RunCommand.ts
 import type { Command, CommandContext, CommandResult, ModelProvider } from '../types.js';
-import { PromptBuilder } from '../PromptBuilder.js';
-import { TierRegistry } from '../../../tiers/TierConfig.js';
 import { expandAtPaths } from '../types.js';
-import { classifyTaskIntent } from '../../taskIntent.js';
 import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../../loop/trajectory.js';
 
 const command: Command = {
@@ -28,7 +25,7 @@ const command: Command = {
     }
     const finalTask = (cleaned && cleaned.trim()) ? cleaned : task;
 
-    // Resolve a usable client via provider; never pass null to PanshalachChaser
+    // Resolve a usable client via provider; never pass null to runAgentTask
     const provider: ModelProvider | undefined = ctx.provider || ctx.session.provider;
     const client = provider?.createClient(ctx.session.model) ?? provider?.createDefaultClient();
     if (!client) {
@@ -37,16 +34,6 @@ const command: Command = {
       if (models.length) ctx.renderer.info('可用模型: ' + models.join(', '));
       return { message: '未提供模型，任务未执行。' };
     }
-
-    const { PanshalachChaser } = await import('../../../PanshalachChaser.js');
-    const chaser = new PanshalachChaser(client, ctx.session.tier);
-
-    // Build rich prompt (tier contract + memory cards + recent context)
-    const tierConfig = TierRegistry.get(ctx.session.tier);
-    const pb = new PromptBuilder(ctx.session, tierConfig);
-    // 意图分类前移——对原始任务文本分类后再富化（chat 不灌工程块）
-    const intent = classifyTaskIntent(finalTask);
-    const enriched = await pb.buildForTask(finalTask, intent);
 
     ctx.renderer.info(`开始执行: ${finalTask}`);
     if (ctx.session.turns.length > 0) {
@@ -70,45 +57,54 @@ const command: Command = {
 
     const start = Date.now();
     try {
-      const result = await chaser.solveIssue(enriched, ctx.session.workspace, {
-        tier: ctx.session.tier as any,
-        yes: true,
-        memoryPreInjected: true,
-        intent, // 入口前移的意图显式传入
-        // one-shot / classic registry 路径与 SSE 主路径共享同一审批/中断语义。
-        // approvalBridge 缺席时（headless 无桥）引擎按拒绝处理（安全默认）；
-        // approvalMode 照传（--approval full 时写操作无需审批即可放行）。
-        approvalMode: ctx.session.approvalMode,
-        sessionAllowlist: ctx.session.sessionApprovalAllowlist,
-        approvalBridge: ctx.approvalBridge,
-        signal: ctx.signal,
-        onStep: (event: any) => {
-          if (event.type === 'step') {
-            ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
-          }
-          if (event.type === 'critique') {
-            ctx.renderer.writeLine(ctx.renderer.color('Critique: ' + event.critique, 'yellow'));
-          }
+      // U2/U3: route through runAgentTask so the one-shot / classic path also
+      // gets TaskState integration (requirement event, verified/failure event,
+      // TaskStateStore fold).  Previously this path called chaser.solveIssue()
+      // directly and bypassed the control plane entirely.
+      const { runAgentTask } = await import('../../../server/runAgentTask.js');
 
-          // Forward to ink bridge for rich UI
-          const b = inkBridge;
-          if (b) {
-            if (event.type === 'step' && typeof b.pushStep === 'function') b.pushStep(event);
-            else if (event.type === 'critique' && typeof b.pushCritique === 'function') b.pushCritique(event);
-            else b.pushFeed?.(event);
-          }
+      const result = await runAgentTask(
+        {
+          task: finalTask,
+          tier: ctx.session.tier,
+          workspace: ctx.session.workspace,
+          model: ctx.session.model,
+          session: ctx.session,
         },
-      });
+        {
+          provider,
+          signal: ctx.signal,
+          approvalMode: ctx.session.approvalMode,
+          sessionAllowlist: ctx.session.sessionApprovalAllowlist,
+          approvalBridge: ctx.approvalBridge,
+          onEvent: (event: any) => {
+            if (event.type === 'step') {
+              ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
+            }
+            if (event.type === 'critique') {
+              ctx.renderer.writeLine(ctx.renderer.color('Critique: ' + event.critique, 'yellow'));
+            }
+
+            // Forward to ink bridge for rich UI
+            const b = inkBridge;
+            if (b) {
+              if (event.type === 'step' && typeof b.pushStep === 'function') b.pushStep(event);
+              else if (event.type === 'critique' && typeof b.pushCritique === 'function') b.pushCritique(event);
+              else b.pushFeed?.(event);
+            }
+          },
+        }
+      );
 
       const duration = Date.now() - start;
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
-      const stopReason = (result as any)?.bestTrajectory?.stopReason;
+      const stopReason = result.stopReason;
       const summary = stopReason === 'completed' ? '已通过验证'
         : stopReason === 'answered' ? '已回复'
         : stopReason === 'error' ? '任务执行失败'
         : result.success ? '已通过验证' : '未通过验证';
       if (stopReason === 'error') {
-        const errLine = String((result as any)?.bestTrajectory?.lastError || '').split('\n')[0].slice(0, 120);
+        const errLine = String(result.error || '').split('\n')[0].slice(0, 120);
         ctx.renderer.error(`完成 (${duration}ms) · ${summary}${errLine ? ' · ' + errLine : ''}`);
       } else {
         ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
@@ -116,16 +112,13 @@ const command: Command = {
 
       // answered 时把模型正文呈现给用户
       if (stopReason === 'answered') {
-        const traj = (result as any)?.bestTrajectory;
-        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        const answerText = result.partialText || '';
         if (answerText) {
           const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
           ctx.renderer.writeLine(preview);
         }
       }
 
-      const traj = (result as any)?.bestTrajectory;
-      const trajSteps = traj?.steps ?? [];
       ctx.session.addTurn({
         id: Date.now().toString(36),
         timestamp: Date.now(),
@@ -139,8 +132,8 @@ const command: Command = {
           budgetReport: result.budgetReport,
           stopReason,
           goal: finalTask,
-          changedFiles: extractChangedFiles(trajSteps),
-          verifyCmd: extractVerifyCommands(trajSteps),
+          changedFiles: result.changedFiles ?? [],
+          verifyCmd: result.verifyCmd ?? [],
           outcome: mapOutcome(stopReason),
         },
       });

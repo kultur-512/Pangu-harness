@@ -385,7 +385,7 @@ export class PromptBuilder {
     if (this.session.currentTaskId) {
       try {
         const { TaskStateStore } = await import('../../memory/taskState.js');
-        const state = new TaskStateStore(this.session.workspace).get(this.session.currentTaskId);
+        const state = new TaskStateStore(this.session.workspace, process.env.PANSHA_TASK_STATE_FILE?.trim() || undefined).get(this.session.currentTaskId);
         if (state) {
           const linesForState: string[] = [
             '\n【任务状态】',

@@ -99,6 +99,22 @@ for (let i = 0; i < rawArgs.length; i++) {
   args.push(a);
 }
 
+/**
+ * 读取 stdin 全部内容（headless 模式，供 R6 eval runner 等外部调用方使用）。
+ * TTY 下直接返回空字符串；非 TTY 下收集所有 chunk 后返回。
+ */
+function readStdin(): Promise<string> {
+  return new Promise((resolve) => {
+    if (process.stdin.isTTY) { resolve(''); return; }
+    const chunks: string[] = [];
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk: string) => chunks.push(chunk));
+    process.stdin.on('end', () => resolve(chunks.join('')));
+    process.stdin.on('error', () => resolve(chunks.join('')));
+    if (process.stdin.readableEnded) { resolve(''); }
+  });
+}
+
 async function main() {
   if (forceClassic) {
     if (args.length === 0) {
@@ -113,6 +129,15 @@ async function main() {
   }
 
   if (args.length === 0) {
+    // headless + stdin：从 stdin 读取任务文本作为 run 命令输入（R6 eval runner 等）
+    if (headlessFlag && !process.stdin.isTTY) {
+      const stdinText = await readStdin();
+      if (stdinText.trim()) {
+        const { runOneShot } = await import('./cli/repl.js');
+        await runOneShot(['run', stdinText.trim()]);
+        return;
+      }
+    }
     // 进入交互 REPL（默认使用 SSE 传输 + 可能富交互界面）
     const { startRepl } = await import('./cli/repl.js');
     await startRepl(resumeArg || branchArg ? { resume: resumeArg ?? 'last', branch: branchArg ?? undefined } : undefined);

@@ -139,9 +139,16 @@ function main() {
   }
 
   // 摘要（merge 注：totalRuns/validSamples/runIds 字段自 wanghaoyu 版并入）
-  const byAblation = {};
+  // U5 字段收敛：byAblation 格式与 run-eval generateSummary 对齐（嵌套统计对象）
+  const byAblation = { A: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 },
+                       B: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 },
+                       C: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 },
+                       C4: { total: 0, passed: 0, failed: 0, invalid: 0, notApplicable: 0 } };
   for (const r of results) {
-    byAblation[r.ablation] = (byAblation[r.ablation] || 0) + 1;
+    const t = byAblation[r.ablation];
+    if (!t) continue;
+    t.total++;
+    t.passed++;
   }
 
   const summary = {
