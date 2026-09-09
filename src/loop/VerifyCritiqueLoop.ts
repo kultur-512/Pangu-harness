@@ -19,7 +19,7 @@ import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfile
 import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawInjectionLevel, Tier } from '../tiers/TierConfig.js';
 import { classifyApiError } from '../model/errorClassify.js';
 import type { StaticAnalysisResult } from '../review/Reviewer.js';
-import type { TurnStopReason } from '../cli/repl/types.js';
+import type { ChatMessage, TurnStopReason } from '../cli/repl/types.js';
 
 /**
  * Critique 构造上下文
@@ -102,6 +102,13 @@ export interface VerifyCritiqueLoopOptions {
   windowTokens?: number;
 
   /**
+   * 0.8 P2（M1-PROTOCOL）：messages 模式下 system 首消息内容
+   * （PromptBuilder.buildStableSegment 产物，任务间字节级不变 → 网关前缀缓存可命中）。
+   * 缺省时 messages 栈以首条 user 起始（chat 通道仍可用）。
+   */
+  systemSegment?: string;
+
+  /**
    * M2-2 卡死检测硬闸阈值（hermes tool_guardrails 移植）。缺省
    * exactFailureBlockAfter=5 / sameToolFailureHaltAfter=8 / noProgressBlockAfter=5。
    * 与 maxConsecutiveFailures 并行（互不替代）。
@@ -146,6 +153,13 @@ export class VerifyCritiqueLoop {
   private currentDiff?: string;
   /** 保存初始 prompt，用于尽力提取 user request（不影响主逻辑） */
   private initialPromptForContext: string = '';
+
+  // 0.8 P2（M1-PROTOCOL）：任务内 messages 栈（chat 通道专用；与 steps 同源维护）。
+  private messages: ChatMessage[] = [];
+  /** messages 首消息的 system 段（由 chaser 注入的 stable 段文本）。 */
+  private systemSegment?: string;
+  /** 自增工具调用 id 序号（文本协议解析无原生 id 时合成 tool_call_id 配对用）。 */
+  private toolCallSeq = 0;
 
   // M2-5：context_overflow 联动（overflow → 强制压缩 → 重试本步，每任务 ≤1 次）
   /** 本任务是否已用过 overflow 重试（防循环：每任务最多 1 次）。 */
@@ -195,6 +209,7 @@ export class VerifyCritiqueLoop {
     this.currentDiff = options.currentDiff;
     this.signal = options.signal;
     this.windowTokens = options.windowTokens;
+    this.systemSegment = options.systemSegment;
     this.onContextOverflow = options.onContextOverflow;
     // M2-2 卡死检测硬闸（hermes tool_guardrails 移植）：loop 生命周期实例。
     this.guardrails = new ToolCallGuardrailController(options.guardrails);
@@ -238,6 +253,164 @@ export class VerifyCritiqueLoop {
     }
   }
 
+  /**
+   * 0.8 P2（M1-PROTOCOL）双通道门：模型客户端具备 messages 能力
+   * （chat / streamChatMessages）且 PANSHA_MESSAGES_MODE !== 'off' 时走
+   * chat 通道（messages 栈组装）；否则走 complete(prompt) 文本路径
+   * （与 0.7.4 逐字节等价）。
+   */
+  private get messagesModeEnabled(): boolean {
+    if (process.env.PANSHA_MESSAGES_MODE === 'off') return false;
+    const c = this.modelClient as any;
+    return typeof c?.chat === 'function' || typeof c?.streamChatMessages === 'function';
+  }
+
+  /** 0.8 P2：剥离工具调用原文块，剩余面向模型的"文本部分"（assistant 消息 content）。 */
+  private stripToolBlocks(rawContent: string, toolCalls: ToolCall[]): string {
+    let out = String(rawContent ?? '');
+    for (const c of toolCalls) {
+      if (typeof c.rawBlock === 'string' && c.rawBlock) out = out.split(c.rawBlock).join('');
+    }
+    return out;
+  }
+
+  /**
+   * 0.8 P2：内部 ToolCall[] → wire 形状 tool_calls（assistant 消息透传）。
+   * 原生 FC（rawBlock 为 JSON）还原原 id 与 arguments；文本协议解析无 id →
+   * 自增合成（tool 消息以同 id 配对）。
+   */
+  private buildWireToolCalls(toolCalls: ToolCall[]): unknown[] {
+    return toolCalls.map((c) => {
+      if (typeof c.rawBlock === 'string' && c.rawBlock) {
+        try {
+          const t = JSON.parse(c.rawBlock);
+          if (t && t.function && typeof t.function.name === 'string') {
+            const entry: any = { type: 'function', function: { name: t.function.name } };
+            if (typeof t.function.arguments === 'string') entry.function.arguments = t.function.arguments;
+            entry.id = (typeof t.id === 'string' && t.id) ? t.id : `call_${++this.toolCallSeq}`;
+            return entry;
+          }
+        } catch {
+          // 文本协议 rawBlock 非 JSON → 走下方合成
+        }
+      }
+      const argsObj: Record<string, unknown> = {};
+      for (const p of c.params ?? []) {
+        if (p && typeof p.name === 'string') {
+          try { argsObj[p.name] = JSON.parse(p.value); } catch { argsObj[p.name] = p.value; }
+        }
+      }
+      return {
+        id: `call_${++this.toolCallSeq}`,
+        type: 'function',
+        function: { name: c.toolName, arguments: JSON.stringify(argsObj) },
+      };
+    });
+  }
+
+  /**
+   * 0.8 P2：工具结果回灌 messages 栈（chat 通道）。结果按 '\n---\n' 分段数
+   * 与调用数匹配时逐 call 切分；否则整段回灌每个 tool 消息（配对完整优先）。
+   */
+  private pushToolMessages(toolCalls: ToolCall[], wireCalls: unknown[] | null, resultText: string): void {
+    const segments = String(resultText ?? '').split('\n---\n');
+    const perCall = segments.length === toolCalls.length ? segments : null;
+    toolCalls.forEach((c, i) => {
+      const wireId = wireCalls ? (wireCalls[i] as any)?.id : undefined;
+      this.messages.push({
+        role: 'tool',
+        toolCallId: wireId ? String(wireId) : `call_${++this.toolCallSeq}`,
+        name: c.toolName,
+        content: perCall ? perCall[i] : (resultText || ''),
+      });
+    });
+  }
+
+  /**
+   * 0.8 P2：messages 模式下每步追加的 user 消息（镜像文本路径的逐步注入：
+   * iron 头/截断续跑/overflow 提示/格式提醒/工程建议/风格提醒）。
+   * 消费型旗标与文本路径共享（同一 run 生命周期只走一条轨）。
+   */
+  private buildMessagesStepInjection(stepNum: number, highRigor: boolean): string {
+    const lead: string[] = [];
+    const tail: string[] = [];
+
+    // 截断续跑提示——上一步响应被 max_tokens 截断时，注入一次性提醒。
+    if (this.pendingTruncationNotice) {
+      this.pendingTruncationNotice = false;
+      lead.push('【上一条响应被 max_tokens 截断，请精简后继续】如需调用工具请保持调用块完整；如为答复请精简内容后输出。');
+    }
+    // M2-5 overflow 强制压缩提示——重试本步时注入一次性提醒。
+    if (this.pendingOverflowNotice) {
+      this.pendingOverflowNotice = false;
+      lead.push('【上下文长度已超限——历史已强制压缩（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】');
+    }
+    // answered 空转防呆——格式提醒重试一步（消费型旗标）。
+    if (this.pendingFormatNudge) {
+      this.pendingFormatNudge = false;
+      lead.push(StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames())
+        + '\n【重要】上一步你只输出了文字说明而没有输出任何工具调用块。当前是执行类任务：请立即输出一个工具调用块开始实际操作（如 read_file / bash / write_file），不要只描述计划。');
+    }
+
+    if (highRigor) {
+      const injectionLevel = this.ironLawInjectionLevel ?? 'medium';
+      const shouldInjectIronHeader = injectionLevel === 'highest'
+        || (injectionLevel === 'high' && (this.readBeforeWriteViolations > 0 || this.stepsSinceLastRealVerification >= 3 || stepNum <= 2))
+        || (injectionLevel === 'medium_high' && (this.readBeforeWriteViolations > 0 || this.stepsSinceLastRealVerification >= 3 || stepNum <= 3))
+        || (injectionLevel === 'medium' && (this.readBeforeWriteViolations > 0 || stepNum <= 1));
+
+      if (shouldInjectIronHeader) {
+        const ironHeader = StructuredReasoner.getEngineeringIronLawsHeader();
+        const ironStatus = StructuredReasoner.buildCurrentIronLawStatus({
+          filesRead: this.filesReadThisTrajectory.size,
+          filesWritten: this.filesWrittenThisTrajectory.size,
+          rbwViolations: this.readBeforeWriteViolations,
+          verifiedCount: this.verificationAttempts,
+          stepsSinceLastVerification: this.stepsSinceLastRealVerification,
+        });
+        lead.push(ironHeader + '\n\n' + ironStatus);
+      }
+
+      const hasFormatIssue = this.steps.some(s => s.detectedFormat && String(s.detectedFormat).includes('loose'));
+      const formatEarlyBoundMap: Record<string, number> = {
+        minimal: 1, low: 1, medium: 2, medium_high: 3, high: 4, highest: 5,
+      };
+      const formatEarlyBound = formatEarlyBoundMap[injectionLevel] ?? 2;
+      if ((injectionLevel === 'minimal' || injectionLevel === 'low') && !hasFormatIssue) {
+        // 跳过格式提示
+      } else if (stepNum <= formatEarlyBound || hasFormatIssue) {
+        tail.push(StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames()));
+      }
+
+      if (this.verifyFirstBias && this.stepsSinceLastRealVerification >= 3 && stepNum >= 4) {
+        tail.push('【工程建议】建议尽快完成一次明确验证（测试/状态/效果确认），避免长时间无确认的修改。');
+      }
+
+      if (this.terminalNoCheckViolations > 0) {
+        tail.push('【Terminal 实践】关键命令后请检查 exit code / 输出 / 状态，确认效果。');
+      }
+      if (this.automationStepsWithoutEffectCheck > 0) {
+        tail.push('【Automation 实践】动作后请用 CheckStatus / VerifyEffect 确认业务效果。');
+      }
+      if (this.readBeforeWriteViolations > 0) {
+        tail.push('【Read-Before-Write】修改前先完整读文件，这是高纪律模式保证质量的核心纪律。');
+      }
+    } else {
+      if (stepNum <= 1) {
+        tail.push(StructuredReasoner.buildToolCallFormatEnforcementPrompt(this.availableToolNames()));
+      }
+      if (this.readBeforeWriteViolations > 0) {
+        tail.push('【小提醒】最近有在未读取文件的情况下直接修改文件的倾向，建议先读取再修改。');
+      }
+      if (this.stepsSinceLastRealVerification >= 3) {
+        tail.push('【小提醒】已经连续几步没有明显验证，建议适当确认修改效果。');
+      }
+    }
+
+    const all = [...lead, ...tail];
+    return all.length ? all.join('\n\n') : '';
+  }
+
   async run(initialPrompt: string): Promise<{
     success: boolean;
     steps: LoopStep[];
@@ -253,6 +426,18 @@ export class VerifyCritiqueLoop {
     let partialText: string | undefined;
     const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode);
 
+    // 0.8 P2（M1-PROTOCOL）：messages 栈种子——system 段一次 + 首条 user（任务+volatile）。
+    // 双通道门在 run 生命周期内恒一（env / 客户端能力不变）。
+    const messagesMode = this.messagesModeEnabled;
+    if (messagesMode) {
+      this.messages = [];
+      this.toolCallSeq = 0;
+      if (this.systemSegment) {
+        this.messages.push({ role: 'system', content: this.systemSegment });
+      }
+      this.messages.push({ role: 'user', content: initialPrompt });
+    }
+
     while (!done && stepNum < this.maxSteps) {
       if (this.signal?.aborted) {
         stopReason = 'aborted';
@@ -260,8 +445,10 @@ export class VerifyCritiqueLoop {
       }
       stepNum++;
 
-      const history = this.buildHistoryPrompt();
-      let prompt = `${initialPrompt}\n\n[历史执行记录]\n${history}`;
+      let prompt = '';
+      if (!messagesMode) {
+        const history = this.buildHistoryPrompt();
+        prompt = `${initialPrompt}\n\n[历史执行记录]\n${history}`;
 
       // 截断续跑提示——上一步响应被 max_tokens 截断时，注入一次性
       // 提醒（消费型旗标，不是新状态机）。
@@ -354,6 +541,11 @@ export class VerifyCritiqueLoop {
           prompt += `\n\n【小提醒】已经连续几步没有明显验证，建议适当确认修改效果。`;
         }
       }
+      } else {
+        // 0.8 P2：messages 通道——逐步注入作为独立 user 消息追加到 messages 栈。
+        const stepUser = this.buildMessagesStepInjection(stepNum, highRigor);
+        if (stepUser) this.messages.push({ role: 'user', content: stepUser });
+      }
 
       // P1.1 请求侧：真实引擎带 toolSchemas() 时走原生 function calling；
       // mock/旧引擎没有该方法 → 不带 tools，维持文本协议路径（测试兼容）。
@@ -366,10 +558,15 @@ export class VerifyCritiqueLoop {
       // → chaser 落 error 终态（0.7.4 语义不变）。
       let rawOrObj: any;
       try {
-        rawOrObj = await this.modelClient.complete(prompt, {
-          ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
-          signal: this.signal,
-        });
+        rawOrObj = messagesMode
+          ? await this.modelClient.chat(this.messages, {
+              ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
+              signal: this.signal,
+            })
+          : await this.modelClient.complete(prompt, {
+              ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
+              signal: this.signal,
+            });
       } catch (e: any) {
         if (classifyApiError(e) === 'context_overflow') {
           if (!this.overflowNotified) {
@@ -422,6 +619,19 @@ export class VerifyCritiqueLoop {
         detectedFormat = res.detectedFormat ?? detectedFormat;
       }
 
+      // 0.8 P2：本步模型输出挂入 messages 栈（assistant：文本部分 + wire tool_calls）。
+      // 原生 FC（带 toolSchemas）下 assistant 携带 wire 形状 tool_calls（id 与后续
+      // tool 消息配对）；文本协议（无 toolSchemas）不携带，tool 结果经 toWireMessages
+      // 降级为 user 消息标注。
+      let wireCalls: unknown[] | null = null;
+      if (messagesMode) {
+        const native = Array.isArray(toolSchemas) && toolSchemas.length > 0;
+        wireCalls = native && toolCalls.length > 0 ? this.buildWireToolCalls(toolCalls) : null;
+        const assistantMsg: ChatMessage = { role: 'assistant', content: this.stripToolBlocks(rawContent, toolCalls) };
+        if (wireCalls) assistantMsg.toolCalls = wireCalls;
+        this.messages.push(assistantMsg);
+      }
+
       // 中断现场落盘：中止检查移到解析之后——abort 不再丢现场：
       //   - 本步已流出正文（剥离结构块）作为 partialText 随轨迹带回宿主；
       //   - 本步已解析的 toolCalls 补合成失败结果（call/result 成对进历史，
@@ -430,16 +640,18 @@ export class VerifyCritiqueLoop {
       if (this.signal?.aborted) {
         const partial = this.extractUserText(rawContent);
         if (toolCalls.length > 0) {
+          const abortedResult = toolCalls
+            .map((c) => `TOOL_ERROR: ABORTED aborted before dispatch: ${c.toolName}`)
+            .join('\n---\n');
           this.steps.push({
             stepNumber: stepNum,
             reasoning,
             toolCalls,
-            verificationResult: toolCalls
-              .map((c) => `TOOL_ERROR: ABORTED aborted before dispatch: ${c.toolName}`)
-              .join('\n---\n'),
+            verificationResult: abortedResult,
             verificationSignal: 'FAIL',
             detectedFormat,
           });
+          if (messagesMode) this.pushToolMessages(toolCalls, wireCalls, abortedResult);
         }
         if (partial) partialText = partial;
         stopReason = 'aborted';
@@ -527,9 +739,11 @@ export class VerifyCritiqueLoop {
             done = true;
           }
           this.stepsSinceLastRealVerification++;
+          if (messagesMode) this.pushToolMessages(toolCalls, wireCalls, verificationResult);
         } else {
           verificationResult = await this.verificationEngine.execute(toolCalls);
           signal = this.classifySignal(verificationResult);
+          if (messagesMode) this.pushToolMessages(toolCalls, wireCalls, verificationResult);
 
           // M2-2：execute 后逐 call 喂结果。failed 复用 loop 分段信号语义
           // （classifySignal 已排除只读正文偶含 FAIL/ERROR 字样的误判）。

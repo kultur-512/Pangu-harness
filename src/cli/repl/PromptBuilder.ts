@@ -155,6 +155,10 @@ export class PromptBuilder {
   private duplicatesSkipped = 0;
   // previous environment snapshot (for incremental env-delta injection)
   private prevEnvSnapshot: any = null;
+  // 0.8 P2（M1-PROTOCOL）：三段拆分的共享行缓冲（buildForTask = summary 块 + stable + volatile 拼接）
+  private buildLines: string[] = [];
+  /** 本 build 溢出记忆拉取数（auto-pull 前后 injectedCardIds 差）。 */
+  private lastMemoryOverflowCount = 0;
 
   // collect relevant file hints from the current task for reference-based memory filtering
   private collectCurrentWorkspaceFiles(issue: string): string[] {
@@ -197,7 +201,28 @@ export class PromptBuilder {
    * intent 信息（分类发生在 chaser.solveIssue 内），故仅参数化，接线待意图分类前移。
    */
   async buildForTask(issue: string, intent?: TaskIntent): Promise<string> {
-    // reset dedup state for this build
+    // 0.8 P2（M1-PROTOCOL）三段拆分：stable（任务间字节级不变）+ volatile（每任务变）。
+    // 对外产物与 0.7.4 逐字节等价（summary 块 + 两段拼接 + 压缩）。
+    const stable = this.buildStableSegment(intent);
+    const volatile = await this.buildVolatileSegment(issue, intent);
+    const joined2 = this.buildLines.join('\n');
+    const compacted2 = this.compactIfNeeded(joined2);
+
+    // === injection summary at the very top (debug block) ===
+    const summary: InjectionSummary = this.buildInjectionSummary();
+    const summaryBlock = `<injection_summary>\n${JSON.stringify(summary, null, 2)}\n</injection_summary>\n`;
+
+    this.lastBuildMeta = {
+      prompt: summaryBlock + compacted2,
+      memoryCardCount: this.injectedKeys.has('memory-cards') ? 1 : 0,
+      memoryOverflowCount: this.lastMemoryOverflowCount,
+      injectedCardIds: [...this.lastInjectedCardIds],
+    };
+    return summaryBlock + compacted2;
+  }
+
+  /** 每次 build 的共享状态复位（幂等——stable/volatile 入口均可调用，序列调用不受影响）。 */
+  private resetBuildState(): void {
     this.injectedKeys = new Set<string>();
     this.duplicatesSkipped = 0;
     // reset per-build auto-pull state at build START (L1 populates ids later)
@@ -205,29 +230,37 @@ export class PromptBuilder {
     this.lastInjectedCardIds = [];
     this.lastKeywords = [];
     this.memoryNumberSeq = 0;
+  }
 
-    const lines: string[] = [];
-
-    // collect relevant workspace files from this task (for reference filtering)
-    const currentWsFiles = this.collectCurrentWorkspaceFiles(issue);
+  /**
+   * 0.8 P2（M1-PROTOCOL）三段拆分之一：stable 段——任务间字节级不变的部分：
+   * 身份 + L0 硬约束 + tier 契约（XML + 文本 + 运行时契约）+ negative_tool_list。
+   * intent='chat' 时跳过重工程块（L0/档位契约/negative list——F7 语义不变）。
+   * messages 模式下由 chaser 置于 role:'system' 首消息（任务间字节级相同 →
+   * 网关前缀缓存可命中）。
+   */
+  buildStableSegment(intent?: TaskIntent): string {
+    this.resetBuildState();
+    this.buildLines = [];
+    const start = this.buildLines.length;
 
     // === System identity (always) ===
     const systemLine = `你是烛龙（Zhulong），一个基于 openPangu 的记忆增强长程上下文智能体，面向软件工程长期维护场景（内部代号 Panshalach / 盘沙拉克）。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
-    lines.push(systemLine);
+    this.buildLines.push(systemLine);
 
     // === L0 硬约束（≤3 条精选，非整段注入） ===
     // F7：chat 意图跳过重工程块（验证铁律：写前必读/变更需可验证）——纯对话不做
     // 工程纪律教学；不传 intent 时行为不变（向后兼容）。
     assertL0Count();
     if (intent !== 'chat') {
-      this.tryInject('l0-invariants', `\n【硬约束】\n${L0_INVARIANTS.map((i) => `- ${i}`).join('\n')}`, lines);
+      this.tryInject('l0-invariants', `\n【硬约束】\n${L0_INVARIANTS.map((i) => `- ${i}`).join('\n')}`, this.buildLines);
     }
 
     // === Structured tier_constraint — MUST ALWAYS be injected (no dedup) ===
     const constraint = TierConstraintRegistry.get(this.session.tier);
-    lines.push(constraint.xml);
+    this.buildLines.push(constraint.xml);
     if (constraint.text) {
-      lines.push(constraint.text);
+      this.buildLines.push(constraint.text);
     }
 
     // === Tier runtime contract (iron-law strength, memory, critique cadence) ===
@@ -235,7 +268,7 @@ export class PromptBuilder {
     // (tests assert 纪律规则强度 presence in the task prompt, not only the header).
     // F7：chat 意图跳过（纪律规则强度/核心纪律规则是重工程块）。
     if (intent !== 'chat') {
-      this.tryInject('tier-runtime-contract', `\n【档位契约】\n${this.buildTierContract()}`, lines);
+      this.tryInject('tier-runtime-contract', `\n【档位契约】\n${this.buildTierContract()}`, this.buildLines);
     }
 
     // === negative tool list — names in the prompt are NOT tools ===
@@ -255,8 +288,25 @@ export class PromptBuilder {
         '· 任何未在【可用工具】列表中的名称',
         '如需读取文件，使用 read_file；如需修改，使用 edit_file 或 write_file。',
         '</negative_tool_list>',
-      ], lines);
+      ], this.buildLines);
     }
+
+    return this.buildLines.slice(start).join('\n');
+  }
+
+  /**
+   * 0.8 P2（M1-PROTOCOL）三段拆分之二：volatile 段——每任务变的部分：
+   * 项目验证命令/plan-mode/thinking-budget/记忆卡/技能/特性/ENV/锚点/任务状态/
+   * 最近上下文/当前任务/压缩注记 + 溢出记忆拉取（auto-pull）。
+   * messages 模式下由 chaser 与任务文本合流进首条 user。
+   */
+  async buildVolatileSegment(issue: string, intent?: TaskIntent): Promise<string> {
+    this.resetBuildState();
+    const lines = this.buildLines;
+    const start = lines.length;
+
+    // collect relevant workspace files from this task (for reference filtering)
+    const currentWsFiles = this.collectCurrentWorkspaceFiles(issue);
 
     // === /init closed loop (learn P0-2): inject the project's AGENTS.md
     // verification commands as an asset — the model no longer has to guess
@@ -427,9 +477,6 @@ export class PromptBuilder {
       this.tryInject('compaction-note', '\n（历史较长，已做内部压缩，保留关键决策与用户原文要点）', lines);
     }
 
-    const joined = lines.join('\n');
-    const compacted = this.compactIfNeeded(joined);
-
     // === 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===
     const AUTO_PULL_TIERS = new Set(['standard', 'high']);
     const preAutoPullCount = this.lastInjectedCardIds.length; // L1 已注入 ids 数
@@ -472,21 +519,9 @@ export class PromptBuilder {
       }
     }
     const memoryOverflowCount = this.lastInjectedCardIds.length - preAutoPullCount;
+    this.lastMemoryOverflowCount = memoryOverflowCount;
 
-    const joined2 = lines.join('\n');
-    const compacted2 = this.compactIfNeeded(joined2);
-
-    // === injection summary at the very top (debug block) ===
-    const summary: InjectionSummary = this.buildInjectionSummary();
-    const summaryBlock = `<injection_summary>\n${JSON.stringify(summary, null, 2)}\n</injection_summary>\n`;
-
-    this.lastBuildMeta = {
-      prompt: summaryBlock + compacted2,
-      memoryCardCount: this.injectedKeys.has('memory-cards') ? 1 : 0,
-      memoryOverflowCount,
-      injectedCardIds: [...this.lastInjectedCardIds],
-    };
-    return summaryBlock + compacted2;
+    return lines.slice(start).join('\n');
   }
 
   /** 本 build 的元信息（buildForTask 返回值扩展——不破坏既有 string 返回） */
