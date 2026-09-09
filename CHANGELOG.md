@@ -5,6 +5,7 @@
 依据 GAP-MATRIX-0.8 交叉对比与 PLAN-0.8-FOUNDATION（换地基、保语义）：
 
 - **M1-TurnController 四模块搬家**：sseInteractive.ts 2200→358 行（会话壳），新增 `src/cli/repl/turn/{TurnContext,TurnRenderer,CommandRouter,TurnController}`（共 1967 行）——零行为变更（455 行行为锁定测试全程绿）
+- **M1-PROTOCOL messages 双通道**：`ChatMessage` + `ModelClient.chat/streamChatMessages` 加性接口；openai-compatible `toWireMessages` 单点映射（system 原样/assistant tool_calls 透传/tool role 按网关能力配对或文本降级）；loop 维护 messages 栈（system 一次 + assistant/tool 交替），双通道门（chat 能力 + `PANSHA_MESSAGES_MODE=off` 逃生门）；PromptBuilder 拆 stable/volatile 三段（stable→system 首条，任务间字节级相同→网关前缀缓存可命中）；`PANSHA_MESSAGES_MODE=off` 与 0.7.4 逐字节等价（deepEqual 锁定）
 - **M2-1 工具并行分段调度**：只读段并发≤3 + 写/bash/MCP barrier 串行；结果/事件按原始序装配；批次 420s 超时
 - **M2-2 卡死硬闸**（guardrails.ts）：同参数连败 5 阻断/同工具败 8 终局/幂等同结果 5 阻断——905s 空转家族最后栅栏
 - **M2-3 工具结果落盘回读**：超 20k 输出写 scratch 目录 + persisted-output 预览；read_file 永不落盘
