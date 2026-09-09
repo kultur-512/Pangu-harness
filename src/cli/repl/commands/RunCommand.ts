@@ -111,8 +111,11 @@ const command: Command = {
       }
 
       // answered 时把模型正文呈现给用户
+      // R1（0.8.1）：改读 result.answerText（runAgentTask 从轨迹末步带出的正文）。
+      // 旧实现误读 partialText——那是 aborted 专用字段，answered 时恒空 →
+      // headless 路径 answered 正文不可见。
       if (stopReason === 'answered') {
-        const answerText = result.partialText || '';
+        const answerText = result.answerText || '';
         if (answerText) {
           const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
           ctx.renderer.writeLine(preview);
@@ -135,6 +138,8 @@ const command: Command = {
           changedFiles: result.changedFiles ?? [],
           verifyCmd: result.verifyCmd ?? [],
           outcome: mapOutcome(stopReason),
+          // R6（0.8.1）：chat 答案落盘（截 400 字符防膨胀）
+          ...(result.answerText ? { answerText: result.answerText.slice(0, 400) } : {}),
         },
       });
 

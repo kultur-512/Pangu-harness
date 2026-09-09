@@ -344,12 +344,21 @@ ${examples.join('\n\n')}
    * "对话不调工具"与"每步必须输出工具块"的指令冲突。
    */
   static buildChatDirective(issue: string): string {
-    return `你是烛龙（Zhulong），交互式工程助手。
-这是一次普通对话/提问，不是需要改代码、跑验证的工程任务。
-请直接、简洁地回答用户，不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签。
+    return `${this.buildChatSystemDirective()}
 
 用户的输入：
 ${issue}`;
+  }
+
+  /**
+   * R3（0.8.1）：chat 流式 messages 通道的 system 指令（不含用户输入——
+   * 输入走独立 user 消息，避免 buildChatDirective 整段内嵌导致的输入重复注入）。
+   * 与 buildChatDirective 的指令文本逐字节一致（后者 = 本指令 + 用户输入段）。
+   */
+  static buildChatSystemDirective(): string {
+    return `你是烛龙（Zhulong），交互式工程助手。
+这是一次普通对话/提问，不是需要改代码、跑验证的工程任务。
+请直接、简洁地回答用户，不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签。`;
   }
 
   /**

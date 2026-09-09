@@ -230,13 +230,16 @@ describe('M1 行为锁定：abort → partialText 落盘', () => {
 // ==================== 3) answered 路径：正文流式呈现 / 兜底全文 ====================
 
 describe('M1 行为锁定：answered 正文呈现', () => {
-  it('line 模式无流式 → 兜底输出全文（bestTrajectory 末步 result）', async () => {
+  it('line 模式无流式 → 兜底输出全文（RunResult.answerText）', async () => {
     const { ctx, renderer, controller } = makeHarness();
     useFakeRun(ctx, async () => ({
       success: true,
       stopReason: 'answered',
       durationMs: 10,
-      bestTrajectory: { steps: [{ result: '模型最终回答全文ABC' }] },
+      // R1（0.8.1）：mock 与真实 RunResult 形状对齐——runAgentTask 返回
+      // answerText（从轨迹末步 result 带出），不存在 bestTrajectory 字段。
+      // 旧 mock 塞了实现没有的 bestTrajectory → 假阴性（漂移掩盖正文丢失）。
+      answerText: '模型最终回答全文ABC',
     }));
 
     await controller.runTask('你好');
@@ -255,7 +258,7 @@ describe('M1 行为锁定：answered 正文呈现', () => {
         success: true,
         stopReason: 'answered',
         durationMs: 10,
-        bestTrajectory: { steps: [{ result: '模型最终回答全文ABC' }] },
+        answerText: '模型最终回答全文ABC',
       };
     });
 
@@ -278,12 +281,12 @@ describe('M1 行为锁定：answered 正文呈现', () => {
     useFakeRun(ctx, async (req, cctx) => {
       cctx.onEvent({ type: 'message.start' });
       cctx.onEvent({ type: 'message.delta', text: '流式片段' });
-      cctx.onEvent({ type: 'result', stopReason: 'answered', success: true });
+      cctx.onEvent({ type: 'result', stopReason: 'answered', success: true, answerText: '模型最终回答全文ABC' });
       return {
         success: true,
         stopReason: 'answered',
         durationMs: 10,
-        bestTrajectory: { steps: [{ result: '模型最终回答全文ABC' }] },
+        answerText: '模型最终回答全文ABC',
       };
     });
 
@@ -299,6 +302,12 @@ describe('M1 行为锁定：answered 正文呈现', () => {
     );
     assert.deepEqual(bridge.running, [true, false], 'setRunning(true) 提交、result 后复位');
     assert.equal(session.turns[session.turns.length - 1].result.stopReason, 'answered');
+    // R6（0.8.1）：chat 答案落盘——turn.result.answerText（截 400 字符）
+    assert.equal(
+      (session.turns[session.turns.length - 1].result as any).answerText,
+      '模型最终回答全文ABC',
+      'answered 回合的 turn.result 必须携带 answerText（问答对落盘）'
+    );
   });
 });
 

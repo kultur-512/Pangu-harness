@@ -42,6 +42,12 @@ export interface RunResult {
   budgetReport?: any;
   /** aborted 时本步已流出的模型正文（部分结果，宿主落 turn 用）。 */
   partialText?: string;
+  /**
+   * R1（0.8.1）：chat 直答 / loop answered 的模型正文（取轨迹末步 result）。
+   * 三端（line/rich/headless）呈现与 turn 落盘的唯一正文通道——此前
+   * RunResult 无此字段，宿主读不存在的 bestTrajectory → 正文三端不可见。
+   */
+  answerText?: string;
   /** R3: 变更文件集（从 trajectory 步骤提取） */
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
@@ -259,6 +265,15 @@ export async function runAgentTask(
     // aborted 时把已流出正文带给宿主（sseInteractive/Repl 落 turn）
     const partialText = result.bestTrajectory?.partialText as string | undefined;
 
+    // R1（0.8.1）：answered 正文带出——chat 直答正文在轨迹末步 result 里，
+    // 此前 RunResult 不携带 → TurnController/RunCommand 三端全部拿不到正文。
+    const lastStepResult = trajSteps.length > 0
+      ? String(trajSteps[trajSteps.length - 1]?.result ?? '')
+      : '';
+    const answerText = result.bestTrajectory?.stopReason === 'answered' && lastStepResult.trim()
+      ? lastStepResult
+      : undefined;
+
     ctx.onEvent({
       type: 'result',
       success,
@@ -267,6 +282,7 @@ export async function runAgentTask(
       changedFiles,
       verifyCmd,
       ...(partialText ? { partialText } : {}),
+      ...(answerText ? { answerText } : {}),
     });
 
     return {
@@ -277,6 +293,7 @@ export async function runAgentTask(
       changedFiles,
       verifyCmd,
       ...(partialText ? { partialText } : {}),
+      ...(answerText ? { answerText } : {}),
     };
   } catch (err: any) {
     ctx.onEvent({ type: 'error', message: err?.message || String(err) });

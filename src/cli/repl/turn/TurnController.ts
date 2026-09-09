@@ -345,6 +345,10 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
         : stopReason === 'aborted' ? '已中断'
         : stopReason === 'error' ? '任务执行失败'
         : r?.success ? '已通过验证' : '未通过验证';
+      // R1（0.8.1）：正文改读 RunResult.answerText（runAgentTask 从轨迹末步带出）。
+      // 旧实现读 (r as any).bestTrajectory——RunResult 无此字段，恒 undefined →
+      // chat/answered 正文三端不可见（lock 测试 mock 漂移掩盖成假阴性）。
+      const answerText = stopReason === 'answered' ? String((r as any)?.answerText ?? '') : '';
       const turn = {
         id: Date.now().toString(36),
         timestamp: Date.now(),
@@ -362,6 +366,8 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
           changedFiles: (r as any)?.changedFiles ?? [],
           verifyCmd: (r as any)?.verifyCmd ?? [],
           outcome: mapOutcome(stopReason),
+          // R6（0.8.1）：chat 答案落盘（截 400 字符防膨胀；resume/最近上下文可见问答对）
+          ...(answerText ? { answerText: answerText.slice(0, 400) } : {}),
         },
       };
       try { ctx.session.addTurn(turn); } catch {}
@@ -369,14 +375,12 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       // answered 时把模型正文呈现给用户（/edit 可取回）
       // 正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
       // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。
-      if (stopReason === 'answered' && r) {
-        const traj = (r as any).bestTrajectory;
-        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
-        if (answerText && useRich && typeof bridge.pushFeed === 'function') {
+      if (answerText) {
+        if (useRich && typeof bridge.pushFeed === 'function') {
           bridge.pushFeed({ type: 'markdown', content: answerText });
-        } else if (answerText && !useRich && ctx.lineUi.streamedAnswerChars < String(answerText).length) {
+        } else if (!useRich && ctx.lineUi.streamedAnswerChars < answerText.length) {
           // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
-          const rest = String(answerText).slice(ctx.lineUi.streamedAnswerChars);
+          const rest = answerText.slice(ctx.lineUi.streamedAnswerChars);
           if (rest) {
             ctx.renderer.writeLine(ctx.renderer.color(rest, 'white'));
             recordOutput(ctx, rest);

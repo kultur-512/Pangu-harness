@@ -159,6 +159,8 @@ export class PromptBuilder {
   private buildLines: string[] = [];
   /** 本 build 溢出记忆拉取数（auto-pull 前后 injectedCardIds 差）。 */
   private lastMemoryOverflowCount = 0;
+  /** R4（0.8.1）：本 build 的意图（chat 跳过 tier XML → injection summary 如实反映）。 */
+  private lastBuildIntent?: TaskIntent;
 
   // collect relevant file hints from the current task for reference-based memory filtering
   private collectCurrentWorkspaceFiles(issue: string): string[] {
@@ -203,6 +205,7 @@ export class PromptBuilder {
   async buildForTask(issue: string, intent?: TaskIntent): Promise<string> {
     // 0.8 P2（M1-PROTOCOL）三段拆分：stable（任务间字节级不变）+ volatile（每任务变）。
     // 对外产物与 0.7.4 逐字节等价（summary 块 + 两段拼接 + 压缩）。
+    this.lastBuildIntent = intent;
     const stable = this.buildStableSegment(intent);
     const volatile = await this.buildVolatileSegment(issue, intent);
     const joined2 = this.buildLines.join('\n');
@@ -257,10 +260,15 @@ export class PromptBuilder {
     }
 
     // === Structured tier_constraint — MUST ALWAYS be injected (no dedup) ===
-    const constraint = TierConstraintRegistry.get(this.session.tier);
-    this.buildLines.push(constraint.xml);
-    if (constraint.text) {
-      this.buildLines.push(constraint.text);
+    // R4（0.8.1）：chat 意图跳过——tier XML 是工具纪律/验证节奏契约，与 chat
+    // 指令"不要调用任何工具"同框自相矛盾（chat 净荷 985→约500 chars 的主力块）。
+    // 非 chat 路径保持 MUST ALWAYS（无 dedup）语义不变。
+    if (intent !== 'chat') {
+      const constraint = TierConstraintRegistry.get(this.session.tier);
+      this.buildLines.push(constraint.xml);
+      if (constraint.text) {
+        this.buildLines.push(constraint.text);
+      }
     }
 
     // === Tier runtime contract (iron-law strength, memory, critique cadence) ===
@@ -340,7 +348,8 @@ export class PromptBuilder {
     // ladder; for OpenAI-compatible endpoints this acts as an explicit
     // reasoning-depth instruction (no native thinking param today).
     const thinkKey = TIER_THINKING_DIRECTIVE[this.session.tier] ?? '';
-    if (thinkKey) {
+    // R4（0.8.1）：chat 意图跳过思考深度阶梯（纯对话不需要推理深度教学）。
+    if (thinkKey && intent !== 'chat') {
       this.tryInject(
         'thinking-budget',
         [
@@ -425,14 +434,16 @@ export class PromptBuilder {
     }
 
     // === Anchors note — dedup ===
-    if (['high', 'max', 'ex', 'pangu'].includes(this.session.tier)) {
+    // R4（0.8.1）：chat 意图跳过（锚点注记描述的是探索阶段行为，chat 无探索阶段）。
+    if (intent !== 'chat' && ['high', 'max', 'ex', 'pangu'].includes(this.session.tier)) {
       this.tryInject('anchor-note', '\n（锚点将在探索阶段按档位自动选取关键文件与目录，用于上下文稳定）', lines);
     }
 
     // === TaskState control-plane injection (U3) ===
     // Keep this block immediately before recent-context: the task state is a
     // stable, task-scoped prefix while recent turns remain the volatile tail.
-    if (this.session.currentTaskId) {
+    // R4（0.8.1）：chat 意图跳过（任务控制面状态与直答无关，且 chat 不调工具）。
+    if (intent !== 'chat' && this.session.currentTaskId) {
       try {
         const { TaskStateStore } = await import('../../memory/taskState.js');
         const state = new TaskStateStore(this.session.workspace, process.env.PANSHA_TASK_STATE_FILE?.trim() || undefined).get(this.session.currentTaskId);
@@ -597,7 +608,8 @@ export class PromptBuilder {
     // We don't have direct counts of styleHeader/anchors here because we deduped them.
     // We report what we know.
     return {
-      tierConstraint: true, // always injected per P0-2
+      // R4（0.8.1）：chat 意图跳过 tier XML → summary 如实反映（不再恒 true）
+      tierConstraint: this.lastBuildIntent !== 'chat',
       styleHeader: null,    // current implementation uses tier_constraint instead of old style header
       anchorCount: this.injectedKeys.has('anchor-note') ? 1 : 0,
       memoryCardCount: this.injectedKeys.has('memory-cards') ? 1 : 0, // simplified: presence flag
@@ -691,6 +703,8 @@ export class PromptBuilder {
   /**
    * Return a compact summary of the last N turns.
    * Truncates long user inputs and keeps only key signals.
+   * R6（0.8.1）：answered 回合带上答案前 200 字符——resume/最近上下文可见
+   * 问答对（此前只见问不见答，模型对"刚才答了什么"失忆）。
    */
   private getRecentContext(n: number): string {
     const turns = this.session.turns.slice(-n);
@@ -700,7 +714,11 @@ export class PromptBuilder {
         const input = t.userInput.length > 80 ? t.userInput.slice(0, 77) + '...' : t.userInput;
         const ok = t.result?.success ? '✓' : (t.result ? '✗' : '?');
         const score = t.result ? (t.result.summary || '?') : ''; // summary 现为验证结果短文本（如"已通过验证"）
-        return `Turn ${i + 1} [${t.tier}] ${ok} ${input} ${score}`.trim();
+        // R6：答案摘要（截 200 字符，换行折叠为空格防摘要行被撑爆）
+        const answer = t.result?.answerText
+          ? ' → ' + String(t.result.answerText).replace(/\s+/g, ' ').trim().slice(0, 200)
+          : '';
+        return `Turn ${i + 1} [${t.tier}] ${ok} ${input} ${score}${answer}`.trim();
       })
       .join('\n');
   }

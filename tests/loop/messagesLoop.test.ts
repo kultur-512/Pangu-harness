@@ -410,7 +410,10 @@ describe('0.8 P2 PromptBuilder 三段拆分', () => {
     assert.ok(!s.includes('【硬约束】'), 'chat 跳过 L0 硬约束');
     assert.ok(!s.includes('档位契约'), 'chat 跳过档位契约');
     assert.ok(!s.includes('<negative_tool_list>'), 'chat 跳过 negative tool list');
-    assert.ok(s.includes('<tier_constraint'), '身份与 tier XML 保留');
+    // R4（0.8.1）：tier XML 属工具纪律契约，chat 同样跳过（消除与"不要调用任何
+    // 工具"指令的同框矛盾）；身份行保留。
+    assert.ok(!s.includes('<tier_constraint'), 'R4：chat 跳过 tier_constraint XML');
+    assert.ok(s.includes('当前档位: high'), '身份行保留');
 
     const v = await pb.buildVolatileSegment('你好', 'chat');
     assert.ok(!v.includes('项目验证命令'), 'chat 跳过项目验证块');

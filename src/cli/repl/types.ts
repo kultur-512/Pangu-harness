@@ -65,6 +65,12 @@ export interface Turn {
     verifyCmd?: string[];
     /** R3: 回合结局显式枚举（stopReason 的规范化版本，便于聚合） */
     outcome?: TurnOutcome;
+    /**
+     * R1/R6（0.8.1）：chat 直答 / loop answered 的模型正文（截 400 字符防膨胀）。
+     * 落盘通道——resume 回放与 PromptBuilder.getRecentContext 的"最近上下文"
+     * 由此呈现问答对（此前只见问不见答）。
+     */
+    answerText?: string;
   };
   tier: Tier;
   durationMs?: number;

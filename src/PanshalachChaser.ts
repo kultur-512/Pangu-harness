@@ -104,9 +104,6 @@ export interface ChaserConfig {
  * 推荐：import { PanshalachChaser } from './PanshalachChaser.js'
  */
 export class PanshalachChaser {
-  // 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
-  private memStoreForInvalidate: any = null;
-
   constructor(
     private modelClient: any,
     private defaultModeOrTier: ModelMode | Tier | string = DEFAULT_TIER
@@ -235,24 +232,114 @@ export class PanshalachChaser {
       }
     }
 
-    // chat 意图：单次 complete 直接回答，不进 agent 循环。
+    // chat 意图：单次直答，不进 agent 循环。
+    // R3（0.8.1）：能力回落阶梯 streamChatMessages（流式，message.delta 增量透传
+    // 给 line/rich 前端）→ chat（整段）→ complete（整段，0.7 原路径）；
+    // 显式 temperature 0.7 + maxTokens 4096（摆脱网关默认值）；finish_reason=length
+    // 截断时正文尾追加标注；空回答（R2）在最终正文上判。
     if (intent === 'chat') {
       config.onStep?.({ version: 1, type: 'phase', phase: 'rollout' });
       const chatClient = this.modelClient as any;
       // M2-4：单次回复同样走 onUsage 计量（网关返回 usage 时记实测）。
       const chatUsage = { prompt: 0, completion: 0 };
       let chatUsageSamples = 0;
-      const chatReply = await chatClient.complete(basePrompt, {
+      const onChatUsage = (u: { prompt?: number; completion?: number }) => {
+        if (typeof u?.prompt === 'number' && u.prompt >= 0) chatUsage.prompt += u.prompt;
+        if (typeof u?.completion === 'number' && u.completion >= 0) chatUsage.completion += u.completion;
+        chatUsageSamples++;
+      };
+      const chatOpts = {
+        temperature: 0.7,
+        maxTokens: 4096,
         signal: config.signal,
-        onUsage: (u: { prompt?: number; completion?: number }) => {
-          if (typeof u?.prompt === 'number' && u.prompt >= 0) chatUsage.prompt += u.prompt;
-          if (typeof u?.completion === 'number' && u.completion >= 0) chatUsage.completion += u.completion;
-          chatUsageSamples++;
-        },
-      });
-      const chatText = typeof chatReply === 'string'
-        ? chatReply
-        : (chatReply?.content ?? chatReply?.raw ?? '');
+        onUsage: onChatUsage,
+      };
+      // messages 通道形态：system 承载对话指令（不含用户输入），user 承载原文
+      // （buildChatDirective 整段内嵌会让输入在 payload 里出现两次）。
+      const chatMessages = [
+        { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
+        { role: 'user' as const, content: issueDescription },
+      ];
+
+      // 直答失败的合成返回（R2 空回答 / R3 异常）——照用 syntheticFailureTrajectory
+      // 的 abort 语义（TASK_ABORTED → aborted；其余 → error），与 loop 路径一致。
+      const chatFailure = (errMsg: string) => {
+        const failTraj = syntheticFailureTrajectory(errMsg);
+        const failBudgetReport: BudgetReport = {
+          budgetTokens,
+          estimatedUsedTokens: 0,
+          usageRatio: 0,
+          usageMeasured: false,
+          triggeredSoftLimit: false,
+          triggeredDegradation: false,
+          rolloutsExecuted: 1,
+          stepsExecuted: 0,
+          notes: ['chat 单次回复（不进 agent 循环）', `rollout 失败原因：${errMsg}`],
+        };
+        return {
+          success: false,
+          bestTrajectory: failTraj,
+          totalRollouts: 1,
+          budgetReport: failBudgetReport,
+          tierConfig,
+          message: failTraj.lastError,
+        };
+      };
+
+      let truncated = false;
+      // 非流式返回的对象形态可能带 truncated 标记（finish_reason=length）
+      const extractReplyText = (reply: any): string => {
+        if (typeof reply === 'string') return reply;
+        if (reply && typeof reply === 'object' && (reply as any).truncated === true) truncated = true;
+        return String(reply?.content ?? reply?.raw ?? '');
+      };
+
+      let chatText: string;
+      try {
+        const canStreamMessages = typeof chatClient?.streamChatMessages === 'function';
+        const canChat = typeof chatClient?.chat === 'function';
+        if (canStreamMessages) {
+          let text = '';
+          let startedThinking = false;
+          let startedMessage = false;
+          for await (const chunk of chatClient.streamChatMessages(chatMessages, chatOpts)) {
+            // finish_reason 检查先于内容过滤——空文本的尾 chunk 只携带截断标记
+            if ((chunk as any)?.finishReason === 'length') truncated = true;
+            if (!chunk || typeof (chunk as any).text !== 'string' || !(chunk as any).text) continue;
+            if ((chunk as any).type === 'thinking') {
+              // 思考增量照发（渲染端已支持），但不进正文
+              if (!startedThinking) config.onStep?.({ version: 2, type: 'thinking.start' });
+              startedThinking = true;
+              config.onStep?.({ version: 2, type: 'thinking.delta', text: (chunk as any).text });
+              continue;
+            }
+            if (!startedMessage) config.onStep?.({ version: 2, type: 'message.start' });
+            startedMessage = true;
+            config.onStep?.({ version: 2, type: 'message.delta', text: (chunk as any).text });
+            text += (chunk as any).text;
+          }
+          chatText = text;
+        } else if (canChat) {
+          // 无流式但有 chat：整段直答（正文由宿主 answered 兜底呈现——R1 路径）
+          chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
+        } else {
+          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）
+          chatText = extractReplyText(await chatClient.complete(basePrompt, chatOpts));
+        }
+      } catch (e: any) {
+        return chatFailure((e as Error)?.message || String(e));
+      }
+
+      // R2（0.8.1）：空回答不伪装成功——EMPTY_RESPONSE 重试耗尽后网关侧返回空串
+      // （chatCompleteWithRetry 吞错转 ''），直答路径不得记 answered + 空内容。
+      if (!String(chatText).trim()) {
+        return chatFailure('EMPTY_RESPONSE: 模型返回空内容');
+      }
+      // R3：截断标注——finish_reason=length（流式尾 chunk 或非流式对象标记）时
+      // 正文尾追加明示，用户可见"回答不完整"而非静默截断。
+      if (truncated) {
+        chatText = `${chatText}\n\n[回答被 max_tokens 截断]`;
+      }
       const chatMeasured = chatUsageSamples > 0 ? chatUsage.prompt + chatUsage.completion : 0;
       const traj: Trajectory = {
         id: 'rollout-0',
@@ -531,8 +618,9 @@ export class PanshalachChaser {
     }
 
     const success = !!best.success;
-    // 任务边界 → 投影重建（下一任务反映最新衰减与记忆）
-    try { this.memStoreForInvalidate?.invalidateProjection?.(); } catch {}
+    // R7（0.8.1）：memStoreForInvalidate 死代码已删——全仓无赋值（恒 null），
+    // `?.invalidateProjection?.()` 从未触达任何真实 store；记忆投影重建由
+    // RefinedMemoryStore 的使用方自行负责。
     if (!success && best.lastError) {
       budgetNotes.push(`rollout 失败原因：${best.lastError}`);
     }
