@@ -43,6 +43,13 @@ export interface Turn {
   timestamp: number;
   userInput: string;
   userInputType: 'command' | 'task' | 'multiline';
+  /**
+   * 会话角色标注（M2-7，0.8 加性字段）：'user' = 用户指令回合（task/multiline 入口），
+   * 'assistant' = 助手侧合成回合（压缩摘要等）。旧 JSONL/会话文件无此字段 → undefined（兼容，
+   * 迁移推断见 Session.inferTurnRole 与 rolloutStore 序列化/回放标注）。
+   * R8 不对称压缩（compactService 分区改造）消费本字段。
+   */
+  role?: 'user' | 'assistant';
   result?: {
     success: boolean;
     summary: string;

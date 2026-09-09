@@ -20,6 +20,13 @@ export function turnBrief(t: Turn): string {
   return `[${u}]${r ? ` → ${r}` : ''}`;
 }
 
+/**
+ * M2-7：摘要 prompt 的不对称保留约束——用户指令原文逐字保留，其余（结果/得分/教训）
+ * 可压缩。本步只落 prompt 约束（吃到 80% 收益）；compactService 分区改造留 R8。
+ */
+export const VERBATIM_RULE =
+  '硬约束：用户指令原文必须逐字保留（原样引用，不改写、不省略、不合并）；结果、得分与教训可压缩。';
+
 const strategies = new Map<string, CompactStrategy>();
 
 const DEFAULT_STRATEGY: CompactStrategy = {
@@ -28,6 +35,7 @@ const DEFAULT_STRATEGY: CompactStrategy = {
     const lines = removed.map((t, i) => `${i + 1}. ${turnBrief(t)}`);
     return [
       opts?.instruction ?? '请把以下历史任务轮次压缩成一段不超过 300 字的摘要，保留：每项任务的核心诉求、关键结果与得分、重要教训（失败原因/约束）。',
+      VERBATIM_RULE,
       '只输出摘要正文，不要寒暄。',
       '---',
       ...lines,
@@ -51,6 +59,7 @@ const TOPIC_STRATEGY: CompactStrategy = {
     const sections = [...groups.entries()].map(([k, v]) => `## ${k}\n${v.join('\n')}`);
     return [
       '请把以下历史轮次按主题分节压缩（每节 ≤ 80 字），保留核心诉求/结果/教训。',
+      VERBATIM_RULE,
       '只输出摘要正文。',
       '---',
       ...sections,

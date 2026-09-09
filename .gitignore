@@ -3,6 +3,8 @@
 # 兼容旧名（迁移期间保留）
 .zorge.json
 .zorge.json.bak
+# M2-3 工具结果落盘 scratch（运行产物，不入 git，不在 /undo 范围）
+.panshalach/scratch/
 node_modules/
 dist/
 *.log

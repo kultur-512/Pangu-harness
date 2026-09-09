@@ -190,7 +190,19 @@ export async function compactSession(
 }
 
 /** Auto-compact trigger (CC-style): called before starting a new task. */
-export function shouldAutoCompact(session: Session, ctxRatio: number): boolean {
+export interface AutoCompactTrigger {
+  /**
+   * M2-5 强制档：外部触发源（如 context_overflow）置 true 时绕过
+   * 0.85 阈值与 12 轮门槛，只要有可压缩轮次（> KEEP_RECENT+1）即触发。
+   * 调用侧：VerifyCritiqueLoop.onContextOverflow 回调里
+   * `shouldAutoCompact(session, ratio, { force: true })`。
+   */
+  force?: boolean;
+  /** 触发原因标注（记账/日志用，不影响判定）。 */
+  reason?: string;
+}
+export function shouldAutoCompact(session: Session, ctxRatio: number, trigger?: AutoCompactTrigger): boolean {
+  if (trigger?.force) return session.turns.length > KEEP_RECENT + 1;
   return ctxRatio >= 0.85 && session.turns.length > 12;
 }
 

@@ -23,8 +23,9 @@ import { checkpointBeforeMutation } from './fileHistory.js';
 import { isSensitiveWorkspacePath, sensitiveDenyMessage } from './sensitivePaths.js';
 // 'a' 决策持久化到项目配置（best-effort；ConfigManager 无反向依赖，无环）
 import { appendProjectApprovalAllowlist } from '../cli/repl/ConfigManager.js';
+import fs from 'node:fs';
 import path from 'path';
-import type { ToolContext, ToolImpl, ToolResult, DiffHunk } from './types.js';
+import { TOOL_OUTPUT_CAP, type ToolContext, type ToolImpl, type ToolResult, type DiffHunk } from './types.js';
 
 // 共享写互斥 — 并行 rollout 间的 write/edit_file 调用全部
 // rollouts serialize through one promise chain (shared workspace safety);
@@ -39,6 +40,24 @@ export function withWriteLock<T>(fn: () => Promise<T> | T): Promise<T> {
   );
   return run;
 }
+
+// ---- M2-1: 并行分段调度常量 ----
+/** 整批 execute() 的硬闸超时（对齐 hermes 默认 420s）。 */
+export const BATCH_TIMEOUT_MS = 420_000;
+/** 连续只读段（read_file/glob/grep）的并发上限。 */
+export const READ_SEGMENT_CONCURRENCY = 3;
+/** 落入只读并发段的规范化工具名。 */
+const READ_SEGMENT_TOOLS: ReadonlySet<string> = new Set(['read_file', 'glob', 'grep']);
+
+// ---- M2-3: 工具结果落盘 ----
+/** 超 cap 结果落盘目录（workspace 相对路径，进 .gitignore）。 */
+export const SCRATCH_DIR = '.panshalach';
+export const SCRATCH_SUBDIR = 'scratch';
+/** 预览：头/尾保留字符数。 */
+export const PERSIST_PREVIEW_HEAD = 1500;
+export const PERSIST_PREVIEW_TAIL = 500;
+// 会话级序号（进程即会话；adapter 按 rollout 重建，序号跨 rollout 单调）。
+let persistSeq = 0;
 
 export interface EngineAdapterOptions {
   workspaceRoot: string;
@@ -59,6 +78,8 @@ export interface EngineAdapterOptions {
   planMode?: boolean;
   /** 审批确认超时（默认 60s → 视为 'n'）。 */
   approvalTimeoutMs?: number;
+  /** M2-1 整批超时（默认 420_000ms；超时未完成的 call 落 TIMEOUT 结果）。 */
+  batchTimeoutMs?: number;
   /** 事件发射器（approval.request 卡片）— e.g. config.onStep。 */
   emitEvent?: (event: any) => void;
   /** Extra tools registered beyond the built-ins (bash, write/edit). */
@@ -541,6 +562,69 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     };
   }
 
+  // ---- M2-3: oversized output → scratch persistence + head/tail preview ----
+  function persistOversizedOutput(toolNorm: string, res: ToolResult): ToolResult {
+    // read_file NEVER persists (persist → re-read → persist loop); the model
+    // re-reads via offset 续读 instead.
+    if (toolNorm === 'read_file') return res;
+    const full = res.meta?.fullOutput;
+    if (typeof full !== 'string' || full.length <= TOOL_OUTPUT_CAP) return res;
+    try {
+      const scratchDir = path.join(opts.workspaceRoot, SCRATCH_DIR, SCRATCH_SUBDIR);
+      fs.mkdirSync(scratchDir, { recursive: true });
+      const name = `tool-${++persistSeq}.txt`;
+      fs.writeFileSync(path.join(scratchDir, name), full, 'utf-8');
+      const rel = `${SCRATCH_DIR}/${SCRATCH_SUBDIR}/${name}`;
+      const head = full.slice(0, PERSIST_PREVIEW_HEAD);
+      const tail = full.slice(-PERSIST_PREVIEW_TAIL);
+      const omitted = full.length - head.length - tail.length;
+      const preview =
+        head +
+        `\n…[中间 ${omitted} 字符已落盘]\n` +
+        tail +
+        `\n<persisted-output path="${rel}">`;
+      return {
+        ...res,
+        output: preview,
+        meta: { ...res.meta, persistedOutput: rel, fullOutput: undefined },
+      };
+    } catch {
+      // Best-effort: on any fs failure the capped output stays usable.
+      return res;
+    }
+  }
+
+  const emitPreEvent = (toolRaw: string, params: Record<string, string>) => {
+    const toolNorm = String(toolRaw || '').trim().toLowerCase();
+    try {
+      emitEvent?.({
+        type: 'tools/pre-execute',
+        tool: toolNorm,
+        params,
+        approval: (sessionAllowlist.has(toolNorm) || approvalMode === 'full') ? 'allowed' : approvalMode,
+        danger: false,
+      });
+    } catch {}
+  };
+
+  const emitPostEvent = (toolRaw: string, res: ToolResult, toolStart: number) => {
+    const toolNorm = String(toolRaw || '').trim().toLowerCase();
+    try {
+      emitEvent?.({
+        type: 'tools/post-execute',
+        tool: toolNorm,
+        ok: res.ok,
+        exitCode: res.meta?.exitCode ?? null,
+        durationMs: Date.now() - toolStart,
+        error: res.error,
+        outputPreview: typeof res.output === 'string' ? res.output.slice(0, 1500) : '',
+        lines: Number(res.meta?.lines) || undefined,
+        diff: Array.isArray(res.meta?.diff) ? (res.meta?.diff as DiffHunk[]).slice(0, 40) : undefined,
+        persistedOutput: typeof res.meta?.persistedOutput === 'string' ? res.meta.persistedOutput : undefined,
+      });
+    } catch {}
+  };
+
   return {
     executor,
     ctx,
@@ -549,25 +633,66 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
       if (!Array.isArray(calls) || calls.length === 0) {
         return 'TOOL_ERROR: NO_CALLS verification engine received no tool calls';
       }
-      const parts: string[] = [];
-      for (const call of calls) {
+
+      // ---- M2-1 batch deadline: races the WHOLE segment pipeline. ----
+      const batchTimeoutMs = Math.max(1, opts.batchTimeoutMs ?? BATCH_TIMEOUT_MS);
+      const BATCH_TIMEOUT = Symbol('batch-timeout');
+      let deadlineTimer: NodeJS.Timeout | null = null;
+      let batchTimedOut = false;
+      const deadline = new Promise<typeof BATCH_TIMEOUT>((resolve) => {
+        deadlineTimer = setTimeout(() => {
+          batchTimedOut = true;
+          resolve(BATCH_TIMEOUT);
+        }, batchTimeoutMs);
+      });
+
+      type CallOutcome =
+        | { kind: 'denied'; params: Record<string, string>; res: ToolResult }
+        | { kind: 'run'; params: Record<string, string>; res: ToolResult; toolStart: number }
+        | { kind: 'batch-timeout'; params: Record<string, string> };
+
+      const outcomes: (CallOutcome | null)[] = new Array(calls.length).fill(null);
+      const startedAt: (number | undefined)[] = new Array(calls.length);
+      const preEmitted: boolean[] = new Array(calls.length).fill(false);
+
+      const raceBatch = async <T>(p: Promise<T>): Promise<T | typeof BATCH_TIMEOUT> => {
+        if (batchTimedOut) return BATCH_TIMEOUT;
+        return await Promise.race([p, deadline]);
+      };
+
+      // 每个 call 独立走 gate（只读段内并行仍逐 call 审批语义）。
+      const runCall = async (call: ToolCall, idx: number): Promise<CallOutcome> => {
         const params = paramsOf(call);
-        // M2-6 sensitive-path check runs BEFORE the approval gate:
-        // a sensitive write never reaches classify/approval/checkpoint.
         const sensitiveRes = sensitiveWriteDenial(String(call.toolName || ''), params);
         const deniedRes = sensitiveRes ?? (await gate(String(call.toolName || ''), params));
-        if (deniedRes) {
-          // gate 拒绝的调用也要发 post-execute（ok:false），
-          // 否则 line 模式拒绝零卡片反馈（pre 行已由调用方在 execute 前无
-          // 从发出——这里连 pre 一起补齐）。
-          const deniedTool = String(call.toolName || '').trim().toLowerCase();
+        if (deniedRes) return { kind: 'denied', params, res: deniedRes };
+        const toolNorm = String(call.toolName || '').trim().toLowerCase();
+        if (toolNorm === 'write_file' || toolNorm === 'edit_file') {
+          try { checkpointBeforeMutation(toolNorm, params, opts.workspaceRoot); } catch {}
+        }
+        const toolStart = Date.now();
+        startedAt[idx] = toolStart;
+        emitPreEvent(String(call.toolName || ''), params);
+        preEmitted[idx] = true;
+        const raw = toolNorm === 'write_file' || toolNorm === 'edit_file'
+          ? await withWriteLock(() => executor.execute(String(call.toolName || ''), params))
+          : await executor.execute(String(call.toolName || ''), params);
+        const res = persistOversizedOutput(toolNorm, raw);
+        return { kind: 'run', params, res, toolStart };
+      };
+
+      // 结果/事件按原始序落位（不按完成序）。
+      const settleOutcome = (idx: number, o: CallOutcome) => {
+        outcomes[idx] = o;
+        if (o.kind === 'denied') {
+          const deniedTool = String(calls[idx].toolName || '').trim().toLowerCase();
           try {
             emitEvent?.({
               type: 'tools/pre-execute',
               tool: deniedTool,
-              params,
+              params: o.params,
               approval: 'denied',
-              danger: !!deniedRes.meta?.danger,
+              danger: !!o.res.meta?.danger,
             });
             emitEvent?.({
               type: 'tools/post-execute',
@@ -575,59 +700,96 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
               ok: false,
               exitCode: null,
               durationMs: 0,
-              error: deniedRes.error,
-              outputPreview: typeof deniedRes.output === 'string' ? deniedRes.output.slice(0, 500) : '',
+              error: o.res.error,
+              outputPreview: typeof o.res.output === 'string' ? o.res.output.slice(0, 500) : '',
             });
           } catch {}
-          parts.push(describeResult(call, params, deniedRes));
+        } else if (o.kind === 'run') {
+          emitPostEvent(String(calls[idx].toolName || ''), o.res, o.toolStart);
+        } else {
+          if (!preEmitted[idx]) emitPreEvent(String(calls[idx].toolName || ''), o.params);
+          const timeoutRes: ToolResult = {
+            ok: false,
+            output: `✗ batch timed out after ${Math.round(batchTimeoutMs / 1000)}s`,
+            durationMs: startedAt[idx] != null ? Date.now() - startedAt[idx] : 0,
+            error: 'TIMEOUT',
+            meta: { danger: false },
+          };
+          emitPostEvent(String(calls[idx].toolName || ''), timeoutRes, startedAt[idx] ?? Date.now());
+        }
+      };
+
+      const isReadCall = (call: ToolCall): boolean =>
+        READ_SEGMENT_TOOLS.has(normalizeToolName(String(call.toolName || '')));
+
+      try {
+        let i = 0;
+        while (i < calls.length) {
+          if (batchTimedOut) break;
+          if (isReadCall(calls[i])) {
+            // 连续只读段：分波（≤3）并发，段内按原始序 emit pre，完成后按原始序 emit post。
+            let j = i;
+            while (j < calls.length && isReadCall(calls[j])) j++;
+            for (let k = i; k < j && !batchTimedOut; k += READ_SEGMENT_CONCURRENCY) {
+              const end = Math.min(k + READ_SEGMENT_CONCURRENCY, j);
+              const idxs: number[] = [];
+              for (let x = k; x < end; x++) idxs.push(x);
+              const settled = await Promise.all(idxs.map((x) => raceBatch(runCall(calls[x], x))));
+              for (let x = 0; x < idxs.length; x++) {
+                const r = settled[x];
+                settleOutcome(idxs[x], r === BATCH_TIMEOUT
+                  ? { kind: 'batch-timeout', params: paramsOf(calls[idxs[x]]) }
+                  : r);
+              }
+            }
+            i = j;
+          } else {
+            // barrier 串行段：write/edit 经 withWriteLock；bash/MCP/未知工具单 call 串行。
+            const r = await raceBatch(runCall(calls[i], i));
+            settleOutcome(i, r === BATCH_TIMEOUT
+              ? { kind: 'batch-timeout', params: paramsOf(calls[i]) }
+              : r);
+            i++;
+          }
+        }
+      } finally {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
+      }
+
+      // 超时跳过的未启动 call：补齐 pre/post + TIMEOUT 结果。
+      for (let k = 0; k < calls.length; k++) {
+        if (outcomes[k] === null) {
+          settleOutcome(k, { kind: 'batch-timeout', params: paramsOf(calls[k]) });
+        }
+      }
+
+      // 按原始调用顺序装配 parts（LoopStep.verificationResult 顺序不变）。
+      const parts: string[] = [];
+      for (let k = 0; k < calls.length; k++) {
+        const call = calls[k];
+        const o = outcomes[k]!;
+        if (o.kind === 'denied') {
+          parts.push(describeResult(call, o.params, o.res));
           continue;
         }
-        // snapshot the target BEFORE mutation so /undo can restore it.
-        const toolNorm = String(call.toolName || '').trim().toLowerCase();
-        if (toolNorm === 'write_file' || toolNorm === 'edit_file') {
-          try { checkpointBeforeMutation(toolNorm, params, opts.workspaceRoot); } catch {}
+        if (o.kind === 'batch-timeout') {
+          const res: ToolResult = {
+            ok: false,
+            output: `✗ batch timed out after ${Math.round(batchTimeoutMs / 1000)}s`,
+            durationMs: 0,
+            error: 'TIMEOUT',
+            meta: { danger: false },
+          };
+          parts.push(describeResult(call, o.params, res));
+          continue;
         }
-        // tools/pre-execute event point — observers (memory,
-        // logging, policy) attach here; execution semantics unchanged.
-        const toolStart = Date.now();
-        try {
-          emitEvent?.({
-            type: 'tools/pre-execute',
-            tool: toolNorm,
-            params,
-            approval: (sessionAllowlist.has(toolNorm) || approvalMode === 'full') ? 'allowed' : approvalMode,
-            danger: false,
-          });
-        } catch {}
-        // write/edit 经共享互斥串行化
-        // (parallel rollouts share the workspace); read/bash stay concurrent.
-        const res = toolNorm === 'write_file' || toolNorm === 'edit_file'
-          ? await withWriteLock(() => executor.execute(String(call.toolName || ''), params))
-          : await executor.execute(String(call.toolName || ''), params);
-        // tools/post-execute event (result + duration) for observability.
-        // 附带轻量结果载荷（截断 output / 行数 / diff 摘要），line 模式
-        // 工具实时卡片的结果行由此渲染（Wrote N lines / Read N lines / Added-removed）。
-        try {
-          emitEvent?.({
-            type: 'tools/post-execute',
-            tool: toolNorm,
-            ok: res.ok,
-            exitCode: res.meta?.exitCode ?? null,
-            durationMs: Date.now() - toolStart,
-            error: res.error,
-            outputPreview: typeof res.output === 'string' ? res.output.slice(0, 1500) : '',
-            lines: Number(res.meta?.lines) || undefined,
-            diff: Array.isArray(res.meta?.diff) ? (res.meta?.diff as DiffHunk[]).slice(0, 40) : undefined,
-          });
-        } catch {}
-        // 未知工具漂移运行时护栏 — 记录 + 引导 +
-        // hard-stop on consecutive spins (anti "5-step empty spin").
+        const res = o.res;
         if (res.error === 'UNKNOWN_TOOL') {
           unknownToolStreak++;
           const toolName = String(call.toolName || '').trim();
           const tools = [...executor.availableTools()].sort().join(', ');
           parts.push(
-            describeResult(call, params, res) +
+            describeResult(call, o.params, res) +
             `\n（提示：工具名错误。可用工具: ${tools}。若你想读文件请用 read_file，想改文件请用 edit_file / write_file。）`
           );
           if (unknownToolStreak >= 3) {
@@ -637,7 +799,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
           }
         } else {
           unknownToolStreak = 0; // any known tool resets the drift streak
-          parts.push(describeResult(call, params, res));
+          parts.push(describeResult(call, o.params, res));
         }
       }
       return parts.join('\n---\n');

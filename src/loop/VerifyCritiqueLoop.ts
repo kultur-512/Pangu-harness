@@ -17,6 +17,7 @@ import { UniversalToolCallAdapter, ToolCallFormat } from '../adapter/UniversalTo
 import { ToolCall, inferToolCategory } from '../types/toolCall.js';
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
 import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawInjectionLevel, Tier } from '../tiers/TierConfig.js';
+import { classifyApiError } from '../model/errorClassify.js';
 import type { StaticAnalysisResult } from '../review/Reviewer.js';
 import type { TurnStopReason } from '../cli/repl/types.js';
 
@@ -106,6 +107,13 @@ export interface VerifyCritiqueLoopOptions {
    * 与 maxConsecutiveFailures 并行（互不替代）。
    */
   guardrails?: ToolCallGuardrailOptions;
+
+  /**
+   * M2-5：context_overflow 通知（loop 捕获分类为 context_overflow 时回调，
+   * 每任务至多一次）。宿主可据此触发 compactService 的强制档（force 入口，
+   * 绕过 shouldAutoCompact 的 0.85 阈值）执行会话级压缩。回调抛错不阻断 loop。
+   */
+  onContextOverflow?: (info: { error: unknown }) => void | Promise<void>;
 }
 
 export class VerifyCritiqueLoop {
@@ -138,6 +146,18 @@ export class VerifyCritiqueLoop {
   private currentDiff?: string;
   /** 保存初始 prompt，用于尽力提取 user request（不影响主逻辑） */
   private initialPromptForContext: string = '';
+
+  // M2-5：context_overflow 联动（overflow → 强制压缩 → 重试本步，每任务 ≤1 次）
+  /** 本任务是否已用过 overflow 重试（防循环：每任务最多 1 次）。 */
+  private overflowRetryUsed = false;
+  /** 本任务是否已通知外层 overflow（每任务至多一次，通知失败不阻断）。 */
+  private overflowNotified = false;
+  /** 强制压缩已启用（触发后本任务余下所有 history 组装均裁中段）。 */
+  private forcedCompactApplied = false;
+  /** 消费型旗标：重试本步的 prompt 注入一次性压缩提示。 */
+  private pendingOverflowNotice = false;
+  /** onContextOverflow 通知回调（宿主 → compactService 强制档）。 */
+  private onContextOverflow?: (info: { error: unknown }) => void | Promise<void>;
 
   constructor(
     private modelClient: any,
@@ -175,6 +195,7 @@ export class VerifyCritiqueLoop {
     this.currentDiff = options.currentDiff;
     this.signal = options.signal;
     this.windowTokens = options.windowTokens;
+    this.onContextOverflow = options.onContextOverflow;
     // M2-2 卡死检测硬闸（hermes tool_guardrails 移植）：loop 生命周期实例。
     this.guardrails = new ToolCallGuardrailController(options.guardrails);
   }
@@ -217,7 +238,14 @@ export class VerifyCritiqueLoop {
     }
   }
 
-  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason; partialText?: string }> {
+  async run(initialPrompt: string): Promise<{
+    success: boolean;
+    steps: LoopStep[];
+    stopReason?: TurnStopReason;
+    partialText?: string;
+    /** M2-5：本任务是否触发过 overflow 强制压缩重试（宿主观测/记账用）。 */
+    contextOverflowCompacted?: boolean;
+  }> {
     let stepNum = 0;
     let done = false;
     let stopReason: TurnStopReason | undefined;
@@ -240,6 +268,11 @@ export class VerifyCritiqueLoop {
       if (this.pendingTruncationNotice) {
         this.pendingTruncationNotice = false;
         prompt += '\n\n【上一条响应被 max_tokens 截断，请精简后继续】如需调用工具请保持调用块完整；如为答复请精简内容后输出。';
+      }
+      // M2-5 overflow 强制压缩提示——重试本步时注入一次性提醒（消费型旗标）。
+      if (this.pendingOverflowNotice) {
+        this.pendingOverflowNotice = false;
+        prompt += '\n\n【上下文长度已超限——历史已强制压缩（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】';
       }
       // answered 空转防呆——execution 意图下"只说话不动作"的第一次，
       // 注入一次格式提醒重试一步（消费型旗标）。
@@ -327,10 +360,33 @@ export class VerifyCritiqueLoop {
       const toolSchemas = typeof this.verificationEngine?.toolSchemas === 'function'
         ? this.verificationEngine.toolSchemas()
         : undefined;
-      const rawOrObj = await this.modelClient.complete(prompt, {
-        ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
-        signal: this.signal,
-      });
+
+      // M2-5：模型调用包裹 overflow 捕获——context_overflow 时通知外层、
+      // 强制压缩 history 后重试本步（每任务 ≤1 次）；仍失败原样抛出
+      // → chaser 落 error 终态（0.7.4 语义不变）。
+      let rawOrObj: any;
+      try {
+        rawOrObj = await this.modelClient.complete(prompt, {
+          ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
+          signal: this.signal,
+        });
+      } catch (e: any) {
+        if (classifyApiError(e) === 'context_overflow') {
+          if (!this.overflowNotified) {
+            this.overflowNotified = true;
+            try { await this.onContextOverflow?.({ error: e }); } catch { /* 通知失败不阻断 loop */ }
+          }
+          // 压缩前提：至少 3 步历史（裁中段才有实际消减）；防循环：每任务 1 次。
+          if (!this.overflowRetryUsed && this.steps.length >= 3) {
+            this.overflowRetryUsed = true;
+            this.forcedCompactApplied = true;
+            this.pendingOverflowNotice = true;
+            stepNum--; // 重试本步（不消耗新步数）
+            continue;
+          }
+        }
+        throw e;
+      }
 
       // 中止检查不在 complete 返回后立即做：解析是纯本地操作，先做它才能
       // 保全"已流出正文 + 已解析 toolCalls"的现场（见下方 aborted 分支）。
@@ -603,7 +659,7 @@ export class VerifyCritiqueLoop {
       s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
     ) || stopReason === 'answered';
     // aborted 时携带本步已流出正文，供宿主落 turn（partialText）
-    return { success, steps: this.steps, stopReason, partialText };
+    return { success, steps: this.steps, stopReason, partialText, contextOverflowCompacted: this.overflowRetryUsed };
   }
 
   /** 剥离结构化块与工具块，返回面向用户的正文（aborted 部分结果提取用）。 */
@@ -696,6 +752,18 @@ Critique: ${critique}`;
       });
 
     const join = (arr: string[]) => arr.join('\n---\n');
+
+    // M2-5 强制档：context_overflow 触发后，本任务余下所有 history 组装
+    // 无条件裁中段（保首 1 + 末 1 步 + 显式折叠标记），与下方窗口预算裁剪
+    // （超 70% 才裁）并行——压缩是消费历史，flag 任务生命周期内保持。
+    if (this.forcedCompactApplied && parts.length > 2) {
+      const kept = [
+        parts[0],
+        `[...强制压缩：${parts.length - 2} 步历史已折叠（context_overflow 触发）...]`,
+        parts[parts.length - 1],
+      ];
+      return join(kept);
+    }
 
     // 窗口预算——组装后若超窗口 70%（token 估算 chars/4），
     // 裁 history 中段：保前 2 步 + 后 2 步，中段替换为显式标记

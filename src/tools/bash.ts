@@ -16,6 +16,10 @@ import type { ToolImpl } from './types.js';
 
 export const BASH_HARD_CAP_MS = 600_000;
 const OUTPUT_CAP = 20_000;
+// M2-3: capture the FULL output (beyond the 20k display cap) so engineAdapter
+// can persist it to scratch; memory guard stops capture past 1MB (the middle
+// beyond that stays lost — `truncated` remains true either way).
+const FULL_CAPTURE_CAP = 1_000_000;
 
 export function bashTimeoutForTier(tier: string | undefined): number {
   const t = String(tier || '').toLowerCase();
@@ -76,14 +80,13 @@ export function createBashTool(opts: BashToolOptions = {}): ToolImpl {
       let settled = false;
 
       const append = (chunk: Buffer | string) => {
-        if (truncated) return;
-        const s = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
-        if (out.length + s.length > OUTPUT_CAP) {
-          out += s.slice(0, Math.max(0, OUTPUT_CAP - out.length));
+        if (out.length >= FULL_CAPTURE_CAP) {
           truncated = true;
-        } else {
-          out += s;
+          return;
         }
+        const s = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+        out += s;
+        if (out.length > OUTPUT_CAP) truncated = true;
       };
 
       child.stdout?.on('data', append);
@@ -115,14 +118,21 @@ export function createBashTool(opts: BashToolOptions = {}): ToolImpl {
         const tail = error
           ? ``
           : `\nEXIT_CODE:${exitCode ?? 'null'}`;
+        // Display keeps the in-tool 20k cap (head); the full capture travels in
+        // meta.fullOutput for M2-3 scratch persistence. Non-truncated output is
+        // byte-identical to the pre-M2-3 behavior.
+        const display = truncated ? out.slice(0, OUTPUT_CAP) : out;
         resolve({
           ok,
-          output: (out + tail) || `(no output)${tail}`,
+          output: (display + tail) || `(no output)${tail}`,
           durationMs: Date.now() - start,
           exitCode: exitCode ?? undefined,
           error,
           truncated,
-          meta: { danger: isDangerousCommand(String(cmd)) },
+          meta: {
+            danger: isDangerousCommand(String(cmd)),
+            ...(truncated ? { fullOutput: out } : {}),
+          },
         });
       };
 

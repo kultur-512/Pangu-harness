@@ -9,6 +9,8 @@
 //
 // All failures are thrown with useful info; callers decide how to surface.
 
+import { classifyApiError } from './errorClassify.js';
+
 export interface OpenAICompatConfig {
   baseUrl: string;
   apiKey: string;
@@ -110,7 +112,32 @@ export interface CompleteOptions {
   tools?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
   /** 0.7：外部中止信号（合并进 fetch/SSE 读流）。 */
   signal?: AbortSignal;
+  /**
+   * M2-4 真实 usage 计量：响应解析出 usage 时回调
+   * （{prompt_tokens, completion_tokens}，缺省字段为 undefined）。
+   * 网关普遍返回 json.usage；流式下 usage 通常在最后一个含 data 的
+   * chunk 或 [DONE] 前的 usage chunk，找不到则本回调不触发（上层回落估算）。
+   */
+  onUsage?: (u: { prompt?: number; completion?: number }) => void;
   [key: string]: unknown;
+}
+
+/**
+ * M2-4：从响应 json 提取 usage（prompt_tokens/completion_tokens）。
+ * 无 usage 或字段非数字 → null（total_tokens 不参与回调，仅做解析参考）。
+ */
+export function extractUsage(json: any): { prompt?: number; completion?: number } | null {
+  const usage = json?.usage;
+  if (!usage || typeof usage !== 'object') return null;
+  const out: { prompt?: number; completion?: number } = {};
+  if (typeof usage.prompt_tokens === 'number') out.prompt = usage.prompt_tokens;
+  if (typeof usage.completion_tokens === 'number') out.completion = usage.completion_tokens;
+  return (out.prompt !== undefined || out.completion !== undefined) ? out : null;
+}
+
+function reportUsage(opts: CompleteOptions | undefined, u: { prompt?: number; completion?: number } | null): void {
+  if (!u || typeof opts?.onUsage !== 'function') return;
+  try { opts.onUsage(u); } catch { /* usage 回调是计量旁路，绝不打断主流程 */ }
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -144,6 +171,12 @@ function parseRetryAfter(res: Response): number | null {
 }
 
 function isRetryableErr(e: any): boolean {
+  // M2-5：分类器接入——auth/billing/context_overflow 类快速失败（不再白吃
+  // 5 次退避）；context_overflow 的重试交由 loop 的强制 compact 路径接管。
+  const cls = classifyApiError(e);
+  if (cls === 'auth' || cls === 'billing' || cls === 'context_overflow') return false;
+  // 超时是瞬态故障 → 可重试（客户端层 timeout 错误不带 status/network 标记）
+  if (cls === 'timeout') return true;
   // 补传输类错误——undici 层故障常表现为 TypeError（"terminated"）或
   // message 含 "fetch failed" 的网络错误，此前一律不重试。
   // TypeError 必须带传输类 message 才重试：裸 name 匹配会把解析层的
@@ -275,8 +308,15 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       body: JSON.stringify(body),
     }, timeoutMs, opts.signal).catch((e: any) => {
       if (e?.name === 'AbortError') {
-        const err: any = new Error('TASK_ABORTED');
-        err.code = 'ABORTED';
+        // M2-5：区分用户主动中止（外部 signal / 显式 ABORTED 码）与内部超时。
+        // 超时是瞬态故障 → 可重试且终态归 'error'（不再伪装成用户中断）。
+        if (e?.code === 'ABORTED' || (opts.signal && opts.signal.aborted)) {
+          const err: any = new Error('TASK_ABORTED');
+          err.code = 'ABORTED';
+          throw err;
+        }
+        const err: any = new Error(`complete timeout: 请求超过 ${timeoutMs}ms 未完成`);
+        err.timeout = true;
         throw err;
       }
       const err: any = new Error(`complete network error: ${e?.message || e}`);
@@ -309,6 +349,9 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     // Standard OpenAI response shape
     const message = json?.choices?.[0]?.message;
     const content = message?.content;
+
+    // M2-4：解析 json.usage 并回调（网关普遍返回；无则 null，上层回落估算）。
+    reportUsage(opts, extractUsage(json));
     // finish_reason==='length' → 响应被 max_tokens 截断。残缺内容
     // （尤其残缺 tool_calls/半句答复）静默通过会引发弱模型空转——标记 truncated
     // 让 VerifyCritiqueLoop 禁判 answered 并注入精简提示。
@@ -349,6 +392,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     // a NON-streaming request — parse `data:` lines and concat delta.content.
     if (!json && bodyText.includes('data:')) {
       const parts: string[] = [];
+      let sseUsage: { prompt?: number; completion?: number } | null = null;
       for (const line of bodyText.split('\n')) {
         const t = line.trim();
         if (!t.startsWith('data:')) continue;
@@ -356,12 +400,17 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         if (payload === '[DONE]') break;
         try {
           const ev = JSON.parse(payload);
+          const u = extractUsage(ev); // usage 通常挂在最后一个 data chunk 上
+          if (u) sseUsage = u;
           const d = ev?.choices?.[0]?.delta;
           if (typeof d?.content === 'string') parts.push(d.content);
           else if (typeof ev?.choices?.[0]?.text === 'string') parts.push(ev.choices[0].text);
         } catch {}
       }
-      if (parts.length > 0) return parts.join('');
+      if (parts.length > 0) {
+        reportUsage(opts, sseUsage);
+        return parts.join('');
+      }
     }
     // 改动包 B：可识别的响应形状（有 choices）但提取失败 → 保留 stringify 兜底；
     // 其余（真正空响应/无 choices）标记为可重试 EMPTY_RESPONSE，重试耗尽才返回空——
@@ -481,9 +530,14 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         }, timeoutMs, opts.signal);
       } catch (e: any) {
         if (e?.name === 'AbortError') {
-          const err: any = new Error('TASK_ABORTED');
-          err.code = 'ABORTED';
-          throw err;
+          if (e?.code === 'ABORTED' || (opts.signal && opts.signal.aborted)) {
+            const err: any = new Error('TASK_ABORTED');
+            err.code = 'ABORTED';
+            throw err;
+          }
+          // 内部超时（瞬态）→ 与其余传输类错误同语义：回退非流式（withRetry 会重试）。
+          for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
+          return;
         }
         // Transport-level failure → fall back to non-streaming so callers keep working.
         // 0.7.4：与 complete() 同语义——withRetry 包裹 + emptyResponse 耗尽转空串，
@@ -504,6 +558,9 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       let sawAny = false;
       // 尾 delta 的 finish_reason（'length' = max_tokens 截断）
       let streamFinishReason: string | undefined;
+      // M2-4：流式 usage 计量——usage 通常在最后一个含 data 的 chunk
+      // 或 [DONE] 前的 usage chunk 上，取最后一次出现的值，流结束后统一回调。
+      let streamUsage: { prompt?: number; completion?: number } | null = null;
       // SSE delta.tool_calls 增量拼接（按 index 聚合 id/name/arguments 分片）
       const toolCallAcc = new Map<number, { id?: string; name: string; args: string }>();
 
@@ -534,6 +591,10 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
           let json: any;
           try { json = JSON.parse(dataStr); } catch { continue; }
+
+          // usage chunk（choices 常为空数组）——先于 choices 检查捕获
+          const u = extractUsage(json);
+          if (u) streamUsage = u;
 
           const delta = json?.choices?.[0]?.delta;
           if (!delta && typeof json?.choices?.[0]?.finish_reason !== 'string') continue;
@@ -589,9 +650,14 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         yield { type: 'text', text: '', finishReason: 'length' } as ModelStreamChunk;
       }
 
+      // M2-4：流式 usage 统一在流结束后回调一次（找不到则 null，上层回落估算）
+      reportUsage(opts, streamUsage);
+
       // Endpoint accepted stream:true but sent nothing parseable — fall back once.
       if (!sawAny) {
-        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
+        // 已上报过 SSE usage 时不再透传 onUsage（防同一次调用双计）
+        const fallbackOpts = streamUsage ? { ...opts, onUsage: undefined } : opts;
+        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, fallbackOpts))) yield c;
       }
     },
   };

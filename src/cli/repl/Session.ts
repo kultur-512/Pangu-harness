@@ -28,6 +28,15 @@ function loadProjectApprovalAllowlist(workspace: string): string[] {
   }
 }
 
+/**
+ * M2-7：turn 角色推断（迁移标注的唯一权威规则）——
+ * task/multiline 类入口是用户指令 → 'user'；其余（command 类：压缩合成轮等）
+ * 是助手侧产物 → 'assistant'。仅当 role 缺失时使用（显式 role 优先）。
+ */
+export function inferTurnRole(turn: Turn): 'user' | 'assistant' {
+  return turn.userInputType === 'task' || turn.userInputType === 'multiline' ? 'user' : 'assistant';
+}
+
 export class Session {
   public id: string;
   public name?: string;
@@ -64,10 +73,16 @@ export class Session {
       ...loadProjectApprovalAllowlist(this.workspace),
     ]);
     this.turns = init?.turns ?? [];
+    // M2-7：会话文件/init 组装点迁移标注——旧数据无 role 时按现状推断（显式 role 优先）。
+    for (const t of this.turns) t.role ??= inferTurnRole(t);
     this.stats = init?.stats ?? { totalTurns: 0, totalTokens: 0, totalDurationMs: 0 };
   }
 
   addTurn(turn: Turn): void {
+    // M2-7：turn 构造标注——所有 addTurn 调用方（TurnController/Repl/RunCommand/replay）
+    // 经此迁移：task/multiline → 'user'，command（压缩合成轮等）→ 'assistant'。
+    // 原对象就地标注（幂等），使 TurnController 随后 appendTurn 的同一对象携带 role。
+    turn.role ??= inferTurnRole(turn);
     this.turns.push(turn);
     this.updatedAt = Date.now();
     this.stats.totalTurns += 1;
