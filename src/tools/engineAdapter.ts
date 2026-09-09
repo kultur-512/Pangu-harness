@@ -6,9 +6,12 @@
 // the loop already understands. The loop itself stays untouched (until 2.5's
 // one-line EXIT_CODE:0 enhancement).
 //
-// SAFETY GATE (first thing that runs, per M1 instruction):
-//   !process.stdout.isTTY || PANSHA_SMOKE=1  →  fixed mock string, zero spawns,
-//   zero file writes. This is what keeps smoke tests and CI harmless.
+// SAFETY GATE (0.8 semantics): mock is EXPLICIT OPT-IN ONLY (PANSHA_SMOKE=1)
+//   → fixed mock string, zero spawns, zero file writes. Non-TTY no longer
+//   defaults to mock: non-interactive safety is enforced by the real defense
+//   stack (approval three-tier + pathGuard + sensitive paths + read-before-write),
+//   NOT by fake results (the mock previously masked two P0s where real successes
+//   were misjudged as failures).
 
 import type { ToolCall } from '../types/toolCall.js';
 import type { TierConfig } from '../tiers/TierConfig.js';
@@ -115,19 +118,20 @@ export interface EngineAdapter {
 export const SMOKE_MOCK_RESULT = 'VERIFICATION: ALL_TESTS_PASSED';
 
 export function isSmokeEnvironment(): boolean {
-  // Priority: PANSHA_SMOKE=1 wins over everything (tests/CI keep
-  // the power to force mock even if HEADLESS was mis-set in CI).
-  if (process.env.PANSHA_SMOKE === '1') return true;
-  // Explicit headless escape hatch: PANSHA_HEADLESS=1 or `pangu --headless`
-  // opts OUT of the mock gate — real execution in non-interactive/CI contexts.
-  // Must always be set explicitly; never defaults on.
-  if (process.env.PANSHA_HEADLESS === '1') return false;
-  // Default (unchanged): non-TTY → mock (safety red line).
-  return !process.stdout.isTTY;
+  // 0.8 语义反转：mock 仅显式 opt-in（PANSHA_SMOKE=1）。
+  // 非交互场景的安全由审批三档 + pathGuard + 敏感路径 + 写前读四层真防护兜底，
+  // 不再由假结果密封（假结果曾掩盖真实成功被误判的两个 P0）。
+  // PANSHA_HEADLESS 保留为兼容别名（no-op，历史上是本门的逃逸通道）。
+  return process.env.PANSHA_SMOKE === '1';
 }
 
 export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
-  // ---- SAFETY HARD GATE (must be the outermost behavior) ----
+  // ---- SMOKE GATE (explicit opt-in only, PANSHA_SMOKE=1) ----
+  // Non-TTY is NOT smoke anymore (0.8 reversal): real execution proceeds and
+  // non-interactive safety is兜底 by the real defense layers wired below —
+  // approval three-tier gate() (readonly deny / bridge-or-auto-deny), pathGuard
+  // + read-before-write inside the write tools, and the M2-6 sensitive-path
+  // hard deny (sensitiveWriteDenial, all tiers, pre-approval).
   if (isSmokeEnvironment()) {
     return {
       // Keeps the existing loop heuristic (PASS) and smoke behavior intact.

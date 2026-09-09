@@ -12,7 +12,7 @@
 // 另含 T1#2 三入口透传的 RunCommand 级断言（approvalMode/sessionAllowlist/
 // approvalBridge/signal 必须从 CommandContext 抵达 solveIssue）。
 
-process.env.PANSHA_HEADLESS = '1'; // 逃出非 TTY mock 门（node --test 每文件独立进程，互不影响）
+process.env.PANSHA_HEADLESS = '1'; // 0.8 起为兼容别名（非 TTY 默认真执行）；node --test 每文件独立进程，互不影响
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';

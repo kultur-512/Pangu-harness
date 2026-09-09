@@ -169,9 +169,10 @@ describe('engineAdapter approval gate', () => {
     assert.equal(fs.readFileSync(path.join(root, 'a2.txt'), 'utf-8'), '2');
   });
 
-  it('TTY without bridge → auto-deny (never hangs, never writes); non-TTY never even reaches approval (outer mock gate)', async () => {
-    // Outer safety gate (non-TTY → mock) is covered by executor.test.ts.
-    // Here: TTY=true so we reach the approval layer, but no bridge configured.
+  it('default 档无审批桥 → auto-deny，TTY 与非 TTY 同语义（0.8：非 TTY 也抵达审批层）', async () => {
+    // 0.8 语义反转后 outer mock 门已摘除：非 TTY 与 TTY 一样抵达审批层，
+    // 无 bridge → safe default 拒绝（never hangs, never writes）。
+    // 先在 fake TTY 下验证，再还原 non-TTY（测试进程本身非 TTY）复核同语义。
     setStdoutTty(true);
     delete process.env.PANSHA_SMOKE;
     const adapter = createEngineAdapter({
@@ -185,6 +186,12 @@ describe('engineAdapter approval gate', () => {
     assert.ok(Date.now() - t0 < 1000, 'must not hang');
     assert.ok(out.startsWith('TOOL_ERROR: DENIED_BY_USER'));
     assert.ok(!fs.existsSync(path.join(root, 'no.txt')));
+
+    // 非 TTY（不再被 mock 门拦截）同样 auto-deny
+    setStdoutTty(undefined);
+    const outNonTty = await adapter.execute(call('write_file', { file_path: 'no2.txt', content: 'x' }));
+    assert.ok(outNonTty.startsWith('TOOL_ERROR: DENIED_BY_USER'));
+    assert.ok(!fs.existsSync(path.join(root, 'no2.txt')));
   });
 
   it('approval timeout (short, injected) → treated as n', async () => {

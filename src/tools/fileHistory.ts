@@ -8,9 +8,10 @@
 //   files/<wsHash>/<id>__<base>   → backup content ("__ABSENT__" marker file
 //                                    records a create; undo deletes the file)
 //
-// Smoke safety: this module is only invoked from the engine adapter AFTER the
-// isSmokeEnvironment gate (non-TTY/CI never reaches it) or from an explicit
-// user command (/undo) — never from tests with fake TTYs.
+// Smoke safety (0.8): mock is explicit opt-in only (PANSHA_SMOKE=1); real
+// executions — interactive or not — reach this module AFTER the approval
+// three-tier gate + pathGuard + sensitive-path checks. /undo remains the
+// explicit user command path.
 
 import fs from 'fs';
 import os from 'os';

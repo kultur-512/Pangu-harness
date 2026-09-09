@@ -12,7 +12,7 @@
 // 本文件：classifySignal 单测 + loop 级 NEUTRAL 不清零断言 + 真实 engineAdapter
 // 的 describeResult 尾标行为锁定。
 
-process.env.PANSHA_HEADLESS = '1'; // 逃出非 TTY mock 门（本进程内隔离；node --test 每文件独立进程）
+process.env.PANSHA_HEADLESS = '1'; // 0.8 起为兼容别名（非 TTY 默认真执行）；node --test 每文件独立进程
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

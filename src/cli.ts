@@ -55,8 +55,8 @@ let forceClassic = false;
 let resumeArg: string | null = null;
 // --branch <name> — fork the resume target into a new branch session.
 let branchArg: string | null = null;
-// --headless — explicit escape hatch for the isTTY mock gate.
-// Set BEFORE any engine import so isSmokeEnvironment() reads it on first call.
+// --headless — 兼容别名（0.8 语义反转）：非 TTY 已默认真执行，本 flag 不再
+// 改变 mock 门（mock 仅 PANSHA_SMOKE=1 显式 opt-in）；保留用于兼容旧脚本。
 let headlessFlag = false;
 const args: string[] = [];
 for (let i = 0; i < rawArgs.length; i++) {

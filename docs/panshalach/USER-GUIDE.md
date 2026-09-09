@@ -20,7 +20,7 @@ npm link           # 全局部署：生成 zhulong / panshalach bin（旧别名 
 zhulong                             # 交互式 REPL（对外主名）
 panshalach --help                   # 帮助（同义 bin）
 panshalach run "任务..."            # 单条任务（one-shot）
-panshalach --headless run "任务..." # 显式逃逸 isTTY 守卫（真实执行）
+panshalach --headless run "任务..." # 兼容别名（0.8 起非 TTY 默认真实执行；写仍受审批档位门禁）
 panshalach --approval full run "…"  # one-shot/headless 指定审批档位（见 §4）
 ```
 

@@ -1,13 +1,13 @@
 {
   "meta": {
-    "generatedAt": "2026-09-09T16:41:57.134Z",
+    "generatedAt": "2026-09-09T22:57:40.167Z",
     "source": "mock-smoke",
     "model": "mock://smoke",
     "runnerVersion": "0.2.0"
   },
   "summary": {
-    "summaryId": "b065effd-7f83-45af-9851-d99159216958",
-    "generatedAt": "2026-09-09T16:41:57.134Z",
+    "summaryId": "d36729fb-1dad-454e-a155-17f309e25c6c",
+    "generatedAt": "2026-09-09T22:57:40.167Z",
     "source": "mock-smoke",
     "total": 20,
     "totalRuns": 20,
@@ -51,30 +51,30 @@
       "C4": "B + semantic retrieval (n-gram, R7)"
     },
     "runIds": [
-      "d8545482-40eb-43f6-8a15-29e850c3cb55",
-      "9eefec76-82ed-4a78-841f-5397356ac2c8",
-      "aa207f34-b936-4ad3-8757-62fb5a45f427",
-      "75deef86-e7e6-42b6-9640-e0308e5f2cd8",
-      "7069896e-1a1c-45c8-913f-01d88f085cc5",
-      "8d0ad03f-29bd-4beb-b31d-9220e6cb46f2",
-      "e79dc55d-b051-4b01-b7ad-6aeacf53741d",
-      "d33f9506-7ddc-4d38-82bc-8bfc43629416",
-      "f712758f-88fa-49bb-a960-28c3fea39740",
-      "ac9d79f6-6115-4dea-9bc4-b12fcfa958e5",
-      "3bb07736-ae82-4d18-9d4d-acf757d6f020",
-      "6068d181-81e0-4b1c-825d-95b200419801",
-      "9556ee82-9662-48c9-b042-04056595bfa8",
-      "298ad22a-16c4-4154-b593-e40a373dfc39",
-      "d344186d-aa6b-45b8-b560-fd0fd9f9864a",
-      "0de24291-a4b0-4596-bd08-46afaf87830b",
-      "fd15782c-83e6-46e0-9d55-c5d87457a3d8",
-      "da5e329f-a548-4b9c-a1b6-ea12935493fe",
-      "eb751767-ca39-4b5b-adc2-de0d7f9d06ed",
-      "f46f36f0-e868-49c5-b035-07d988c892c4"
+      "66e3bf52-1a38-4cf1-b154-f93c21ec572f",
+      "ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd",
+      "f2218d5d-dad7-4cc3-a3da-da501e8b3b11",
+      "e37e386b-3cb3-473f-b0bb-b5fd1e42ac30",
+      "7957442c-79ba-4e2f-b356-68380b45eded",
+      "664505ef-12ce-4dbd-9088-534f0a8e2fef",
+      "a31bfa60-5e85-4b3b-8fde-696f288d92f8",
+      "b604ef40-ae48-4a9f-b806-afaac0766c27",
+      "cc258a1f-f6f7-47f7-b19b-d216098688f8",
+      "30dbf295-2518-4818-a739-aa4cb12b8261",
+      "bf7cb267-0553-49ce-9dc6-8e17a3047e5e",
+      "24ee93cc-5a8a-484b-9d5a-662dcb62e0e5",
+      "9cdd36df-9e8d-420d-ad8a-af38e42d8eb2",
+      "f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6",
+      "9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9",
+      "8aa5e375-489d-4753-a574-597d390451b7",
+      "648fe0b2-8f11-4b4e-95c1-ae182ca55c9f",
+      "d15e9144-e2c3-40dc-bc23-921388edc2fd",
+      "75565d78-51f2-4f3e-b423-7a69bcdd3f45",
+      "5660ac40-9d66-4ae6-b721-0b53ee3083b7"
     ],
     "results": [
       {
-        "runId": "d8545482-40eb-43f6-8a15-29e850c3cb55",
+        "runId": "66e3bf52-1a38-4cf1-b154-f93c21ec572f",
         "source": "mock-smoke",
         "ablation": "A",
         "taskId": "T1-a-42",
@@ -83,9 +83,9 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.133Z",
-        "finishedAt": "2026-09-09T16:41:57.133Z",
-        "durationMs": 0,
+        "startedAt": "2026-09-09T22:57:40.166Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 1,
         "verdict": "no-verification",
         "verification": {
           "signal": "NO_VERIFICATION",
@@ -103,7 +103,7 @@
         },
         "failureTaxonomy": "overflow-skipped",
         "artifacts": {
-          "rolloutJsonl": "results/d8545482-40eb-43f6-8a15-29e850c3cb55/rollout.jsonl"
+          "rolloutJsonl": "results/66e3bf52-1a38-4cf1-b154-f93c21ec572f/rollout.jsonl"
         },
         "tags": [
           "overflow-skipped",
@@ -112,7 +112,7 @@
         "stopReason": "no-verification"
       },
       {
-        "runId": "9eefec76-82ed-4a78-841f-5397356ac2c8",
+        "runId": "ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd",
         "source": "mock-smoke",
         "ablation": "A",
         "taskId": "T2-a-42",
@@ -121,8 +121,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.133Z",
-        "finishedAt": "2026-09-09T16:41:57.133Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "no-verification",
         "verification": {
@@ -141,7 +141,7 @@
         },
         "failureTaxonomy": "overflow-skipped",
         "artifacts": {
-          "rolloutJsonl": "results/9eefec76-82ed-4a78-841f-5397356ac2c8/rollout.jsonl"
+          "rolloutJsonl": "results/ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd/rollout.jsonl"
         },
         "tags": [
           "overflow-skipped",
@@ -150,7 +150,7 @@
         "stopReason": "no-verification"
       },
       {
-        "runId": "aa207f34-b936-4ad3-8757-62fb5a45f427",
+        "runId": "f2218d5d-dad7-4cc3-a3da-da501e8b3b11",
         "source": "mock-smoke",
         "ablation": "A",
         "taskId": "T3-a-42",
@@ -159,8 +159,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.133Z",
-        "finishedAt": "2026-09-09T16:41:57.133Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "no-verification",
         "verification": {
@@ -179,7 +179,7 @@
         },
         "failureTaxonomy": "overflow-skipped",
         "artifacts": {
-          "rolloutJsonl": "results/aa207f34-b936-4ad3-8757-62fb5a45f427/rollout.jsonl"
+          "rolloutJsonl": "results/f2218d5d-dad7-4cc3-a3da-da501e8b3b11/rollout.jsonl"
         },
         "tags": [
           "overflow-skipped",
@@ -188,7 +188,7 @@
         "stopReason": "no-verification"
       },
       {
-        "runId": "75deef86-e7e6-42b6-9640-e0308e5f2cd8",
+        "runId": "e37e386b-3cb3-473f-b0bb-b5fd1e42ac30",
         "source": "mock-smoke",
         "ablation": "A",
         "taskId": "T4-a-42",
@@ -197,8 +197,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.133Z",
-        "finishedAt": "2026-09-09T16:41:57.133Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "no-verification",
         "verification": {
@@ -217,7 +217,7 @@
         },
         "failureTaxonomy": "overflow-skipped",
         "artifacts": {
-          "rolloutJsonl": "results/75deef86-e7e6-42b6-9640-e0308e5f2cd8/rollout.jsonl"
+          "rolloutJsonl": "results/e37e386b-3cb3-473f-b0bb-b5fd1e42ac30/rollout.jsonl"
         },
         "tags": [
           "overflow-skipped",
@@ -228,7 +228,7 @@
         "attemptCount": 2
       },
       {
-        "runId": "7069896e-1a1c-45c8-913f-01d88f085cc5",
+        "runId": "7957442c-79ba-4e2f-b356-68380b45eded",
         "source": "mock-smoke",
         "ablation": "A",
         "taskId": "T5-a-42",
@@ -237,8 +237,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.133Z",
-        "finishedAt": "2026-09-09T16:41:57.133Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "no-verification",
         "verification": {
@@ -257,7 +257,7 @@
         },
         "failureTaxonomy": "overflow-skipped",
         "artifacts": {
-          "rolloutJsonl": "results/7069896e-1a1c-45c8-913f-01d88f085cc5/rollout.jsonl"
+          "rolloutJsonl": "results/7957442c-79ba-4e2f-b356-68380b45eded/rollout.jsonl"
         },
         "tags": [
           "overflow-skipped",
@@ -266,7 +266,7 @@
         "stopReason": "no-verification"
       },
       {
-        "runId": "8d0ad03f-29bd-4beb-b31d-9220e6cb46f2",
+        "runId": "664505ef-12ce-4dbd-9088-534f0a8e2fef",
         "source": "mock-smoke",
         "ablation": "B",
         "taskId": "T1-b-42",
@@ -275,8 +275,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -302,7 +302,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/8d0ad03f-29bd-4beb-b31d-9220e6cb46f2/rollout.jsonl"
+          "rolloutJsonl": "results/664505ef-12ce-4dbd-9088-534f0a8e2fef/rollout.jsonl"
         },
         "tags": [],
         "stopReason": "completed",
@@ -315,7 +315,7 @@
         }
       },
       {
-        "runId": "e79dc55d-b051-4b01-b7ad-6aeacf53741d",
+        "runId": "a31bfa60-5e85-4b3b-8fde-696f288d92f8",
         "source": "mock-smoke",
         "ablation": "B",
         "taskId": "T2-b-42",
@@ -324,8 +324,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -351,7 +351,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/e79dc55d-b051-4b01-b7ad-6aeacf53741d/rollout.jsonl"
+          "rolloutJsonl": "results/a31bfa60-5e85-4b3b-8fde-696f288d92f8/rollout.jsonl"
         },
         "tags": [],
         "stopReason": "completed",
@@ -364,7 +364,7 @@
         }
       },
       {
-        "runId": "d33f9506-7ddc-4d38-82bc-8bfc43629416",
+        "runId": "b604ef40-ae48-4a9f-b806-afaac0766c27",
         "source": "mock-smoke",
         "ablation": "B",
         "taskId": "T3-b-42",
@@ -373,8 +373,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -400,7 +400,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/d33f9506-7ddc-4d38-82bc-8bfc43629416/rollout.jsonl"
+          "rolloutJsonl": "results/b604ef40-ae48-4a9f-b806-afaac0766c27/rollout.jsonl"
         },
         "tags": [],
         "stopReason": "completed",
@@ -413,7 +413,7 @@
         }
       },
       {
-        "runId": "f712758f-88fa-49bb-a960-28c3fea39740",
+        "runId": "cc258a1f-f6f7-47f7-b19b-d216098688f8",
         "source": "mock-smoke",
         "ablation": "B",
         "taskId": "T4-b-42",
@@ -422,8 +422,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -449,7 +449,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/f712758f-88fa-49bb-a960-28c3fea39740/rollout.jsonl"
+          "rolloutJsonl": "results/cc258a1f-f6f7-47f7-b19b-d216098688f8/rollout.jsonl"
         },
         "tags": [
           "resumed"
@@ -464,7 +464,7 @@
         }
       },
       {
-        "runId": "ac9d79f6-6115-4dea-9bc4-b12fcfa958e5",
+        "runId": "30dbf295-2518-4818-a739-aa4cb12b8261",
         "source": "mock-smoke",
         "ablation": "B",
         "taskId": "T5-b-42",
@@ -473,8 +473,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -500,7 +500,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/ac9d79f6-6115-4dea-9bc4-b12fcfa958e5/rollout.jsonl"
+          "rolloutJsonl": "results/30dbf295-2518-4818-a739-aa4cb12b8261/rollout.jsonl"
         },
         "tags": [],
         "stopReason": "completed",
@@ -513,7 +513,7 @@
         }
       },
       {
-        "runId": "3bb07736-ae82-4d18-9d4d-acf757d6f020",
+        "runId": "bf7cb267-0553-49ce-9dc6-8e17a3047e5e",
         "source": "mock-smoke",
         "ablation": "C",
         "taskId": "T1-c-42",
@@ -522,8 +522,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -548,7 +548,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/3bb07736-ae82-4d18-9d4d-acf757d6f020/rollout.jsonl"
+          "rolloutJsonl": "results/bf7cb267-0553-49ce-9dc6-8e17a3047e5e/rollout.jsonl"
         },
         "tags": [
           "budget-active"
@@ -563,7 +563,7 @@
         }
       },
       {
-        "runId": "6068d181-81e0-4b1c-825d-95b200419801",
+        "runId": "24ee93cc-5a8a-484b-9d5a-662dcb62e0e5",
         "source": "mock-smoke",
         "ablation": "C",
         "taskId": "T2-c-42",
@@ -572,8 +572,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -598,7 +598,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/6068d181-81e0-4b1c-825d-95b200419801/rollout.jsonl"
+          "rolloutJsonl": "results/24ee93cc-5a8a-484b-9d5a-662dcb62e0e5/rollout.jsonl"
         },
         "tags": [
           "budget-active"
@@ -613,7 +613,7 @@
         }
       },
       {
-        "runId": "9556ee82-9662-48c9-b042-04056595bfa8",
+        "runId": "9cdd36df-9e8d-420d-ad8a-af38e42d8eb2",
         "source": "mock-smoke",
         "ablation": "C",
         "taskId": "T3-c-42",
@@ -622,8 +622,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -648,7 +648,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/9556ee82-9662-48c9-b042-04056595bfa8/rollout.jsonl"
+          "rolloutJsonl": "results/9cdd36df-9e8d-420d-ad8a-af38e42d8eb2/rollout.jsonl"
         },
         "tags": [
           "budget-active"
@@ -663,7 +663,7 @@
         }
       },
       {
-        "runId": "298ad22a-16c4-4154-b593-e40a373dfc39",
+        "runId": "f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6",
         "source": "mock-smoke",
         "ablation": "C",
         "taskId": "T4-c-42",
@@ -672,8 +672,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -698,7 +698,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/298ad22a-16c4-4154-b593-e40a373dfc39/rollout.jsonl"
+          "rolloutJsonl": "results/f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6/rollout.jsonl"
         },
         "tags": [
           "budget-active",
@@ -714,7 +714,7 @@
         }
       },
       {
-        "runId": "d344186d-aa6b-45b8-b560-fd0fd9f9864a",
+        "runId": "9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9",
         "source": "mock-smoke",
         "ablation": "C",
         "taskId": "T5-c-42",
@@ -723,8 +723,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -749,7 +749,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/d344186d-aa6b-45b8-b560-fd0fd9f9864a/rollout.jsonl"
+          "rolloutJsonl": "results/9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9/rollout.jsonl"
         },
         "tags": [
           "budget-active"
@@ -764,7 +764,7 @@
         }
       },
       {
-        "runId": "0de24291-a4b0-4596-bd08-46afaf87830b",
+        "runId": "8aa5e375-489d-4753-a574-597d390451b7",
         "source": "mock-smoke",
         "ablation": "C4",
         "taskId": "T1-c4-42",
@@ -773,8 +773,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -799,7 +799,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/0de24291-a4b0-4596-bd08-46afaf87830b/rollout.jsonl"
+          "rolloutJsonl": "results/8aa5e375-489d-4753-a574-597d390451b7/rollout.jsonl"
         },
         "tags": [
           "semantic-retrieval"
@@ -814,7 +814,7 @@
         }
       },
       {
-        "runId": "fd15782c-83e6-46e0-9d55-c5d87457a3d8",
+        "runId": "648fe0b2-8f11-4b4e-95c1-ae182ca55c9f",
         "source": "mock-smoke",
         "ablation": "C4",
         "taskId": "T2-c4-42",
@@ -823,8 +823,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -849,7 +849,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/fd15782c-83e6-46e0-9d55-c5d87457a3d8/rollout.jsonl"
+          "rolloutJsonl": "results/648fe0b2-8f11-4b4e-95c1-ae182ca55c9f/rollout.jsonl"
         },
         "tags": [
           "semantic-retrieval"
@@ -864,7 +864,7 @@
         }
       },
       {
-        "runId": "da5e329f-a548-4b9c-a1b6-ea12935493fe",
+        "runId": "d15e9144-e2c3-40dc-bc23-921388edc2fd",
         "source": "mock-smoke",
         "ablation": "C4",
         "taskId": "T3-c4-42",
@@ -873,8 +873,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -899,7 +899,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/da5e329f-a548-4b9c-a1b6-ea12935493fe/rollout.jsonl"
+          "rolloutJsonl": "results/d15e9144-e2c3-40dc-bc23-921388edc2fd/rollout.jsonl"
         },
         "tags": [
           "semantic-retrieval"
@@ -914,7 +914,7 @@
         }
       },
       {
-        "runId": "eb751767-ca39-4b5b-adc2-de0d7f9d06ed",
+        "runId": "75565d78-51f2-4f3e-b423-7a69bcdd3f45",
         "source": "mock-smoke",
         "ablation": "C4",
         "taskId": "T4-c4-42",
@@ -923,8 +923,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -949,7 +949,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/eb751767-ca39-4b5b-adc2-de0d7f9d06ed/rollout.jsonl"
+          "rolloutJsonl": "results/75565d78-51f2-4f3e-b423-7a69bcdd3f45/rollout.jsonl"
         },
         "tags": [
           "semantic-retrieval",
@@ -965,7 +965,7 @@
         }
       },
       {
-        "runId": "f46f36f0-e868-49c5-b035-07d988c892c4",
+        "runId": "5660ac40-9d66-4ae6-b721-0b53ee3083b7",
         "source": "mock-smoke",
         "ablation": "C4",
         "taskId": "T5-c4-42",
@@ -974,8 +974,8 @@
         "seedSupport": true,
         "modelId": "mock://smoke",
         "panshalachVersion": "0.6.5",
-        "startedAt": "2026-09-09T16:41:57.134Z",
-        "finishedAt": "2026-09-09T16:41:57.134Z",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
         "durationMs": 0,
         "verdict": "completed",
         "verification": {
@@ -1000,7 +1000,7 @@
         },
         "failureTaxonomy": "none",
         "artifacts": {
-          "rolloutJsonl": "results/f46f36f0-e868-49c5-b035-07d988c892c4/rollout.jsonl"
+          "rolloutJsonl": "results/5660ac40-9d66-4ae6-b721-0b53ee3083b7/rollout.jsonl"
         },
         "tags": [
           "semantic-retrieval"
@@ -1019,7 +1019,7 @@
   },
   "results": [
     {
-      "runId": "d8545482-40eb-43f6-8a15-29e850c3cb55",
+      "runId": "66e3bf52-1a38-4cf1-b154-f93c21ec572f",
       "source": "mock-smoke",
       "ablation": "A",
       "taskId": "T1-a-42",
@@ -1028,9 +1028,9 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.133Z",
-      "finishedAt": "2026-09-09T16:41:57.133Z",
-      "durationMs": 0,
+      "startedAt": "2026-09-09T22:57:40.166Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 1,
       "verdict": "no-verification",
       "verification": {
         "signal": "NO_VERIFICATION",
@@ -1048,7 +1048,7 @@
       },
       "failureTaxonomy": "overflow-skipped",
       "artifacts": {
-        "rolloutJsonl": "results/d8545482-40eb-43f6-8a15-29e850c3cb55/rollout.jsonl"
+        "rolloutJsonl": "results/66e3bf52-1a38-4cf1-b154-f93c21ec572f/rollout.jsonl"
       },
       "tags": [
         "overflow-skipped",
@@ -1057,7 +1057,7 @@
       "stopReason": "no-verification"
     },
     {
-      "runId": "9eefec76-82ed-4a78-841f-5397356ac2c8",
+      "runId": "ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd",
       "source": "mock-smoke",
       "ablation": "A",
       "taskId": "T2-a-42",
@@ -1066,8 +1066,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.133Z",
-      "finishedAt": "2026-09-09T16:41:57.133Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "no-verification",
       "verification": {
@@ -1086,7 +1086,7 @@
       },
       "failureTaxonomy": "overflow-skipped",
       "artifacts": {
-        "rolloutJsonl": "results/9eefec76-82ed-4a78-841f-5397356ac2c8/rollout.jsonl"
+        "rolloutJsonl": "results/ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd/rollout.jsonl"
       },
       "tags": [
         "overflow-skipped",
@@ -1095,7 +1095,7 @@
       "stopReason": "no-verification"
     },
     {
-      "runId": "aa207f34-b936-4ad3-8757-62fb5a45f427",
+      "runId": "f2218d5d-dad7-4cc3-a3da-da501e8b3b11",
       "source": "mock-smoke",
       "ablation": "A",
       "taskId": "T3-a-42",
@@ -1104,8 +1104,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.133Z",
-      "finishedAt": "2026-09-09T16:41:57.133Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "no-verification",
       "verification": {
@@ -1124,7 +1124,7 @@
       },
       "failureTaxonomy": "overflow-skipped",
       "artifacts": {
-        "rolloutJsonl": "results/aa207f34-b936-4ad3-8757-62fb5a45f427/rollout.jsonl"
+        "rolloutJsonl": "results/f2218d5d-dad7-4cc3-a3da-da501e8b3b11/rollout.jsonl"
       },
       "tags": [
         "overflow-skipped",
@@ -1133,7 +1133,7 @@
       "stopReason": "no-verification"
     },
     {
-      "runId": "75deef86-e7e6-42b6-9640-e0308e5f2cd8",
+      "runId": "e37e386b-3cb3-473f-b0bb-b5fd1e42ac30",
       "source": "mock-smoke",
       "ablation": "A",
       "taskId": "T4-a-42",
@@ -1142,8 +1142,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.133Z",
-      "finishedAt": "2026-09-09T16:41:57.133Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "no-verification",
       "verification": {
@@ -1162,7 +1162,7 @@
       },
       "failureTaxonomy": "overflow-skipped",
       "artifacts": {
-        "rolloutJsonl": "results/75deef86-e7e6-42b6-9640-e0308e5f2cd8/rollout.jsonl"
+        "rolloutJsonl": "results/e37e386b-3cb3-473f-b0bb-b5fd1e42ac30/rollout.jsonl"
       },
       "tags": [
         "overflow-skipped",
@@ -1173,7 +1173,7 @@
       "attemptCount": 2
     },
     {
-      "runId": "7069896e-1a1c-45c8-913f-01d88f085cc5",
+      "runId": "7957442c-79ba-4e2f-b356-68380b45eded",
       "source": "mock-smoke",
       "ablation": "A",
       "taskId": "T5-a-42",
@@ -1182,8 +1182,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.133Z",
-      "finishedAt": "2026-09-09T16:41:57.133Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "no-verification",
       "verification": {
@@ -1202,7 +1202,7 @@
       },
       "failureTaxonomy": "overflow-skipped",
       "artifacts": {
-        "rolloutJsonl": "results/7069896e-1a1c-45c8-913f-01d88f085cc5/rollout.jsonl"
+        "rolloutJsonl": "results/7957442c-79ba-4e2f-b356-68380b45eded/rollout.jsonl"
       },
       "tags": [
         "overflow-skipped",
@@ -1211,7 +1211,7 @@
       "stopReason": "no-verification"
     },
     {
-      "runId": "8d0ad03f-29bd-4beb-b31d-9220e6cb46f2",
+      "runId": "664505ef-12ce-4dbd-9088-534f0a8e2fef",
       "source": "mock-smoke",
       "ablation": "B",
       "taskId": "T1-b-42",
@@ -1220,8 +1220,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1247,7 +1247,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/8d0ad03f-29bd-4beb-b31d-9220e6cb46f2/rollout.jsonl"
+        "rolloutJsonl": "results/664505ef-12ce-4dbd-9088-534f0a8e2fef/rollout.jsonl"
       },
       "tags": [],
       "stopReason": "completed",
@@ -1260,7 +1260,7 @@
       }
     },
     {
-      "runId": "e79dc55d-b051-4b01-b7ad-6aeacf53741d",
+      "runId": "a31bfa60-5e85-4b3b-8fde-696f288d92f8",
       "source": "mock-smoke",
       "ablation": "B",
       "taskId": "T2-b-42",
@@ -1269,8 +1269,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1296,7 +1296,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/e79dc55d-b051-4b01-b7ad-6aeacf53741d/rollout.jsonl"
+        "rolloutJsonl": "results/a31bfa60-5e85-4b3b-8fde-696f288d92f8/rollout.jsonl"
       },
       "tags": [],
       "stopReason": "completed",
@@ -1309,7 +1309,7 @@
       }
     },
     {
-      "runId": "d33f9506-7ddc-4d38-82bc-8bfc43629416",
+      "runId": "b604ef40-ae48-4a9f-b806-afaac0766c27",
       "source": "mock-smoke",
       "ablation": "B",
       "taskId": "T3-b-42",
@@ -1318,8 +1318,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1345,7 +1345,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/d33f9506-7ddc-4d38-82bc-8bfc43629416/rollout.jsonl"
+        "rolloutJsonl": "results/b604ef40-ae48-4a9f-b806-afaac0766c27/rollout.jsonl"
       },
       "tags": [],
       "stopReason": "completed",
@@ -1358,7 +1358,7 @@
       }
     },
     {
-      "runId": "f712758f-88fa-49bb-a960-28c3fea39740",
+      "runId": "cc258a1f-f6f7-47f7-b19b-d216098688f8",
       "source": "mock-smoke",
       "ablation": "B",
       "taskId": "T4-b-42",
@@ -1367,8 +1367,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1394,7 +1394,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/f712758f-88fa-49bb-a960-28c3fea39740/rollout.jsonl"
+        "rolloutJsonl": "results/cc258a1f-f6f7-47f7-b19b-d216098688f8/rollout.jsonl"
       },
       "tags": [
         "resumed"
@@ -1409,7 +1409,7 @@
       }
     },
     {
-      "runId": "ac9d79f6-6115-4dea-9bc4-b12fcfa958e5",
+      "runId": "30dbf295-2518-4818-a739-aa4cb12b8261",
       "source": "mock-smoke",
       "ablation": "B",
       "taskId": "T5-b-42",
@@ -1418,8 +1418,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1445,7 +1445,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/ac9d79f6-6115-4dea-9bc4-b12fcfa958e5/rollout.jsonl"
+        "rolloutJsonl": "results/30dbf295-2518-4818-a739-aa4cb12b8261/rollout.jsonl"
       },
       "tags": [],
       "stopReason": "completed",
@@ -1458,7 +1458,7 @@
       }
     },
     {
-      "runId": "3bb07736-ae82-4d18-9d4d-acf757d6f020",
+      "runId": "bf7cb267-0553-49ce-9dc6-8e17a3047e5e",
       "source": "mock-smoke",
       "ablation": "C",
       "taskId": "T1-c-42",
@@ -1467,8 +1467,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1493,7 +1493,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/3bb07736-ae82-4d18-9d4d-acf757d6f020/rollout.jsonl"
+        "rolloutJsonl": "results/bf7cb267-0553-49ce-9dc6-8e17a3047e5e/rollout.jsonl"
       },
       "tags": [
         "budget-active"
@@ -1508,7 +1508,7 @@
       }
     },
     {
-      "runId": "6068d181-81e0-4b1c-825d-95b200419801",
+      "runId": "24ee93cc-5a8a-484b-9d5a-662dcb62e0e5",
       "source": "mock-smoke",
       "ablation": "C",
       "taskId": "T2-c-42",
@@ -1517,8 +1517,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1543,7 +1543,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/6068d181-81e0-4b1c-825d-95b200419801/rollout.jsonl"
+        "rolloutJsonl": "results/24ee93cc-5a8a-484b-9d5a-662dcb62e0e5/rollout.jsonl"
       },
       "tags": [
         "budget-active"
@@ -1558,7 +1558,7 @@
       }
     },
     {
-      "runId": "9556ee82-9662-48c9-b042-04056595bfa8",
+      "runId": "9cdd36df-9e8d-420d-ad8a-af38e42d8eb2",
       "source": "mock-smoke",
       "ablation": "C",
       "taskId": "T3-c-42",
@@ -1567,8 +1567,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1593,7 +1593,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/9556ee82-9662-48c9-b042-04056595bfa8/rollout.jsonl"
+        "rolloutJsonl": "results/9cdd36df-9e8d-420d-ad8a-af38e42d8eb2/rollout.jsonl"
       },
       "tags": [
         "budget-active"
@@ -1608,7 +1608,7 @@
       }
     },
     {
-      "runId": "298ad22a-16c4-4154-b593-e40a373dfc39",
+      "runId": "f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6",
       "source": "mock-smoke",
       "ablation": "C",
       "taskId": "T4-c-42",
@@ -1617,8 +1617,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1643,7 +1643,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/298ad22a-16c4-4154-b593-e40a373dfc39/rollout.jsonl"
+        "rolloutJsonl": "results/f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6/rollout.jsonl"
       },
       "tags": [
         "budget-active",
@@ -1659,7 +1659,7 @@
       }
     },
     {
-      "runId": "d344186d-aa6b-45b8-b560-fd0fd9f9864a",
+      "runId": "9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9",
       "source": "mock-smoke",
       "ablation": "C",
       "taskId": "T5-c-42",
@@ -1668,8 +1668,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1694,7 +1694,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/d344186d-aa6b-45b8-b560-fd0fd9f9864a/rollout.jsonl"
+        "rolloutJsonl": "results/9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9/rollout.jsonl"
       },
       "tags": [
         "budget-active"
@@ -1709,7 +1709,7 @@
       }
     },
     {
-      "runId": "0de24291-a4b0-4596-bd08-46afaf87830b",
+      "runId": "8aa5e375-489d-4753-a574-597d390451b7",
       "source": "mock-smoke",
       "ablation": "C4",
       "taskId": "T1-c4-42",
@@ -1718,8 +1718,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1744,7 +1744,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/0de24291-a4b0-4596-bd08-46afaf87830b/rollout.jsonl"
+        "rolloutJsonl": "results/8aa5e375-489d-4753-a574-597d390451b7/rollout.jsonl"
       },
       "tags": [
         "semantic-retrieval"
@@ -1759,7 +1759,7 @@
       }
     },
     {
-      "runId": "fd15782c-83e6-46e0-9d55-c5d87457a3d8",
+      "runId": "648fe0b2-8f11-4b4e-95c1-ae182ca55c9f",
       "source": "mock-smoke",
       "ablation": "C4",
       "taskId": "T2-c4-42",
@@ -1768,8 +1768,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1794,7 +1794,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/fd15782c-83e6-46e0-9d55-c5d87457a3d8/rollout.jsonl"
+        "rolloutJsonl": "results/648fe0b2-8f11-4b4e-95c1-ae182ca55c9f/rollout.jsonl"
       },
       "tags": [
         "semantic-retrieval"
@@ -1809,7 +1809,7 @@
       }
     },
     {
-      "runId": "da5e329f-a548-4b9c-a1b6-ea12935493fe",
+      "runId": "d15e9144-e2c3-40dc-bc23-921388edc2fd",
       "source": "mock-smoke",
       "ablation": "C4",
       "taskId": "T3-c4-42",
@@ -1818,8 +1818,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1844,7 +1844,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/da5e329f-a548-4b9c-a1b6-ea12935493fe/rollout.jsonl"
+        "rolloutJsonl": "results/d15e9144-e2c3-40dc-bc23-921388edc2fd/rollout.jsonl"
       },
       "tags": [
         "semantic-retrieval"
@@ -1859,7 +1859,7 @@
       }
     },
     {
-      "runId": "eb751767-ca39-4b5b-adc2-de0d7f9d06ed",
+      "runId": "75565d78-51f2-4f3e-b423-7a69bcdd3f45",
       "source": "mock-smoke",
       "ablation": "C4",
       "taskId": "T4-c4-42",
@@ -1868,8 +1868,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1894,7 +1894,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/eb751767-ca39-4b5b-adc2-de0d7f9d06ed/rollout.jsonl"
+        "rolloutJsonl": "results/75565d78-51f2-4f3e-b423-7a69bcdd3f45/rollout.jsonl"
       },
       "tags": [
         "semantic-retrieval",
@@ -1910,7 +1910,7 @@
       }
     },
     {
-      "runId": "f46f36f0-e868-49c5-b035-07d988c892c4",
+      "runId": "5660ac40-9d66-4ae6-b721-0b53ee3083b7",
       "source": "mock-smoke",
       "ablation": "C4",
       "taskId": "T5-c4-42",
@@ -1919,8 +1919,8 @@
       "seedSupport": true,
       "modelId": "mock://smoke",
       "panshalachVersion": "0.6.5",
-      "startedAt": "2026-09-09T16:41:57.134Z",
-      "finishedAt": "2026-09-09T16:41:57.134Z",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
       "durationMs": 0,
       "verdict": "completed",
       "verification": {
@@ -1945,7 +1945,7 @@
       },
       "failureTaxonomy": "none",
       "artifacts": {
-        "rolloutJsonl": "results/f46f36f0-e868-49c5-b035-07d988c892c4/rollout.jsonl"
+        "rolloutJsonl": "results/5660ac40-9d66-4ae6-b721-0b53ee3083b7/rollout.jsonl"
       },
       "tags": [
         "semantic-retrieval"

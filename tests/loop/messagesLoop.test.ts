@@ -7,8 +7,9 @@
 // - PromptBuilder 三段拆分等价（buildForTask == summary 块 + stable + volatile 拼接；
 //   PANSHA_NO_MEMORY=1 零注入契约在 messages 模式下保持）
 
-// 逃出非 TTY mock 门（node --test 每文件独立进程，互不影响）——chaser 级测试
-// 需要真实 engineAdapter（toolSchemas 非空 → 原生 FC pairing 断言）。
+// 0.8 语义反转后非 TTY 默认真执行；PANSHA_HEADLESS=1 保留为兼容别名（no-op，
+// 历史上用于逃出非 TTY mock 门）。chaser 级测试需要真实 engineAdapter
+// （toolSchemas 非空 → 原生 FC pairing 断言）；node --test 每文件独立进程，互不影响。
 process.env.PANSHA_HEADLESS = '1';
 
 import { describe, it, afterEach } from 'node:test';
