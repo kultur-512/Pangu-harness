@@ -98,7 +98,11 @@ export class RefinedMemoryStore {
 
   constructor(workspaceRoot: string, customFilename?: string) {
     this.workspaceRoot = workspaceRoot;
-    this.filePath = join(workspaceRoot, customFilename ?? MEMORY_LIMITS.DEFAULT_FILENAME);
+    // 优先级:显式 customFilename > PANSHA_MEMORY_FILE env > 默认文件名
+    // (对齐 TaskStateStore 的 PANSHA_TASK_STATE_FILE 模式——R6 评测用 env 注入隔离文件)
+    const fromEnv = typeof process !== 'undefined' ? process.env?.PANSHA_MEMORY_FILE?.trim() : undefined;
+    const resolved = customFilename ?? fromEnv ?? MEMORY_LIMITS.DEFAULT_FILENAME;
+    this.filePath = join(workspaceRoot, resolved);
   }
 
   /**
