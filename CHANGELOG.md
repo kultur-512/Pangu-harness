@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0-rc（M1 地基 + M2 执行层七项全量落地）
+
+依据 GAP-MATRIX-0.8 交叉对比与 PLAN-0.8-FOUNDATION（换地基、保语义）：
+
+- **M1-TurnController 四模块搬家**：sseInteractive.ts 2200→358 行（会话壳），新增 `src/cli/repl/turn/{TurnContext,TurnRenderer,CommandRouter,TurnController}`（共 1967 行）——零行为变更（455 行行为锁定测试全程绿）
+- **M2-1 工具并行分段调度**：只读段并发≤3 + 写/bash/MCP barrier 串行；结果/事件按原始序装配；批次 420s 超时
+- **M2-2 卡死硬闸**（guardrails.ts）：同参数连败 5 阻断/同工具败 8 终局/幂等同结果 5 阻断——905s 空转家族最后栅栏
+- **M2-3 工具结果落盘回读**：超 20k 输出写 scratch 目录 + persisted-output 预览；read_file 永不落盘
+- **M2-4 真实 usage 计量**：网关 usage 字段解析 + onUsage 回调；len/4 降级 fallback
+- **M2-5 错误分类器**：八类分类，auth/billing 快速失败；overflow→强制 compact→重试（≤1 次）
+- **M2-6 敏感路径写保护**：.ssh/.aws/.kube/.git-credentials/.netrc/id_rsa*/.env* 全档位拒写 + undo 拒还原
+- **M2-7 Turn.role 字段**：user/assistant 标注 + 旧格式迁移 + 摘要 prompt 用户原文逐字保留约束
+
+Tests: tsc 干净；全量 847（846+1skip+0 fail，+98 例）；双契约脚本 PASS
+
+
 ## 0.7.4 (部署陈旧 dist 修复 + 中断语义修正 + `?` 透传 + hermes 二次对齐调研)
 
 方案：`docs/panshalach/PLAN-0.7.4-FOR-CLAUDECODE.md`（控制人实测驱动）。用户跑的 zhulong 是 **09-06 00:03 的旧 dist**（0.7.1 批次 B 中途构建），0.7.2/0.7.3 全部修复只在 src——"莫名中断""explore/rollout 英文相位线""旧 `?` 输出"三个观测全是旧代码。"提交任务后莫名中断（235ms）"因果链：LM Studio 对 diffusion 模型（openpangu-7b-diffusion-base-i1）chat/completions 报 `Unexpected endpoint or method. Returning 200 anyway` → 200-garbage → `EMPTY_RESPONSE` → streamChat 回退裸 doComplete（无 withRetry/无 emptyResponse 捕获）穿透 → chaser catch 兜底硬编码 `stopReason='aborted'` → UI 渲染"已中断·现场已保留"。**模型错误被伪装成用户中断。**
