@@ -12,7 +12,7 @@ import {
   summarizeToolParams,
   toolResultLine,
   nextStepHint,
-} from '../../src/cli/repl/sseInteractive.js';
+} from '../../src/cli/repl/turn/TurnRenderer.js';
 import {
   isApprovalActive,
   cancelActiveApproval,

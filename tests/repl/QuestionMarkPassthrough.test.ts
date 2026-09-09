@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildQuickHelpLines, buildBanner } from '../../src/cli/repl/sseInteractive.js';
+import { buildQuickHelpLines, buildBanner } from '../../src/cli/repl/turn/TurnRenderer.js';
 import { classifyTaskIntent } from '../../src/cli/taskIntent.js';
 
 const src = readFileSync(

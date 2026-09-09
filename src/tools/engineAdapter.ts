@@ -12,7 +12,7 @@
 
 import type { ToolCall } from '../types/toolCall.js';
 import type { TierConfig } from '../tiers/TierConfig.js';
-import { createToolExecutor, type ToolExecutor } from './executor.js';
+import { createToolExecutor, normalizeToolName, type ToolExecutor } from './executor.js';
 import { createBashTool, bashTimeoutForTier } from './bash.js';
 import { isReadonlyAllowed, READONLY_DENY_MESSAGE } from './readonlyAllowlist.js';
 import { readFile } from './readFile.js';
@@ -20,6 +20,7 @@ import { createWriteFileTool } from './writeFile.js';
 import { createEditFileTool } from './editFile.js';
 import { classify, describeRequest, WRITE_TOOLS, cancelActiveApproval, type ApprovalDecision } from './approval.js';
 import { checkpointBeforeMutation } from './fileHistory.js';
+import { isSensitiveWorkspacePath, sensitiveDenyMessage } from './sensitivePaths.js';
 // 'a' 决策持久化到项目配置（best-effort；ConfigManager 无反向依赖，无环）
 import { appendProjectApprovalAllowlist } from '../cli/repl/ConfigManager.js';
 import path from 'path';
@@ -521,6 +522,25 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     return null; // approved → proceed
   }
 
+  /**
+   * M2-6: sensitive-path write protection — hard deny at EVERY tier, BEFORE
+   * the approval gate (readonly/default/full all reject; approval cannot
+   * override). Alias-normalized so `write`/`edit` can't slip past the check.
+   */
+  function sensitiveWriteDenial(toolRaw: string, params: Record<string, string>): ToolResult | null {
+    const norm = normalizeToolName(toolRaw);
+    if (norm !== 'write_file' && norm !== 'edit_file') return null;
+    const p = params.file_path ?? params.path ?? '';
+    if (!p || !isSensitiveWorkspacePath(opts.workspaceRoot, p)) return null;
+    return {
+      ok: false,
+      output: sensitiveDenyMessage(p),
+      durationMs: 0,
+      error: 'SENSITIVE_PATH',
+      meta: { danger: true },
+    };
+  }
+
   return {
     executor,
     ctx,
@@ -532,7 +552,10 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
       const parts: string[] = [];
       for (const call of calls) {
         const params = paramsOf(call);
-        const deniedRes = await gate(String(call.toolName || ''), params);
+        // M2-6 sensitive-path check runs BEFORE the approval gate:
+        // a sensitive write never reaches classify/approval/checkpoint.
+        const sensitiveRes = sensitiveWriteDenial(String(call.toolName || ''), params);
+        const deniedRes = sensitiveRes ?? (await gate(String(call.toolName || ''), params));
         if (deniedRes) {
           // gate 拒绝的调用也要发 post-execute（ok:false），
           // 否则 line 模式拒绝零卡片反馈（pre 行已由调用方在 execute 前无

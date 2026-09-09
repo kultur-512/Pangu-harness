@@ -10,17 +10,15 @@ import {
   pkgVersion,
   stripModelProviderPrefix,
   buildBanner,
-  LINE_COMMANDS,
-  completeLineCommand,
-  suggestCommand,
   buildQuickHelpLines,
   modeBadgeLine,
   modeSwitchReceipt,
   localizePhase,
   localizeRolloutStatus,
-  createTipGate,
   shouldShowStartupTip,
-} from '../../src/cli/repl/sseInteractive.js';
+} from '../../src/cli/repl/turn/TurnRenderer.js';
+import { LINE_COMMANDS, completeLineCommand, suggestCommand } from '../../src/cli/repl/turn/CommandRouter.js';
+import { createTipGate } from '../../src/cli/repl/turn/TurnContext.js';
 import { padByWidth, stringWidth } from '../../src/cli/repl/stringWidth.js';
 import { buildHelpView } from '../../src/cli/repl/commands/HelpCommand.js';
 

@@ -18,6 +18,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { createHash, randomBytes } from 'crypto';
 import { computeLineDiff } from './diff.js';
+import { isSensitiveRelPath } from './sensitivePaths.js';
 import type { DiffHunk } from './types.js';
 
 export interface CheckpointEntry {
@@ -296,6 +297,10 @@ export function undoLatest(workspaceRoot: string, rel?: string): UndoResult {
   const entry = latestCheckpoint(workspaceRoot, rel);
   if (!entry) {
     return { ok: false, message: '没有可撤销的写操作（file-history 为空）' };
+  }
+  // M2-6: /undo must not restore sensitive paths (write-gate bypass defense).
+  if (isSensitiveRelPath(entry.rel)) {
+    return { ok: false, message: `✗ SENSITIVE_PATH: ${entry.rel} 位于敏感路径清单，禁止撤销还原` };
   }
 
   const currentExists = fs.existsSync(entry.abs);

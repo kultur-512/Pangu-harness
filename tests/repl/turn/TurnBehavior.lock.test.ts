@@ -18,11 +18,13 @@ import path from 'node:path';
 import { Session } from '../../../src/cli/repl/Session.js';
 import {
   createTurnContext,
-  createTurnController,
+  type TurnContext,
+} from '../../../src/cli/repl/turn/TurnContext.js';
+import { createTurnController } from '../../../src/cli/repl/turn/TurnController.js';
+import {
   createModeRing,
   handleLocalCommand,
-  type TurnContext,
-} from '../../../src/cli/repl/sseInteractive.js';
+} from '../../../src/cli/repl/turn/CommandRouter.js';
 import { deleteRollout } from '../../../src/cli/repl/rolloutStore.js';
 
 // ==================== 测试替身 ====================

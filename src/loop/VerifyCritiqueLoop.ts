@@ -11,6 +11,7 @@
 // 自我批评保持建设性。纪律规则主要在高纪律模式下高强度执行，但频率和语气都经过工程化调优。
 
 import { StructuredReasoner, StructuredReasoningOutput } from '../reasoning/StructuredReasoner.js';
+import { ToolCallGuardrailController, type ToolCallGuardrailOptions } from './guardrails.js';
 import { StrictStructuredToolAdapter } from '../adapter/StrictStructuredToolAdapter.js';
 import { UniversalToolCallAdapter, ToolCallFormat } from '../adapter/UniversalToolCallAdapter.js';
 import { ToolCall, inferToolCategory } from '../types/toolCall.js';
@@ -98,12 +99,21 @@ export interface VerifyCritiqueLoopOptions {
    * （token 估算 chars/4）→ 裁 history 中段（保前 2 步 + 后 2 步）。
    */
   windowTokens?: number;
+
+  /**
+   * M2-2 卡死检测硬闸阈值（hermes tool_guardrails 移植）。缺省
+   * exactFailureBlockAfter=5 / sameToolFailureHaltAfter=8 / noProgressBlockAfter=5。
+   * 与 maxConsecutiveFailures 并行（互不替代）。
+   */
+  guardrails?: ToolCallGuardrailOptions;
 }
 
 export class VerifyCritiqueLoop {
   private steps: LoopStep[] = [];
   private universalAdapter = new UniversalToolCallAdapter();
   private consecutiveFailures = 0;
+  /** M2-2 卡死检测硬闸（loop 生命周期实例，与 maxConsecutiveFailures 并行）。 */
+  private guardrails: ToolCallGuardrailController;
 
   private useUniversal: boolean;
   private strictStructured: boolean; // 为 true 时优先严格 <> 解析器 + 高纪律行为（与 !practicalMode 联合）
@@ -165,6 +175,8 @@ export class VerifyCritiqueLoop {
     this.currentDiff = options.currentDiff;
     this.signal = options.signal;
     this.windowTokens = options.windowTokens;
+    // M2-2 卡死检测硬闸（hermes tool_guardrails 移植）：loop 生命周期实例。
+    this.guardrails = new ToolCallGuardrailController(options.guardrails);
   }
 
   private maxSteps: number;
@@ -445,10 +457,32 @@ export class VerifyCritiqueLoop {
       let didRealVerificationThisStep = false;
 
       if (toolCalls.length > 0) {
-        verificationResult = await this.verificationEngine.execute(toolCalls);
-        signal = this.classifySignal(verificationResult);
+        // M2-2 卡死检测硬闸：执行前 before_call 检查（工具调用解析后、
+        // verificationEngine.execute 前）。阻断时本步不执行工具，reason 作为
+        // 工具结果文本回灌 history（模型可见提示）；halt 级直接置 done +
+        // stopReason='consecutive-failures'（复用现有终态，不加新枚举）。
+        // 与 maxConsecutiveFailures 并行：阻断步 signal=FAIL，仍计入连败保护。
+        const guardrailDecision = this.guardrails.beforeCall(toolCalls);
+        if (guardrailDecision.blocked) {
+          verificationResult = guardrailDecision.reason ?? 'TOOL_ERROR: GUARDRAIL_BLOCKED';
+          signal = 'FAIL';
+          if (guardrailDecision.halt) {
+            stopReason = 'consecutive-failures';
+            done = true;
+          }
+          this.stepsSinceLastRealVerification++;
+        } else {
+          verificationResult = await this.verificationEngine.execute(toolCalls);
+          signal = this.classifySignal(verificationResult);
 
-        const lower = verificationResult.toLowerCase();
+          // M2-2：execute 后逐 call 喂结果。failed 复用 loop 分段信号语义
+          // （classifySignal 已排除只读正文偶含 FAIL/ERROR 字样的误判）。
+          const guardrailFailed = signal === 'FAIL' || signal === 'ERROR';
+          for (const call of toolCalls) {
+            this.guardrails.recordResult(call, verificationResult, guardrailFailed);
+          }
+
+          const lower = verificationResult.toLowerCase();
         // 真实执行引擎的成功 bash 结果以 `EXIT_CODE:0` 结尾——最强真实验证信号。
         // 下方的 PASS 启发式作为补充信号。
         // `verification:` 松匹配收紧为 `verification: pass`——
@@ -461,13 +495,14 @@ export class VerifyCritiqueLoop {
           (lower.includes('pass') && lower.includes('5')) || // 针对我们的加法例子
           lower.includes('正确') && (lower.includes('5') || lower.includes('pass'));
 
-        if (looksLikeRealPass) {
-          didRealVerificationThisStep = true;
-          this.hasPerformedRealVerification = true;
-          this.stepsSinceLastRealVerification = 0;
-          this.verificationAttempts++;
-        } else {
-          this.stepsSinceLastRealVerification++;
+          if (looksLikeRealPass) {
+            didRealVerificationThisStep = true;
+            this.hasPerformedRealVerification = true;
+            this.stepsSinceLastRealVerification = 0;
+            this.verificationAttempts++;
+          } else {
+            this.stepsSinceLastRealVerification++;
+          }
         }
       } else {
         verificationResult = 'NO_TOOL_CALLS';
