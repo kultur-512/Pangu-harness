@@ -43,6 +43,7 @@ import FeatureCommand from './commands/FeatureCommand.js';
 import TreeCommand from './commands/TreeCommand.js';
 import { AgentTree } from './AgentTree.js';
 import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../loop/trajectory.js';
+import { finalizeTaskMemory } from '../../server/runAgentTask.js';
 
 export class Repl {
   private registry = new CommandRegistry();
@@ -358,6 +359,9 @@ export class Repl {
     const intent = classifyTaskIntent(issue);
     let enriched = await pb.buildForTask(issue, intent);
 
+    // 捕获注入的记忆卡 ID（供 finalizeTaskMemory 消费——R2 markVerified 交集判定）
+    const injectedCardIds: string[] = pb.lastBuildMeta?.injectedCardIds ?? [];
+
     // Inject context length hint so the model is aware of its own window
     if (contextLen > 0) {
       const ctxK = Math.round(contextLen / 1000);
@@ -508,6 +512,20 @@ export class Repl {
         this.currentAbort = null;
         return;
       }
+
+      // 记忆落定（单一落定点）——仅 completed（真实验证通过）触发
+      // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不
+      // 影响任务成功返回。
+      try {
+        await finalizeTaskMemory(this.session, result, injectedCardIds, (event: any) => {
+          if (event.type === 'memory.finalized') {
+            this.renderer.writeLine(this.renderer.color(
+              `[记忆] 提炼 ${event.cards ?? 0} 张卡，验证 ${event.verified ?? 0} 张`,
+              'gray'
+            ));
+          }
+        });
+      } catch {}
 
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = (result as any)?.bestTrajectory?.stopReason;

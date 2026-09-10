@@ -3,13 +3,13 @@
 //
 // 字段来源：
 //   1. ROADMAP-NEXT §3.1 R6 合同（runId/source/seedSupport/verdict/verification/memory/prompt/failureTaxonomy/artifacts）
-//   2. 0.7 接口契约 v4 单层终止语义（TurnStopReason 6 态 + attemptCount + lastError）
+//   2. 0.7 接口契约 v4 单层终止语义（TurnStopReason 7 态 + attemptCount + lastError）
 //      （0.7 前判官摘除，verification-failed-continue → answered；continueCount 死字段由 attemptCount 替代）
 //   3. v0.6.5 R1/R2 契约（panshalachVersion / attemptCount / refined 透传 + memory 注入层 vs 落定层）
 //   4. FailureTaxonomy 双层升级（{ primary, secondary? } + normalizeFailureTaxonomy 向后兼容）
 //
 // 约束：
-//   - TurnStopReason 6 态从此处导出；与 src/cli/repl/types.ts 同步，改动需双向更新。
+//   - TurnStopReason 7 态从此处导出；与 src/cli/repl/types.ts 同步，改动需双向更新。
 //   - 失败分类枚举运行前冻结（运行时不允许新增分类）。
 //   - A 档必须真溢出（不溢出的样本标"不适用"，不进长程结论）。
 //   - B 档零注入 = 防线失败，不计为有效样本。
@@ -26,7 +26,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
-/** 0.7 单层终止语义 6 态（与 src/cli/repl/types.ts TurnStopReason 双向同步）
+/** 0.7 单层终止语义 7 态（与 src/cli/repl/types.ts TurnStopReason 双向同步）
  *  改动此数组必须同步更新 src/cli/repl/types.ts 的 TurnStopReason 类型。 */
 export const TURN_STOP_REASONS = Object.freeze([
   'completed',                    // end_turn 且轨迹含真实验证 PASS
@@ -35,6 +35,7 @@ export const TURN_STOP_REASONS = Object.freeze([
   'consecutive-failures',         // 连续工具失败保护
   'aborted',                      // 用户/信号中止
   'no-verification',             // end_turn 但无正文无工具（空白/空转）
+  'error',                        // 0.7.4：模型/网络/解析异常（非用户中断）
 ]);
 
 /** 评测源（隔离 mock 与真模型） */
