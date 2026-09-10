@@ -300,7 +300,7 @@ export async function runAgentTask(
  *   事件类型走 pushFeed 兜底，安全）。
  * 调用方已 try/catch 包裹：任何异常不影响任务成功返回。
  */
-async function finalizeTaskMemory(
+export async function finalizeTaskMemory(
   session: Session,
   result: { bestTrajectory?: any },
   injectedCardIds: string[],
@@ -410,6 +410,6 @@ function extractShellWriteTargets(cmd: string): string[] {
 }
 
 /** 与 RefinedMemoryStore.normPath 同款归一（\→/、去 ./ 前缀、小写），保证交集可比。 */
-function normalizeRelPath(p: string): string {
+export function normalizeRelPath(p: string): string {
   return String(p ?? '').replace(/\\/g, '/').replace(/^\.\/+/, '').toLowerCase();
 }
