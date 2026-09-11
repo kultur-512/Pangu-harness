@@ -15,7 +15,7 @@ export const ANSI_DIM = '\x1b[2m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_RED = '\x1b[31m';
 const ANSI_ITALIC = '\x1b[3m';
-const ANSI_CYAN = '\x1b[36m';
+export const ANSI_CYAN = '\x1b[36m';
 export const ANSI_RESET = '\x1b[0m';
 
 // ==================== 0.8.1 UX 收敛（真机 MiniMax-M3 实测驱动） ====================
@@ -47,10 +47,28 @@ export function collapseUnparsedCallBlock(text: string): string {
 const ANSI_BOLD_OFF = '\x1b[22m';
 const ANSI_FG_OFF = '\x1b[39m';
 
+// ==================== 0.8 UI 对齐 U1：spinner 帧行组装 ====================
+// 纯组装（无 IO 无 timer）：帧字符青色 + 动词亮色（bold）+ 耗时 dim。
+// 动画退化路径（reducedMotion / 非 TTY）不走这里——沿用 GerundSpinner
+// formatRunningLabel 的纯文本（无 ANSI）。
+
+/** spinner 运行行：`<帧字符青> <动词亮>… <⏱ Ns dim>`。 */
+export function spinnerRunningLine(frame: string, verb: string, elapsedMs: number): string {
+  const secs = Math.max(0, Math.floor(elapsedMs / 1000));
+  return `${ANSI_CYAN}${frame}${ANSI_FG_OFF} ${ANSI_BOLD}${verb}${ANSI_BOLD_OFF}… ${ANSI_DIM}⏱ ${secs}s${ANSI_BOLD_OFF}`;
+}
+
+/** 进行时工具标签行（pre 后 3s 未 post）：帧字符前缀 + `Writing xxx… ⏱ Ns`。 */
+export function spinnerToolLine(frame: string, doing: string, summary: string, elapsedMs: number): string {
+  const secs = Math.max(0, Math.floor(elapsedMs / 1000));
+  return `${ANSI_CYAN}${frame}${ANSI_FG_OFF} ${ANSI_BOLD}${doing}${ANSI_BOLD_OFF} ${summary}… ${ANSI_DIM}⏱ ${secs}s${ANSI_BOLD_OFF}`;
+}
+
 /**
  * line 模式轻量 markdown（改进 3）：`**x**` → ANSI 粗体、`` `x` `` → ANSI 青色。
- * 只用于整段呈现（answerText 兜底 / step 正文）——流式 delta 逐字路径无法预知
- * 闭合，不做转换。代码 span 优先占位（内层 `**` 不再二次替换），跨行不匹配。
+ * 用于整段呈现（answerText 兜底 / step 正文）与 U2 流式行缓冲的段内转换。
+ * 代码 span 优先占位（内层 `**` 不再二次替换），跨行不匹配；
+ * 未闭合的 `**` / 单个 `` ` `` 原样保留；有序列表 `1. ` 前缀不转换不着色。
  */
 export function renderInlineMarkdown(text: string): string {
   const s = String(text ?? '');
@@ -65,6 +83,24 @@ export function renderInlineMarkdown(text: string): string {
     out = out.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => codes[Number(i)] ?? '');
   }
   return out;
+}
+
+// ==================== 0.8 UI 对齐 U2：流式正文行缓冲 ====================
+
+/**
+ * U2 流式增量冲刷：从缓冲里切出「完整段」（以 `\n` 或 `。` 收尾）做行内
+ * markdown 转换后可输出；尾段不足一个完整段 → 留在缓冲等下一 delta。
+ * 纯函数：返回 ready（已转换、可直接写终端）与 rest（继续缓冲的残段）。
+ */
+export function flushBufferedMarkdown(buf: string): { ready: string; rest: string } {
+  const s = String(buf ?? '');
+  if (!s) return { ready: '', rest: '' };
+  const last = Math.max(s.lastIndexOf('\n'), s.lastIndexOf('。'));
+  if (last === -1) return { ready: '', rest: s };
+  return {
+    ready: renderInlineMarkdown(s.slice(0, last + 1)),
+    rest: s.slice(last + 1),
+  };
 }
 
 /** 终端宽度（列）。非 TTY / 测试环境默认 80。 */
@@ -280,6 +316,26 @@ export function buildBanner(opts: {
   ];
 }
 
+// ==================== 0.8 UI 对齐 U4：空闲状态行 ====================
+
+/**
+ * U4 空闲状态行（提示符上方 dim 行，回合边界刷新、非常驻重绘）：
+ * `<模型短名> · <tier> · <模式> · ctx ~N%`。
+ * ctx 用启发式 chars/4 估算（与 auto-compact / Tip 同源），封顶 100%。
+ */
+export function buildIdleStatusLine(opts: {
+  model: string;
+  tier: string;
+  mode: string;
+  ctxUsedChars: number;
+  ctxWindowTokens: number;
+}): string {
+  const short = stripModelProviderPrefix(opts.model);
+  const ratio = (Number(opts.ctxUsedChars) || 0) / 4 / Math.max(1, Number(opts.ctxWindowTokens) || 1);
+  const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+  return `${short} · ${opts.tier} · ${opts.mode} · ctx ~${pct}%`;
+}
+
 /** `?` 快捷帮助面板（常用 8 条 + dim 尾行指向 /help；颜色由调用方套）。 */
 export function buildQuickHelpLines(totalCommands: number): string[] {
   const entry = (label: string, desc: string) => `  ${padByWidth(label, 10)}  ${desc}`;
@@ -485,7 +541,22 @@ export function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnConte
 // Line-mode renderer for SSE events (used when rich UI is not active).
 // line 模式接住 version 2 流式增量 —
 //   thinking.delta → 默认单行滚动（dim 斜体 ∴ + 最新行截断），verbose 开启时全文多行；
-//   message.delta  → 正文逐 delta 直接写 stdout（无前缀），回合结束补换行。
+//   message.delta  → 增量先入行缓冲，按完整段（\n 或 。收尾）做行内 markdown
+//                    转换后写 stdout（U2），回合/段结束由 endMessageStream 冲刷残段。
+/** 正文流收尾（U2 扩展，导出供 TurnController answered 兜底复用）：先冲刷行缓冲
+ *  残段（renderInlineMarkdown 兜底转换），流式态则补换行。幂等：缓冲空且未流式时 no-op。 */
+export function endMessageStream(ctx: TurnContext) {
+  const buf = ctx.lineUi.messageBuf;
+  if (buf) {
+    ctx.lineUi.messageBuf = '';
+    try { process.stdout.write(renderInlineMarkdown(buf)); } catch {}
+  }
+  if (ctx.lineUi.messageStreaming) {
+    ctx.lineUi.messageStreaming = false;
+    try { process.stdout.write('\n'); } catch {}
+  }
+}
+
 function endThinkingBlock(ctx: TurnContext, r: ReturnType<typeof createOutputRenderer>) {
   const started = ctx.lineUi.thinkingStart > 0;
   if (ctx.lineUi.verbose) {
@@ -513,13 +584,6 @@ function printVerboseThinkingLine(ctx: TurnContext, line: string, r: ReturnType<
   for (const chunk of wrapByWidth(text, w)) {
     try { process.stdout.write(`${ANSI_DIM}${ANSI_ITALIC}  ${chunk}${ANSI_RESET}\n`); } catch {}
     ctx.lineUi.thinkingPrinted = true;
-  }
-}
-
-function endMessageStream(ctx: TurnContext) {
-  if (ctx.lineUi.messageStreaming) {
-    ctx.lineUi.messageStreaming = false;
-    try { process.stdout.write('\n'); } catch {}
   }
 }
 
@@ -568,14 +632,20 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
       endThinkingBlock(ctx, r);
       return;
     case 'message.delta': {
-      // 正文流式 — 逐 delta 直接写 stdout（正文本体，无前缀）；
+      // 正文流式（0.8 UI 对齐 U2）：增量先入行缓冲，按完整段（`\n` 或 `。` 收尾）
+      // 冲刷——段内做行内 markdown 转换（**粗体** / `行内码`），行级粒度写 stdout。
+      // 未满一段的残段留缓冲（段结束/流结束由 endMessageStream 冲刷兜底）；
       // gerund 重绘在 messageStreaming 期间暂停（paint 回调里检查）。
       const text = String(data.text || '');
       if (!text) return;
-      clearInlineLine(ctx);
-      try { process.stdout.write(text); } catch {}
       ctx.lineUi.messageStreaming = true;
       ctx.lineUi.streamedAnswerChars += text.length;
+      const { ready, rest } = flushBufferedMarkdown(ctx.lineUi.messageBuf + text);
+      ctx.lineUi.messageBuf = rest;
+      if (ready) {
+        clearInlineLine(ctx);
+        try { process.stdout.write(ready); } catch {}
+      }
       return;
     }
     case 'start':

@@ -19,7 +19,17 @@ import {
   runSyncCompact,
   updateQueueCount,
 } from './TurnContext.js';
-import { ANSI_DIM, ANSI_RESET, mapSseToBridge, renderInlineMarkdown, renderSseEvent } from './TurnRenderer.js';
+import {
+  ANSI_DIM,
+  ANSI_RESET,
+  buildIdleStatusLine,
+  endMessageStream,
+  mapSseToBridge,
+  renderInlineMarkdown,
+  renderSseEvent,
+  spinnerRunningLine,
+  spinnerToolLine,
+} from './TurnRenderer.js';
 import { createCommandEmitter, handleEditPrefill, handleSlashCommand } from './CommandRouter.js';
 
 /** MCP stdio servers from .panshalach.json mcpServers (append-only config).
@@ -201,6 +211,7 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
   ctx.lineUi.thinkingBuf = '';
   ctx.lineUi.thinkingPrinted = false;
   ctx.lineUi.messageStreaming = false;
+  ctx.lineUi.messageBuf = '';
   ctx.lineUi.toolStack = [];
   ctx.lineUi.pendingTool = null;
   // gerund interval handle (declared here so the finally can clear it)
@@ -228,17 +239,25 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
     // 无人接、输入缓冲成幽灵 ^C）。stdin 所有权只在审批 question 挂起时
     // 经 setApprovalActivityListener（line 段注册）临时交接。
 
-    // gerund running label — line-mode inline updates every 4s.
+    // gerund running label — line-mode spinner（0.8 UI 对齐 U1：120ms 字符帧动画）。
     // Timer unref'd (non-deadline timers must not hold the
     // process) and always cleared in the finally below.
     // 重绘统一走本函数（清活行 → 原地写 → 记 inlineLine）。
-    // 审批挂起时暂停；正文流式期间暂停。
+    // 审批挂起时暂停；正文流式期间暂停；thinking 活行让路。
+    // 动词每 4s 换一个（gerundBucket 轮换），帧动画 120ms 不停；
+    // reducedMotion / 非 TTY（progress=false）退化为旧 4s 纯文本刷新。
     if (!useRich) {
       try {
-        const { nextGerund, formatRunningLabel } = await import('../GerundSpinner.js');
+        const {
+          nextGerund, formatRunningLabel, nextSpinnerFrame, gerundBucket, spinnerRedrawMs,
+        } = await import('../GerundSpinner.js');
+        const { getTerminalCapabilities } = await import('../TerminalCapabilities.js');
+        const animated = getTerminalCapabilities().progress;
         const gStart = startedAt;
+        let curVerb = '';
+        let verbBucket = -1;
         const paint = () => {
-          // thinking 单行滚动是活行时 gerund 不重绘（避免 4s 覆盖思考行抖动）
+          // thinking 单行滚动是活行时 gerund 不重绘（避免覆盖思考行抖动）
           if (isApprovalActive() || ctx.lineUi.messageStreaming || ctx.lineUi.inlineLine === 'thinking') return;
           try {
             // 任务运行超 30s → 一次性等待 tip（受全局 ≤2 节流）
@@ -250,18 +269,29 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
             clearInlineLine(ctx);
             let label: string;
             const pt = ctx.lineUi.pendingTool;
+            const elapsed = Date.now() - gStart;
             if (pt && Date.now() - pt.at > 3000) {
-              // pre 后 3s 未 post → 进行时工具标签
-              label = `${pt.doing} ${pt.summary}… ⏱ ${Math.floor((Date.now() - gStart) / 1000)}s`;
+              // pre 后 3s 未 post → 进行时工具标签（动画时套帧字符前缀）
+              label = animated
+                ? spinnerToolLine(nextSpinnerFrame(), pt.doing, pt.summary, elapsed)
+                : `${pt.doing} ${pt.summary}… ⏱ ${Math.floor(elapsed / 1000)}s`;
             } else {
-              label = formatRunningLabel(Date.now() - gStart, nextGerund());
+              // 帧动画连转；动词按 4s 桶轮换（nextGerund 保持不连抽同词）
+              const bucket = gerundBucket(elapsed);
+              if (bucket !== verbBucket || !curVerb) {
+                curVerb = nextGerund();
+                verbBucket = bucket;
+              }
+              label = animated
+                ? spinnerRunningLine(nextSpinnerFrame(), curVerb, elapsed)
+                : formatRunningLabel(elapsed, curVerb);
             }
             process.stdout.write('\r' + label + '   ');
             ctx.lineUi.inlineLine = 'gerund';
           } catch {}
         };
         paint();
-        gerundTimer = setInterval(paint, 4000);
+        gerundTimer = setInterval(paint, spinnerRedrawMs(animated));
         gerundTimer.unref();
       } catch {}
     }
@@ -378,7 +408,10 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       if (answerText) {
         if (useRich && typeof bridge.pushFeed === 'function') {
           bridge.pushFeed({ type: 'markdown', content: answerText });
-        } else if (!useRich && ctx.lineUi.streamedAnswerChars < answerText.length) {
+        } else if (!useRich) {
+          // U2（0.8 UI 对齐）：先冲刷行缓冲残段——流式按完整段输出，尾段在此兜底
+          // 落屏（含流结束换行）；残段计入 streamedAnswerChars，不冲刷会丢尾段。
+          endMessageStream(ctx);
           // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失。
           // 0.8.1 UX（改进 3）：整段呈现做轻量 markdown（**粗体** / `行内代码`）；
           // recordOutput 保留原文（/edit 取回不受影响）。
@@ -416,6 +449,21 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       if (ratio > 0.75 && ctx.tipGate.canShow('ctx')) {
         ctx.tipGate.markShown('ctx');
         try { ctx.renderer.writeLine(ctx.renderer.color(`Tip: 上下文占用约 ${Math.round(ratio * 100)}% · /compact 可立即压缩`, 'gray')); } catch {}
+      }
+      // U4（0.8 UI 对齐）：任务结束回到空闲 → 提示符上方一行 dim 状态
+      // （`模型短名 · tier · 模式 · ctx ~N%`）。回合边界一次性刷新，非常驻重绘行
+      // （避免与清行纪律冲突）；drain 中间轮不打（队列非空即跑下一个任务，
+      // 只在真正回到空闲或 aborted 保留队列时打）。
+      if (ctx.queue.taskCount === 0 || ctx.lastAborted) {
+        try {
+          ctx.renderer.writeLine(ctx.renderer.color(buildIdleStatusLine({
+            model: ctx.session.model,
+            tier: String(ctx.session.tier),
+            mode: ctx.modeRing.current,
+            ctxUsedChars: ctx.ctxUsedChars,
+            ctxWindowTokens: ctx.ctxWindowTokens,
+          }), 'gray'));
+        } catch {}
       }
     }
     // 兜底复位只在徽标仍处于 true 时执行——result/done/error 事件已复位的

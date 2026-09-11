@@ -9,6 +9,7 @@ import type { MemoryCategory } from './RefinedMemoryCard.js';
 import { FailureCategory } from './FailureMemory.js';
 import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
+import { normalizeRelPath } from './trajectoryFiles.js';
 
 export interface RefineInput {
   /** 原始轨迹（来自 VerifyCritiqueLoop） */
@@ -24,6 +25,14 @@ export interface RefineInput {
   attemptCount?: number;
   /** 用户反馈文本（正向词触发 success 提炼） */
   userFeedback?: string;
+  /**
+   * 本次任务写入的文件路径（由调用方用共享提取器 extractWrittenFilePaths
+   * 从轨迹提取后传入——store 内不再自行解析轨迹形状，单一实现防漂移）。
+   * 用于产卡 referencedFiles → 引用过滤 + markVerified 交集判定的前提。
+   */
+  writtenFiles?: string[];
+  /** 原始任务文本（首条 userInput；成功卡 summary 携带任务信息 + keywords 提取用） */
+  taskText?: string;
 }
 
 /** 正向反馈词（一次通过 + 正向反馈 → success 卡）。
@@ -114,8 +123,9 @@ export class RefinedMemoryStore {
     // 1) 收集所有失败信号
     const failureSignals = this.extractFailureSignals(input.trajectory);
 
-    // 提取本次写入的文件路径（用于 referencedFiles）
-    const writtenFiles = this.extractWrittenFilesFromTrajectory(input.trajectory);
+    // 本次写入的文件路径（用于 referencedFiles）——由调用方从轨迹提取后传入
+    // （共享提取器 extractWrittenFilePaths，见 trajectoryFiles.ts）。
+    const writtenFiles = Array.from(new Set((input.writtenFiles ?? []).map(f => this.normPath(f)).filter(Boolean)));
 
     // 2) 为每个失败信号生成或更新一张卡片
     for (const sig of failureSignals) {
@@ -130,8 +140,12 @@ export class RefinedMemoryStore {
       // 纯问答/闲聊（stopReason==='answered'）不再产生 success 卡——它计入 UI
       // "已回复"但不代表工程验证通过。
       const positive = POSITIVE_FEEDBACK_RE.test(fb) || input.trajectory?.stopReason === 'completed';
-      if (positive) {
-        const card = this.createPositiveCard(input.taskStyle, input.applicableTiers, now, fb || '一次通过且真实验证通过', writtenFiles);
+      // S 级缺陷修复：违反 RBW（轨迹含 readBeforeWriteViolation）的任务即使
+      // completed 也不产成功卡——"先写后读"的通过不配当"已验证可行的做法"
+      // （失败教训卡的产出逻辑不受影响，见上方 failureSignals）。
+      const rbwViolation = (input.trajectory?.steps ?? []).some(s => s?.readBeforeWriteViolation);
+      if (positive && !rbwViolation) {
+        const card = this.createPositiveCard(input.taskStyle, input.applicableTiers, now, fb || '一次通过且真实验证通过', writtenFiles, input.taskText);
         newCards.push(card);
       }
     }
@@ -142,16 +156,30 @@ export class RefinedMemoryStore {
   /**
    * 生成 Positive（success）卡片
    * 摘要："已验证可行的做法：..."（建设性、可复用）
+   * S 级缺陷修复：通用成功卡零信息——summary 携带任务前 60 字 + 写入文件
+   * 列表（无任务文本时回退 evidence），keywords 从任务文本与写入文件名提取
+   * （≤4 个 token）。同一任务重复成功 → 同摘要同 id → count 照常 +1。
    */
   private createPositiveCard(
     taskStyle: string,
     applicableTiers: string[] | undefined,
     now: number,
     evidence: string,
-    writtenFiles: string[] = []
+    writtenFiles: string[] = [],
+    taskText?: string
   ): RefinedMemoryCard {
-    const summary = `已验证可行的做法：${evidence}`;
-    const newRefs = writtenFiles.map(f => this.normPath(f)).filter(Boolean);
+    const taskHead = String(taskText ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    // 文件列表最多展示 5 个，超出以"等N个"收尾（防 summary 膨胀）
+    const shown = writtenFiles.slice(0, 5);
+    const fileList = shown.length
+      ? shown.join('、') + (writtenFiles.length > shown.length ? ` 等${writtenFiles.length}个` : '')
+      : '';
+    const tail = fileList ? `（写：${fileList}）` : '';
+    const summary = taskHead
+      ? `已验证可行的做法：${taskHead}${tail}`
+      : `已验证可行的做法：${evidence}${tail}`;
+    const keywords = this.extractCardKeywords(taskText ?? '', writtenFiles);
+    const newRefs = writtenFiles;
     // 修复（#6）：同 id（同摘要）已存在时 count 预解析为 existing+1——配合
     // mergeAndCap 整卡替换语义，重复成功恰好 +1 而非翻倍。
     const existingSameId = this.load().cards.find(c => c.id === this.hashOfSuccessSummary(summary));
@@ -172,8 +200,29 @@ export class RefinedMemoryStore {
       decayWeight: 1.0,
       lastUsedAt: now,
       ...(newRefs.length ? { referencedFiles: newRefs } as any : {}),
+      ...(keywords.length ? { keywords } as any : {}),
     };
     return card;
+  }
+
+  /**
+   * 从任务文本与写入文件名提取关键字（≤4 个 token，去重、小写）：
+   * 文件名主干（去扩展名的 basename）优先——与 referencedFiles 同源、对
+   * "这个文件怎么又改坏了"类复检最相关；任务文本取 ASCII 词（len≥2）。
+   */
+  private extractCardKeywords(taskText: string, writtenFiles: string[]): string[] {
+    const tokens: string[] = [];
+    const push = (t: string): void => {
+      const k = String(t ?? '').trim().toLowerCase();
+      if (k.length >= 2 && !tokens.includes(k)) tokens.push(k);
+    };
+    for (const f of writtenFiles) {
+      const base = String(f).replace(/\\/g, '/').split('/').pop() ?? '';
+      const stem = base.replace(/\.[^.]+$/, '');
+      if (stem) push(stem);
+    }
+    for (const m of taskText.matchAll(/[A-Za-z0-9_\-]{2,}/g)) push(m[0]);
+    return tokens.slice(0, 4);
   }
 
   /**
@@ -444,13 +493,25 @@ export class RefinedMemoryStore {
    * 判定来源由调用方提供（确定性规则：任务内工具写入/验证文件集 ∩ 卡.referencedFiles ≠ ∅），
    * 本方法只负责效果：lastUsedAt=now + count+1 + 单次写盘 + 投影失效。
    * 这是衰减语义中唯一把"卡被真实复用"转为保鲜的通道。
+   *
+   * opts.excludeCreatedAfter：防"创建即自验证"——firstSeen ≥ 该时间戳（即本任务
+   * 时间窗内新建）的卡被跳过，不计数。任务开始时间由调用方传入；否则本轮产的新卡
+   * 若恰好命中注入集会自己给自己 +1（count 充值半衰期的帮凶）。
    */
-  markVerified(cardIds: string[], now = Date.now()): { updated: number; path: string } {
+  markVerified(
+    cardIds: string[],
+    now = Date.now(),
+    opts?: { excludeCreatedAfter?: number }
+  ): { updated: number; path: string } {
     if (cardIds.length === 0) return { updated: 0, path: this.filePath };
     const file = this.load();
     let updated = 0;
     for (const c of file.cards) {
       if (cardIds.includes(c.id)) {
+        if (opts?.excludeCreatedAfter !== undefined &&
+            (c.firstSeen ?? c.lastSeen ?? 0) >= opts.excludeCreatedAfter) {
+          continue; // 本任务时间窗内新建的卡：创建 ≠ 复用，不 markVerified
+        }
         (c as any).lastUsedAt = now;
         c.count = (c.count ?? 0) + 1;
         updated++;
@@ -668,7 +729,9 @@ export class RefinedMemoryStore {
    * 验收：超过 2 倍半衰期权重降至 10% 以下
    * 沿用阶梯机制（申报），叠加 kind 基线 —
    *   failure/success 基线 1.0；preference 基线 0.6（修正 3）；
-   *   pin 卡冻结（decayWeight 恒 1.0，无衰减）；count≥2 半衰期 ×count（常用升权）。
+   *   pin 卡冻结（decayWeight 恒 1.0，无衰减）；count≥2 半衰期 ×count（常用升权），
+   *   乘数封顶 ×3——S 级缺陷修复：refine 可无限充值的通用卡 count 5+ 曾把半衰期
+   *   推到 900 天（永生霸榜），封顶后半衰期上限 = 基础 ×3。
    */
   private calculateEffectiveWeight(card: RefinedMemoryCard, now: number): number {
     // pin 卡冻结衰减
@@ -676,9 +739,10 @@ export class RefinedMemoryStore {
     const mc = (card.memoryCategory || 'general') as MemoryCategory;
     const last = Math.max(card.lastSeen ?? now, (card as any).lastUsedAt ?? 0); // 修复：?? 短路曾让复发卡的 lastSeen 刷新不可见
     const ageInDays = (now - last) / (24 * 60 * 60 * 1000);
-    // count≥2 → 半衰期 ×count（常用卡衰减更慢）
+    // count≥2 → 半衰期 ×count（常用卡衰减更慢）；封顶 ×3（防 count 充值永生）
     const halfLifeBase = this.getHalfLifeForCategory(mc);
-    const halfLife = halfLifeBase * Math.max(1, card.count ?? 1);
+    const countMultiplier = Math.min(Math.max(1, card.count ?? 1), 3);
+    const halfLife = halfLifeBase * countMultiplier;
     const base = (card as any).decayWeight ?? card.weight ?? 1;
     // kind 基线（preference 0.6 — 偏好默认低于事实类）
     const kindBaseline = (card.kind === 'preference' ? 0.6 : 1.0);
@@ -929,45 +993,13 @@ export class RefinedMemoryStore {
       .filter(c => c.weight >= MEMORY_LIMITS.MIN_WEIGHT);
   }
 
-  /**
-   * 从轨迹的 action/toolCalls 中提取本次写入/编辑的文件路径
-   * 支持 Write/Edit/MultiEdit 类 + Bash 重定向（> / >>）
-   */
-  private extractWrittenFilesFromTrajectory(trajectory: Trajectory): string[] {
-    const out = new Set<string>();
-    if (!trajectory || !Array.isArray(trajectory.steps)) return [];
-    for (const step of trajectory.steps) {
-      const actions: any[] = Array.isArray(step.action) ? step.action : (step.action ? [step.action] : []);
-      for (const act of actions) {
-        if (!act) continue;
-        const name = String(act.name || act.tool || act.type || '').toLowerCase();
-        const args = act.args || act.parameters || act || {};
-
-        // Write / Edit / MultiEdit family
-        if (name.includes('write') || name.includes('edit') || name.includes('multiedit') || name === 'write_file' || name === 'edit_file') {
-          const fp = args.file_path || args.path || args.filePath || args.target_file || args.target || args.file;
-          if (typeof fp === 'string' && fp) out.add(fp);
-        }
-
-        // Bash / terminal redirection
-        if (name.includes('bash') || name.includes('terminal') || name.includes('command') || name === 'run') {
-          const cmd = String(args.command || args.cmd || args.input || args.script || '');
-          if (cmd) {
-            // Match > file and >> file, handling simple quotes
-            const re = /(?:^|[\s;&|(){}])(?:cat|echo|printf|tee)?[^>]*>>?\s*["']?([^"'\s>;|]+)["']?/g;
-            let m: RegExpExecArray | null;
-            while ((m = re.exec(cmd)) !== null) {
-              if (m[1]) out.add(m[1]);
-            }
-          }
-        }
-      }
-    }
-    return Array.from(out);
-  }
+  // 写集提取器已收敛到共享模块 src/memory/trajectoryFiles.ts（extractWrittenFilePaths
+  // ——含 bash 重定向/tee/引号/盘符），refine 的 writtenFiles 由调用方提取后传入。
+  // 旧 extractWrittenFilesFromTrajectory 只认旧轨迹形状 {name/tool,args}，对真实
+  // {toolName, params:[{name,value}]} 恒提取空 → referencedFiles 断链，已删除。
 
   private normPath(p: string): string {
-    return String(p || '').replace(/\\/g, '/').replace(/^\.\/+/, '').toLowerCase();
+    return normalizeRelPath(p);
   }
 
   private ensureGitIgnore(): void {

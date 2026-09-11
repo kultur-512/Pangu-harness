@@ -18,6 +18,8 @@ export interface LineUiState {
   inlineLine: null | 'gerund' | 'thinking';
   messageStreaming: boolean;
   streamedAnswerChars: number;
+  /** U2 流式正文行缓冲残段：不足一个完整段（\n / 。收尾）时暂存，段结束冲刷。 */
+  messageBuf: string;
   verbose: boolean;
   thinkingStart: number;
   thinkingBuf: string;
@@ -37,6 +39,7 @@ export function createLineUiState(): LineUiState {
     inlineLine: null,
     messageStreaming: false,
     streamedAnswerChars: 0,
+    messageBuf: '',
     verbose: process.env.PANSHA_VERBOSE === '1',
     thinkingStart: 0,
     thinkingBuf: '',
