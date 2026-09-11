@@ -64,3 +64,4 @@ docs/panshalach/solution/
 
 # TaskState 运行时状态（不入库）
 .panshalach-task-state.json
+.panshalach-memory.json

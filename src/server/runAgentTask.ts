@@ -299,7 +299,11 @@ export async function runAgentTask(
       ...(answerText ? { answerText } : {}),
     };
   } catch (err: any) {
-    ctx.onEvent({ type: 'error', message: err?.message || String(err) });
+    // 深层错误（如 Maximum call stack size exceeded）必须留堆栈证据——
+    // stderr 全量 + 事件携带截断堆栈，否则"管路中断"类问题无法定位。
+    const stack = String(err?.stack || '');
+    try { console.error('[zhulong:error:stack]', stack.slice(0, 3000)); } catch {}
+    ctx.onEvent({ type: 'error', message: err?.message || String(err), stack: stack.slice(0, 2000) });
     return {
       success: false,
       error: err?.message || String(err),
