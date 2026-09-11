@@ -500,6 +500,17 @@ export class PanshalachChaser {
         let streamToolCalls: unknown[] | null = null;
         // 流式尾 chunk 的 finish_reason（'length' = max_tokens 截断）
         let truncated = false;
+        // <think> 状态机（与 chat 直答分支同构）：loop 流式路径同样会收到
+        // 网关内嵌推理（MiniMax-M3/Qwen3），不过滤则推理原文整段直写终端。
+        let thinkMode = false;
+        let pending = '';
+        const holdbackLen = (buf: string, tag: string): number => {
+          const max = Math.min(buf.length, 10, tag.length - 1);
+          for (let k = max; k > 0; k--) {
+            if (buf.endsWith(tag.slice(0, k))) return k;
+          }
+          return 0;
+        };
 
         for await (const chunk of chunks) {
           // finish_reason 检查必须先于 toolCalls continue——截断的 tool_calls
@@ -514,10 +525,46 @@ export class PanshalachChaser {
             emitDelta('thinking', chunk.text, !startedThinking);
             startedThinking = true;
           } else {
-            emitDelta('message', chunk.text, !startedMessage);
-            startedMessage = true;
+            // <think> 状态机：thinkMode 期间增量全吞，边界外可见段才发射/累积
+            pending += chunk.text;
+            for (;;) {
+              if (!thinkMode) {
+                const open = pending.indexOf('<think>');
+                if (open !== -1) {
+                  const vis = pending.slice(0, open);
+                  emitDelta('message', vis, !startedMessage);
+                  text += vis;
+                  startedMessage = true;
+                  pending = pending.slice(open + '<think>'.length);
+                  thinkMode = true;
+                  continue;
+                }
+                const hold = holdbackLen(pending, '<think>');
+                if (hold < pending.length) {
+                  const vis = pending.slice(0, pending.length - hold);
+                  emitDelta('message', vis, !startedMessage);
+                  startedMessage = true;
+                  text += vis;
+                }
+                pending = pending.slice(pending.length - hold);
+                break;
+              }
+              const close = pending.indexOf('</think>');
+              if (close !== -1) {
+                pending = pending.slice(close + '</think>'.length);
+                thinkMode = false;
+                continue;
+              }
+              pending = pending.slice(pending.length - holdbackLen(pending, '</think>'));
+              break;
+            }
           }
-          text += chunk.text;
+        }
+        if (thinkMode) {
+          // 未闭合 <think>（截断场景）→ 推理全吞、正文视为空（R2 空检查兜底）
+          text = '';
+        } else {
+          text += pending; // 收尾冲刷尾部缓冲
         }
 
         try {
