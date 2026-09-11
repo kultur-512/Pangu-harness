@@ -185,7 +185,10 @@ export async function runAgentTask(
     }
   } catch {} // 审计账本 best-effort，绝不阻塞任务
 
-  ctx.onEvent({ type: 'phase', phase: 'explore' });
+  // F3（0.8.1 第 2 轮）：chat 直答不发 explore 相位——真机实测 `── 侦察 ──`
+  // 相位线是 rollout 语义噪声，chat 直答应只见正文流 + 终态行。intent 在入口
+  // 已对原始输入分类（与传入 chaser 的 intent 同源），此处直接按其门控。
+  if (intent !== 'chat') ctx.onEvent({ type: 'phase', phase: 'explore' });
 
   let success = false;
 

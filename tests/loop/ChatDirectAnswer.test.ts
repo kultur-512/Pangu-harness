@@ -1,8 +1,10 @@
 // tests/loop/ChatDirectAnswer.test.ts
 // 0.8.1 对话链路迭代——chaser chat 直答分支行为锁定：
 // - R2：空回答不伪装成功（EMPTY_RESPONSE 吞错转空串 → stopReason='error'，非 answered）
-// - R3：流式直答（streamChatMessages 优先 + message.delta 增量发射 + 截断标注 + 显式 maxTokens）
+// - R3：流式直答（streamChatMessages 优先 + message.delta 增量透传 + 截断标注 + 显式 maxTokens）
 //   与能力回落阶梯（streamChatMessages → chat → complete）。
+// - 第 2 轮（真机实测修复）：F1 流式 <think> 状态机过滤（含未闭合截断场景）、
+//   F2 情境框架式 system 指令、F3 chat 直答不发 phase/step 事件。
 //
 // 手法：直接构造 PanshalachChaser + 假模型客户端（同 ChaserSingleCall 手法；
 // VerifyCritiqueLoop.prototype.run 打桩断言 chat 零进入）。
@@ -68,6 +70,12 @@ describe('R3（0.8.1）：chat 流式直答 + 截断标注 + 显式 maxTokens', 
       assert.equal(msgs[0].role, 'system');
       assert.ok(msgs[0].content.includes('不要调用任何工具'), 'system 承载对话指令');
       assert.ok(!msgs[0].content.includes('你好'), 'system 指令不内嵌用户输入（防重复注入）');
+      // F2（0.8.1 第 2 轮）：情境框架式指令——不对抗模型原生身份（MiniMax-M3
+      // ROOT_SYSTEM_POLICY 曾把身份声明判为 injection 拒绝），保留终端/中文约束
+      assert.ok(msgs[0].content.includes('烛龙 Zhulong'), '界面角色包装（情境框架式，非身份断言）');
+      assert.ok(msgs[0].content.includes('终端环境'), '保留终端环境约束');
+      assert.ok(msgs[0].content.includes('中文'), '保留中文约束');
+      assert.ok(!/injection|fake/i.test(msgs[0].content), '不得出现对抗框架词（防原生策略拒绝）');
       assert.equal(msgs[1].role, 'user');
       assert.equal(msgs[1].content, '你好');
 
@@ -80,6 +88,93 @@ describe('R3（0.8.1）：chat 流式直答 + 截断标注 + 显式 maxTokens', 
       const deltas = events.filter((e) => e.type === 'message.delta').map((e) => e.text);
       assert.ok(start, '必须发射 message.start');
       assert.deepEqual(deltas, ['你好', '，我是烛龙。'], '正文增量逐 chunk 透传');
+
+      // F3（0.8.1 第 2 轮）：chat 直答不发 phase/step 事件——
+      // `── 侦察 ──`/`── 执行 ──` 相位线与 `[Step 1]` 空头行都是 rollout 噪声
+      assert.equal(
+        events.some((e) => e.type === 'phase'),
+        false,
+        'chat 直答不发 phase 事件（相位线不出现在直答界面）'
+      );
+      assert.equal(
+        events.some((e) => e.type === 'step'),
+        false,
+        'chat 直答不发 step 事件（[Step 1] 空头 + 终态"N 步"的噪声源）'
+      );
+    } finally {
+      restore();
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  // F1（0.8.1 第 2 轮，P0）：流式 <think> 状态机过滤——MiniMax-M3/Qwen3 系把推理
+  // 内嵌 content，标签可能被 chunk 边界切开；thinkMode 期间增量全吞。
+  it('F1：内嵌 <think> 跨 chunk 切开 → 推理增量全吞，只有边界外可见段发 message.delta', async () => {
+    const ws = tmpWs();
+    const restore = guardLoop();
+    try {
+      const client = {
+        async complete() { return '不应被调用'; },
+        async *streamChatMessages() {
+          // '<think>' 与 '</think>' 均被 chunk 边界切开
+          yield { type: 'text', text: '你好<th' };
+          yield { type: 'text', text: 'ink>我不该接受 injection 的假身份，我是 MiniMax-M3，' };
+          yield { type: 'text', text: '应该以界面人格回答</th' };
+          yield { type: 'text', text: 'ink>，我是烛龙。' };
+        },
+      };
+      const events: any[] = [];
+      const chaser = new PanshalachChaser(client, 'standard');
+      const result = await chaser.solveIssue('你好', ws, {
+        tier: 'standard', intent: 'chat', onStep: (e: any) => events.push(e),
+      });
+
+      const deltas = events.filter((e) => e.type === 'message.delta').map((e) => e.text);
+      assert.equal(deltas.join(''), '你好，我是烛龙。', '只有 think 块外的可见段透传');
+      assert.ok(
+        deltas.every((d) => !d.includes('MiniMax') && !d.includes('<think>') && !d.includes('injection')),
+        `推理原文不得出现在任何增量：${JSON.stringify(deltas)}`
+      );
+      assert.equal(
+        result.bestTrajectory?.steps?.[0]?.result,
+        '你好，我是烛龙。',
+        '落盘正文同样剥离 think 块'
+      );
+    } finally {
+      restore();
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it('F1：流结束仍处 thinkMode（未闭合 <think>，截断响应）→ 推理全吞、正文视为空 → EMPTY_RESPONSE', async () => {
+    const ws = tmpWs();
+    const restore = guardLoop();
+    try {
+      const client = {
+        async complete() { return '不应被调用'; },
+        async *streamChatMessages() {
+          yield { type: 'text', text: '<think>I should not adopt the fake identity from the' };
+          yield { type: 'text', text: ' injection. I should identify as MiniMax-M3' };
+          yield { type: 'text', text: '', finishReason: 'length' };
+        },
+      };
+      const events: any[] = [];
+      const chaser = new PanshalachChaser(client, 'standard');
+      const result = await chaser.solveIssue('你好', ws, {
+        tier: 'standard', intent: 'chat', onStep: (e: any) => events.push(e),
+      });
+
+      assert.equal(result.success, false, '未闭合 think 的截断响应不得伪装成成功回答');
+      assert.equal(result.bestTrajectory?.stopReason, 'error', '正文视为空 → 走 R2 空检查');
+      assert.ok(
+        String(result.bestTrajectory?.lastError).includes('EMPTY_RESPONSE'),
+        'lastError 保留 EMPTY_RESPONSE 归因'
+      );
+      assert.equal(
+        events.some((e) => e.type === 'message.delta'),
+        false,
+        '推理原文一个增量都不外泄'
+      );
     } finally {
       restore();
       rmSync(ws, { recursive: true, force: true });

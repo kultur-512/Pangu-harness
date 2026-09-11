@@ -13,7 +13,7 @@ const EXECUTION_WORDS =
   /(read_file|write_file|edit_file|\bbash\b|\bglob\b|\bgrep\b|\bgit\b|\bnpm\b|\bnpx\b|\bnode\b|\btsc\b|\bpython\b|\bpytest\b|\bcargo\b|\bgo\b|\bmake\b)/i;
 
 const EXECUTION_VERBS =
-  /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|改|写|建|加|删|跑|测|build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update)/i;
+  /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|完成|继续|接着|处理|搞定|收尾|补全|改|写|建|加|删|跑|测|build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update|continue|finish|resume)/i;
 
 /** 文件后缀 token（无执行动词时触发 search）。 */
 const FILE_EXT_RE = /\b[A-Za-z0-9_.\-/\\]+\.(?:ts|tsx|js|jsx|json|md|py|go|rs|java|cpp|c|h|txt|yaml|yml|toml|sh|css|html|sql)\b/i;
@@ -66,6 +66,14 @@ export function classifyTaskIntent(input: string): TaskIntent {
   // ——工具词/动词命中也不判 execution。降级：含文件扩展名 → search（先只读
   // 确认目标存在），否则 chat（单次直答）。
   const hasFileRef = FILE_EXT_RE.test(t);
+
+  // 第 3 轮补丁：显式写/续接请求优先于疑问与扩展名启发——
+  // "继续完成 memo.txt 任务"曾被 .txt 命中判成 search 只读（模型遵命只查不写，
+  // 真机实测的续接任务卡死）。含写/续接动词 + 文件参照 = execution，问句不豁免
+  // （"能在 memo.txt 里加一行吗"仍是写请求）。
+  const EXPLICIT_WRITE_RE = /(写入|添加|改成|创建|新建|加上|加一行|写一行|写两行|补全|完成|继续|接着|搞定|收尾|落盘)/;
+  if (EXPLICIT_WRITE_RE.test(t) && hasFileRef) return 'execution';
+
   if (QUESTION_MARK_RE.test(t)) {
     return hasFileRef ? 'search' : 'chat';
   }

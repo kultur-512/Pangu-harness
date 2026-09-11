@@ -534,8 +534,16 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
       endMessageStream(ctx);
       const n = Number(data.stepNumber);
       if (Number.isFinite(n) && n > 0) ctx.lineUi.stepCount = n; // 步数（Chaser 末尾 lastStep = 总步数）
-      const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
-      r.writeLine(r.color(msg, 'white'));
+      // F3（0.8.1 第 2 轮）：thinking/plan/toolCalls/正文全空的 step 不渲染
+      // `[Step N]` 头行——空内容仍打头是 chat 直答 `[Step 1]` 噪声源，loop 空
+      // 步同样净化；任一字段非空才渲染（loop 路径回归不受影响）。
+      const hasStepContent = !!(String(data.thinking || '').trim() || String(data.plan || '').trim()
+        || (Array.isArray(data.toolCalls) && data.toolCalls.length > 0)
+        || String(data.result ?? '').trim());
+      if (hasStepContent) {
+        const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
+        r.writeLine(r.color(msg, 'white'));
+      }
       // 旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；
       // step 只剩 thinking 汇总；verificationResult 维持现有渲染（无单独渲染）。
       break;
@@ -621,7 +629,9 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
           : sr === 'error' ? '✗ 任务执行失败'
           : data.success === true ? '✓ 已通过验证' : '✗ 未通过验证';
         const parts: string[] = [stateText];
-        if (ctx.lineUi.stepCount > 0) parts.push(`${ctx.lineUi.stepCount} 步`);
+        // F4（0.8.1 第 2 轮）：chat 轮（answered）不显示步数——`✓ 已回复 · 2.6s`；
+        // loop 轮保持 `✓ 已通过验证 · N 步 · Xs`。
+        if (sr !== 'answered' && ctx.lineUi.stepCount > 0) parts.push(`${ctx.lineUi.stepCount} 步`);
         if (elapsedMs > 0) parts.push(fmtMs(elapsedMs));
         const tokens = Number(data?.budgetReport?.estimatedUsedTokens) || 0;
         if (tokens > 0) parts.push(`~${(tokens / 1000).toFixed(1)}k tokens`);

@@ -237,8 +237,10 @@ export class PanshalachChaser {
     // 给 line/rich 前端）→ chat（整段）→ complete（整段，0.7 原路径）；
     // 显式 temperature 0.7 + maxTokens 4096（摆脱网关默认值）；finish_reason=length
     // 截断时正文尾追加标注；空回答（R2）在最终正文上判。
+    // F3（0.8.1 第 2 轮）：chat 直答不发 phase 事件——真机实测 `── 侦察 ──`+`── 执行 ──`
+    // 双相位线是 rollout 语义的 UI 噪声（explore 由 runAgentTask 按意图门控，
+    // 这里的 rollout 相位线直接删除）。
     if (intent === 'chat') {
-      config.onStep?.({ version: 1, type: 'phase', phase: 'rollout' });
       const chatClient = this.modelClient as any;
       // M2-4：单次回复同样走 onUsage 计量（网关返回 usage 时记实测）。
       const chatUsage = { prompt: 0, completion: 0 };
@@ -302,6 +304,29 @@ export class PanshalachChaser {
           let text = '';
           let startedThinking = false;
           let startedMessage = false;
+          // F1（0.8.1 第 2 轮，P0）：流式路径的 <think> 状态机过滤。MiniMax-M3/
+          // Qwen3 系把推理以 `<think>...</think>` 内嵌在 content 里（网关未剥离时
+          // 走这里）——此前只有非流式正文过 stripThinkTags，流式 chunk 直写导致
+          // 推理原文整段暴露。标签可能被 chunk 边界切开 → 尾部保留 ≤10 字符缓冲
+          // 跨 chunk 拼接后再检测；thinkMode 期间增量全吞；流结束时仍未闭合
+          // （截断响应常见）→ 正文视为空，走下方 R2 空检查。
+          let thinkMode = false;
+          let pending = '';
+          const emitVisible = (segment: string) => {
+            if (!segment) return;
+            if (!startedMessage) config.onStep?.({ version: 2, type: 'message.start' });
+            startedMessage = true;
+            config.onStep?.({ version: 2, type: 'message.delta', text: segment });
+            text += segment;
+          };
+          // buf 尾部可能是被切开的半个标签 → 返回需保留的长度（< 标签全长）。
+          const holdbackLen = (buf: string, tag: string): number => {
+            const max = Math.min(buf.length, 10, tag.length - 1);
+            for (let k = max; k > 0; k--) {
+              if (buf.endsWith(tag.slice(0, k))) return k;
+            }
+            return 0;
+          };
           for await (const chunk of chatClient.streamChatMessages(chatMessages, chatOpts)) {
             // finish_reason 检查先于内容过滤——空文本的尾 chunk 只携带截断标记
             if ((chunk as any)?.finishReason === 'length') truncated = true;
@@ -313,12 +338,40 @@ export class PanshalachChaser {
               config.onStep?.({ version: 2, type: 'thinking.delta', text: (chunk as any).text });
               continue;
             }
-            if (!startedMessage) config.onStep?.({ version: 2, type: 'message.start' });
-            startedMessage = true;
-            config.onStep?.({ version: 2, type: 'message.delta', text: (chunk as any).text });
-            text += (chunk as any).text;
+            // F1：正文 chunk 先过 <think> 状态机，只发射边界外的可见段
+            pending += (chunk as any).text;
+            for (;;) {
+              if (!thinkMode) {
+                const open = pending.indexOf('<think>');
+                if (open !== -1) {
+                  emitVisible(pending.slice(0, open));
+                  pending = pending.slice(open + '<think>'.length);
+                  thinkMode = true;
+                  continue;
+                }
+                const hold = holdbackLen(pending, '<think>');
+                if (hold < pending.length) emitVisible(pending.slice(0, pending.length - hold));
+                pending = pending.slice(pending.length - hold);
+                break;
+              }
+              const close = pending.indexOf('</think>');
+              if (close !== -1) {
+                pending = pending.slice(close + '</think>'.length);
+                thinkMode = false;
+                continue;
+              }
+              pending = pending.slice(pending.length - holdbackLen(pending, '</think>'));
+              break;
+            }
           }
-          chatText = text;
+          if (thinkMode) {
+            // 未闭合 <think>（截断场景）→ 推理全部吞掉、正文视为空 → R2 EMPTY_RESPONSE，
+            // 绝不把半截推理原文伪装成回答。
+            chatText = '';
+          } else {
+            emitVisible(pending); // 收尾冲刷尾部缓冲（最多 9 字符的半个标签残留）
+            chatText = text;
+          }
         } else if (canChat) {
           // 无流式但有 chat：整段直答（正文由宿主 answered 兜底呈现——R1 路径）
           chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
@@ -370,16 +423,10 @@ export class PanshalachChaser {
         stepsExecuted: 0,
         notes: ['chat 单次回复（不进 agent 循环）'],
       };
-      config.onStep?.({
-        version: 1,
-        type: 'step',
-        rolloutId: 'rollout-0',
-        stepNumber: 1,
-        thinking: '',
-        plan: '',
-        toolCalls: [],
-        result: chatText,
-      });
+      // F3/F4（0.8.1 第 2 轮）：chat 直答不再发 step 事件——空 thinking/plan 的
+      // step 会渲染成 `[Step 1]` 空头行并把终态撑成 `✓ 已回复 · 1 步 · Xs`（步数
+      // 对单轮直答无意义）。正文已随 message.delta 流式呈现，answerText 由
+      // runAgentTask 从轨迹末步带出，均不依赖该事件。
       return { success: true, bestTrajectory: traj, totalRollouts: 1, budgetReport, tierConfig };
     }
 

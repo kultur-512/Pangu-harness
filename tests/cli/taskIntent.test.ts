@@ -85,3 +85,20 @@ describe('R5 红队 12 输入词表锁定', () => {
     assert.equal(classifyTaskIntent('什么是bash'), 'execution');
   });
 });
+
+// 第 3 轮补丁回归：显式写/续接请求不得降级 search（真机：续接 memo.txt 任务被
+// .txt 扩展名判成 search 只读，模型遵命只查不写——续接任务卡死）
+describe('第 3 轮：显式写/续接请求优先', () => {
+  const cases: Array<[string, string]> = [
+    ['继续完成 memo.txt 任务', 'execution'],
+    ['能在 memo.txt 里加一行吗', 'execution'],
+    ['把 config.json 里的超时改成 30 秒', 'execution'],
+    ['memo.txt 在哪', 'search'],
+    ['看看 README.md 里写了什么', 'search'],
+  ];
+  for (const [input, expected] of cases) {
+    it(`${JSON.stringify(input)} -> ${expected}`, () => {
+      assert.equal(classifyTaskIntent(input), expected);
+    });
+  }
+});

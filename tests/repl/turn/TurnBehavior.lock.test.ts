@@ -25,6 +25,7 @@ import {
   createModeRing,
   handleLocalCommand,
 } from '../../../src/cli/repl/turn/CommandRouter.js';
+import { renderSseEvent } from '../../../src/cli/repl/turn/TurnRenderer.js';
 import { deleteRollout } from '../../../src/cli/repl/rolloutStore.js';
 
 // ==================== 测试替身 ====================
@@ -400,6 +401,60 @@ describe('M1 行为锁定：运行中排队与 drain', () => {
 
     assert.equal(calls.length, 1, 'aborted 后不得自动 drain 排队任务');
     assert.equal(ctx.queue.taskCount, 1, '排队项保留');
+  });
+});
+
+// ==================== 6) F3/F4（0.8.1 第 2 轮）：[Step N] 空头不渲染 + 终态分型 ====================
+
+describe('F3/F4（0.8.1 第 2 轮）：chat 直答界面净化', () => {
+  it('step 事件 thinking/plan/toolCalls/正文全空 → 不渲染 [Step N] 头行；任一非空仍渲染', () => {
+    const { ctx, renderer } = makeHarness();
+
+    // chat 直答曾发的空 step（[Step 1] 噪声源）
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 1,
+      thinking: '', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    assert.ok(
+      !renderer.lines.some((l) => l.includes('[Step 1]')),
+      `全空 step 不得打头行，got: ${JSON.stringify(renderer.lines)}`
+    );
+    assert.equal(ctx.lineUi.stepCount, 1, '步数计数仍记录（终态组装用）');
+
+    // loop 路径有内容的 step 回归：仍渲染
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 2,
+      thinking: '先读 README 定位错别字', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    assert.ok(
+      renderer.lines.some((l) => l.includes('[Step 2]') && l.includes('先读 README 定位错别字')),
+      '有 thinking 的 step 仍渲染头行（loop 路径不受净化影响）'
+    );
+    assert.equal(ctx.lineUi.stepCount, 2);
+  });
+
+  it('result(answered) 终态无步数（✓ 已回复 · Xs）；result(completed) 保持 N 步', () => {
+    const answered = makeHarness();
+    answered.ctx.lineUi.stepCount = 1;
+    answered.ctx.lineUi.taskStartedAt = Date.now() - 2600;
+    renderSseEvent(answered.ctx, 'result', { stopReason: 'answered', success: true }, answered.renderer);
+    const answeredLine = answered.renderer.lines.find((l) => l.includes('已回复'));
+    assert.ok(answeredLine, 'answered 终态行存在');
+    assert.ok(answeredLine!.includes('✓ 已回复'));
+    assert.ok(answeredLine!.includes('2.6s'), `耗时保留，got: ${answeredLine}`);
+    assert.ok(!/[0-9]+ 步/.test(answeredLine!), `chat 直答终态不显示步数，got: ${answeredLine}`);
+    assert.ok(
+      answered.renderer.lines.some((l) => l.includes('继续追问或下达新任务')),
+      'answered 的下一步提示保持'
+    );
+
+    const loop = makeHarness();
+    loop.ctx.lineUi.stepCount = 3;
+    loop.ctx.lineUi.taskStartedAt = Date.now() - 5000;
+    renderSseEvent(loop.ctx, 'result', { stopReason: 'completed', success: true }, loop.renderer);
+    const doneLine = loop.renderer.lines.find((l) => l.includes('已通过验证'));
+    assert.ok(doneLine, 'completed 终态行存在');
+    assert.ok(doneLine!.includes('3 步'), `loop 轮终态保持 N 步，got: ${doneLine}`);
   });
 });
 
