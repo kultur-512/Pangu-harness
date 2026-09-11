@@ -86,8 +86,15 @@ for (let i = 0; i < rawArgs.length; i++) {
   }
   if (a === '--resume' || a === '-r') {
     const next = rawArgs[i + 1];
-    resumeArg = next && !next.startsWith('-') ? next : 'last';
-    if (resumeArg !== 'last') i++; // consume the id token
+    if (next && !next.startsWith('-')) {
+      // 显式 id/last 都消费 token——'last' 不消费会残留在 args 变成
+      // 位置参数（真机实测：'--resume last run …' → run 收到 'last' →
+      // "未知命令: /last"）。
+      resumeArg = next;
+      i++;
+    } else {
+      resumeArg = 'last';
+    }
     continue;
   }
   if (a === '--branch' || a === '-b') {
@@ -142,9 +149,10 @@ async function main() {
     const { startRepl } = await import('./cli/repl.js');
     await startRepl(resumeArg || branchArg ? { resume: resumeArg ?? 'last', branch: branchArg ?? undefined } : undefined);
   } else {
-    // 作为单条命令执行（兼容旧用法）
+    // 作为单条命令执行（兼容旧用法）。--resume 支持 headless 多轮链
+    //（此前 --resume 只在交互 REPL 生效，one-shot 任务之间上下文断裂）。
     const { runOneShot } = await import('./cli/repl.js');
-    await runOneShot(args);
+    await runOneShot(args, resumeArg ?? undefined);
   }
 }
 

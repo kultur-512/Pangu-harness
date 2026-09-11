@@ -114,7 +114,7 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
   await repl.start();
 }
 
-export async function runOneShot(args: string[]): Promise<void> {
+export async function runOneShot(args: string[], resumeArg?: string): Promise<void> {
   // 单次命令执行保持原有路径
   const provider = createDefaultModelProvider();
   try { setSharedModelProvider(provider as any); } catch {}
@@ -125,6 +125,22 @@ export async function runOneShot(args: string[]): Promise<void> {
   const session = applyConfigModel(
     applyEnvModel(new Session(approval ? { approvalMode: approval } : {}))
   ) as Session;
+  // 0.8.1 headless 多轮链：--resume [id|last] 恢复 rollout 上下文到 session
+  //（此前 --resume 只在交互 REPL 路径生效，one-shot 任务之间上下文断裂）。
+  if (resumeArg) {
+    try {
+      const { listRecent, resumeSession } = await import('./repl/rolloutStore.js');
+      const recent = listRecent(10);
+      const target = resumeArg === 'last'
+        ? recent[0]
+        : recent.find((x) => x.id === resumeArg || x.id.startsWith(resumeArg));
+      if (target) {
+        session.id = target.id;
+        resumeSession(session, target.id);
+        console.error(`已恢复会话 ${target.id}（${target.firstUserInput ? String(target.firstUserInput).slice(0, 60) : '上下文已载入'}）`);
+      }
+    } catch { /* resume best-effort */ }
+  }
   const repl = new Repl({ session, provider });
   await repl.runOneShot(args);
 }
