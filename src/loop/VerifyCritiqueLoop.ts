@@ -604,6 +604,9 @@ export class VerifyCritiqueLoop {
       }
 
       const reasoning = StructuredReasoner.parseReasoning(rawContent);
+      // 网关侧推理剥离（MiniMax-M3/Qwen3/DeepSeek-R1 系把 <think> 内嵌 content）：
+      // 展示与历史回灌前必须剥掉推理原文，否则用户整段看到模型内心独白。
+      rawContent = StructuredReasoner.stripThinkTags(rawContent);
 
       // 解析工具调用（严格结构化模式走 StrictStructuredToolAdapter）
       let toolCalls: ToolCall[] = preParsedToolCalls ?? [];

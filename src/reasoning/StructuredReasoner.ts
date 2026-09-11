@@ -231,6 +231,9 @@ ${failureMemory}
   static stripThinkTags(text: string): string {
     return text
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      // zhulong 自有教学标签 <thinking> 已被 parseReasoning 抽到 step.thinking，
+      // 正文必须剥离（否则同一推理显示两份：thinking 块 + 正文原文）
+      .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
       .replace(/^\s*<think>[\s\S]*$/i, '') // 未闭合的 think 块（截断响应常见）
       .trim();
   }
