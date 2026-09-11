@@ -103,6 +103,25 @@ const command: Command = {
         : stopReason === 'answered' ? '已回复'
         : stopReason === 'error' ? '任务执行失败'
         : result.success ? '已通过验证' : '未通过验证';
+      // turn 落盘（headless/one-shot 路径此前完全不落 turn——resume 链断裂根因）
+      try {
+        const { appendTurn } = await import('../rolloutStore.js');
+        appendTurn(ctx.session.id, {
+          id: `mtx-${Date.now().toString(36)}`,
+          timestamp: Date.now(),
+          userInput: finalTask,
+          userInputType: 'task',
+          tier: ctx.session.tier,
+          result: {
+            success: result.success,
+            summary,
+            stopReason,
+            ...(result.answerText ? { answerText: String(result.answerText).slice(0, 400) } : {}),
+            ...(result.partialText ? { partialText: String(result.partialText).slice(0, 400) } : {}),
+          },
+          role: 'user',
+        } as any);
+      } catch {}
       if (stopReason === 'error') {
         const errLine = String(result.error || '').split('\n')[0].slice(0, 120);
         ctx.renderer.error(`完成 (${duration}ms) · ${summary}${errLine ? ' · ' + errLine : ''}`);
