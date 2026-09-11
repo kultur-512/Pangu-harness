@@ -224,6 +224,18 @@ ${failureMemory}
   }
 
   /**
+   * 剥离网关侧推理标签（DeepSeek-R1 系/MiniMax-M3/Qwen3 等把推理以
+   * `<think>...</think>` 内嵌在 content 里）——正文展示与历史回灌前必须剥离，
+   * 否则用户与后续轮次都会看到推理原文。
+   */
+  static stripThinkTags(text: string): string {
+    return text
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/^\s*<think>[\s\S]*$/i, '') // 未闭合的 think 块（截断响应常见）
+      .trim();
+  }
+
+  /**
    * 解析模型返回的结构化推理块（支持 format_check）
    */
   static parseReasoning(rawOutput: string): StructuredReasoningOutput {
@@ -234,7 +246,7 @@ ${failureMemory}
     };
 
     return {
-      thinking: extract('thinking'),
+      thinking: extract('thinking') || extract('think'),
       plan: extract('plan'),
       verify: extract('verify') || undefined,
       critique: extract('critique') || undefined,

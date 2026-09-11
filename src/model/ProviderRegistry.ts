@@ -196,6 +196,16 @@ export class ProviderRegistry {
         streamChat: ((prompt: string, opts: CompleteOptions = {}) =>
           rawClient.streamChat!(prompt, { ...opts, model: boundModel } as any)) as ModelClient['streamChat'],
       } : {}),
+      // 0.8 M1-PROTOCOL：透传 messages 双通道——registry 客户端缺这两个方法时
+      // chaser/loop 的 messages 模式会静默回退文本路径（消息通道形同虚设）。
+      ...(rawClient.chat ? {
+        chat: ((messages: any[], opts: CompleteOptions = {}) =>
+          rawClient.chat!(messages, { ...opts, model: boundModel } as any)) as ModelClient['chat'],
+      } : {}),
+      ...(rawClient.streamChatMessages ? {
+        streamChatMessages: ((messages: any[], opts: CompleteOptions = {}) =>
+          rawClient.streamChatMessages!(messages, { ...opts, model: boundModel } as any)) as ModelClient['streamChatMessages'],
+      } : {}),
     };
 
     return modelClient;

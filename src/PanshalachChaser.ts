@@ -330,6 +330,9 @@ export class PanshalachChaser {
         return chatFailure((e as Error)?.message || String(e));
       }
 
+      // 网关侧推理剥离：DeepSeek-R1 系/MiniMax-M3/Qwen3 等把 <think> 推理内嵌
+      // 在 content 里，展示与落盘前必须剥离（stripThinkTags 同时处理未闭合块）。
+      chatText = StructuredReasoner.stripThinkTags(String(chatText));
       // R2（0.8.1）：空回答不伪装成功——EMPTY_RESPONSE 重试耗尽后网关侧返回空串
       // （chatCompleteWithRetry 吞错转 ''），直答路径不得记 answered + 空内容。
       if (!String(chatText).trim()) {
