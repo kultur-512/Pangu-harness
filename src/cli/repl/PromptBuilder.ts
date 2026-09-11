@@ -211,17 +211,18 @@ export class PromptBuilder {
     const joined2 = this.buildLines.join('\n');
     const compacted2 = this.compactIfNeeded(joined2);
 
-    // === injection summary at the very top (debug block) ===
+    // === injection summary：内部审计信息不进模型 prompt（红队实测：模型会
+    // 讨论内部字段名造成元讨论污染）。审计摘要仍由 buildInjectionSummary 产出
+    // 供宿主/审计消费，只是不再拼进发往模型的 prompt。
     const summary: InjectionSummary = this.buildInjectionSummary();
-    const summaryBlock = `<injection_summary>\n${JSON.stringify(summary, null, 2)}\n</injection_summary>\n`;
-
+    void summary;
     this.lastBuildMeta = {
-      prompt: summaryBlock + compacted2,
+      prompt: compacted2,
       memoryCardCount: this.injectedKeys.has('memory-cards') ? 1 : 0,
       memoryOverflowCount: this.lastMemoryOverflowCount,
       injectedCardIds: [...this.lastInjectedCardIds],
     };
-    return summaryBlock + compacted2;
+    return compacted2;
   }
 
   /** 每次 build 的共享状态复位（幂等——stable/volatile 入口均可调用，序列调用不受影响）。 */

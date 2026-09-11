@@ -226,11 +226,8 @@ describe('PromptBuilder.buildForTask intent 分支（F7）', () => {
     assert.ok(!prompt.includes('<thinking_budget>'), 'R4：thinking_budget 不注入');
     assert.ok(!prompt.includes('锚点'), 'R4：锚点注记不注入');
     assert.ok(!prompt.includes('【任务状态】'), 'R4：TaskState 不注入');
-    // summary 如实反映（tierConstraint 不再恒 true）
-    assert.ok(
-      prompt.includes('"tierConstraint": false'),
-      'R4：injection summary 的 tierConstraint 如实反映 chat 跳过'
-    );
+    // 0.8.1：injection summary 调试块不进模型 prompt（元讨论污染），审计走 lastBuildMeta
+    assert.ok(!prompt.includes('<injection_summary>'), '调试块不进模型 prompt');
 
     // 轻量块保留：身份、当前任务
     assert.ok(prompt.includes('当前档位: high'), '系统身份保留');

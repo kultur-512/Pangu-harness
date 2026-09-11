@@ -381,8 +381,8 @@ describe('0.8 P2 PromptBuilder 三段拆分', () => {
     const volatile = await pb.buildVolatileSegment('修复 login 并跑测试');
 
     const idx = full.indexOf(stable);
-    assert.ok(idx > 0, 'buildForTask 产物在 summary 块之后包含 stable 段');
-    assert.ok(full.slice(0, idx).startsWith('<injection_summary>'), '前置为 injection summary 块');
+    assert.ok(idx >= 0, 'buildForTask 产物包含 stable 段');
+    assert.ok(!full.slice(0, idx).includes('<injection_summary>'), '调试块不进模型 prompt（0.8.1 红队修复）');
     assert.equal(full.slice(idx), stable + '\n' + volatile, '拼接关系：stable + \\n + volatile（压缩恒等时）');
   });
 
