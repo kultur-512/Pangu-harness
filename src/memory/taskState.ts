@@ -243,4 +243,57 @@ export class TaskStateStore {
     this.commitAtomic(nextFile);
     return bumped;
   }
+
+  // ==================== 显式记录原语（9/14 接口对齐：TaskState.record*） ====================
+  // 全部走 update()（同一乐观锁 + originalRequirement 锚定纪律），调用方无需自己拼数组。
+  // 定位：这些是「语义原语」——由真实业务节点（任务落定/CLI 用户声明）显式调用，
+  // 不允许从自然语言轨迹里猜（与禁止 NLP 抽取同一条纪律）。
+
+  /** 记一条决策。 */
+  recordDecision(taskId: string, what: string, why?: string, refs?: string[]): TaskState {
+    const ts = Date.now();
+    return this.update(taskId, (s) => ({ ...s, decisions: [...s.decisions, { ts, what, why, refs }] }));
+  }
+
+  /** 记一条风险（失败路径的主要落点）。 */
+  recordRisk(taskId: string, risk: string, mitigation?: string): TaskState {
+    const ts = Date.now();
+    return this.update(taskId, (s) => ({ ...s, risks: [...s.risks, { ts, risk, mitigation }] }));
+  }
+
+  /** 记一条未决问题（默认 open）。 */
+  recordOpenQuestion(taskId: string, question: string): TaskState {
+    const ts = Date.now();
+    return this.update(taskId, (s) => ({
+      ...s,
+      openQuestions: [...s.openQuestions, { ts, question, status: 'open' as const }],
+    }));
+  }
+
+  /** 记一条里程碑。 */
+  recordMilestone(taskId: string, title: string, done = false, evidence?: string): TaskState {
+    const ts = Date.now();
+    return this.update(taskId, (s) => ({ ...s, milestones: [...s.milestones, { ts, title, done, evidence }] }));
+  }
+
+  /** 记一条已验证事实（任务级验证结论，区别于记忆卡层的 markVerified）。 */
+  recordVerified(taskId: string, what: string, how?: string, command?: string, evidenceEventIds?: string[]): TaskState {
+    const ts = Date.now();
+    return this.update(taskId, (s) => ({
+      ...s,
+      verified: [...s.verified, { ts, what, how, command, evidenceEventIds }],
+    }));
+  }
+
+  /** 更新下一步（传空串 = 清空；避免误导性地保留过期 nextStep）。 */
+  setNextStep(taskId: string, nextStep: string): TaskState {
+    const trimmed = nextStep.trim();
+    return this.update(taskId, (s) => ({ ...s, nextStep: trimmed || undefined }));
+  }
+
+  /** 更新当前目标（originalRequirement 不动——锚只认 create）。 */
+  setCurrentGoal(taskId: string, currentGoal: string): TaskState {
+    const trimmed = currentGoal.trim();
+    return this.update(taskId, (s) => ({ ...s, currentGoal: trimmed || undefined }));
+  }
 }

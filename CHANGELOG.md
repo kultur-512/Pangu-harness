@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.5 (R4/R5 挂载收口：`/memory events` 查询子命令 + TaskState.record* 原语)
+
+王佐 U3 收口（R4/R5 存储层自 0.6.5 落地后，此处补齐对齐清单里的"剩余项"）：
+
+**R4 挂载：`/memory events` 查询子命令**（`src/cli/MemoryCommand.ts`）
+- MemoryEventStore 此前"已落地但无入口"（ROADMAP/MEMORY-DESIGN/ARCHITECTURE 三处均记"`/memory events` 查询子命令未挂载"）——本轮补上。
+- 用法：`memory events [--session <id>] [--kind <k>] [--task <id>] [--topic <t>] [--limit N] [--stats]`；缺省 session 回退最近 rollout 会话；`--stats` 给按 topic / 按任务的聚合视图。
+- 纪律：只读（复用 R4 `MemoryEventStore.query/topicStats/taskSummaries`），不自行读 JSONL；空会话返回指引而非抛错。
+
+**R5 接口对齐：`TaskState.record*` 显式记录原语**（`src/memory/taskState.ts`）
+- 9/14 评审清单第 4 项 `TaskState.record* / getOrCreate`——`getOrCreate` 已于 11dbea3 落地，本轮补 `record*` 家族：`recordDecision / recordRisk / recordOpenQuestion / recordMilestone / recordVerified / setNextStep / setCurrentGoal`。
+- 全部走 `update()`：沿用同一乐观锁（version 冲突抛错）与 `originalRequirement` 锚定纪律；`setNextStep('')` 清空而非留过期值（防误导）。
+- 定位：语义原语（真实业务节点 / CLI 用户声明显式调用），不猜自然语言轨迹（与"禁止 NLP 抽取"同一纪律）。
+- **R4 别名**：`MemoryEventStore.listTopics()`（= `topicStats().map(topic)`），对齐 9/14 清单签名 `MemoryEvent/listTopics`。
+
+**Tests**: `npx tsc --noEmit` EXIT=0；`npm test` **758 例：757 pass + 1 skip + 0 fail**（新增 `tests/commands/MemoryEvents.test.ts` 6 例 + `tests/repl/TaskState.test.ts` record* 3 例）；`verify-panshalach-cleanup.mjs` PASS。
+**Risks**: 无（加性：新增子命令 + 新增方法，未改既有路径语义）；`/task` CLI 仍属赵天昂 R5 另半，本批不涉。
+
 ## 0.7.4 (部署陈旧 dist 修复 + 中断语义修正 + `?` 透传 + hermes 二次对齐调研)
 
 方案：`docs/panshalach/PLAN-0.7.4-FOR-CLAUDECODE.md`（控制人实测驱动）。用户跑的 zhulong 是 **09-06 00:03 的旧 dist**（0.7.1 批次 B 中途构建），0.7.2/0.7.3 全部修复只在 src——"莫名中断""explore/rollout 英文相位线""旧 `?` 输出"三个观测全是旧代码。"提交任务后莫名中断（235ms）"因果链：LM Studio 对 diffusion 模型（openpangu-7b-diffusion-base-i1）chat/completions 报 `Unexpected endpoint or method. Returning 200 anyway` → 200-garbage → `EMPTY_RESPONSE` → streamChat 回退裸 doComplete（无 withRetry/无 emptyResponse 捕获）穿透 → chaser catch 兜底硬编码 `stopReason='aborted'` → UI 渲染"已中断·现场已保留"。**模型错误被伪装成用户中断。**

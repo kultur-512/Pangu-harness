@@ -7,17 +7,106 @@
 //   pangu memory import <file>
 //   pangu memory remember [--pin] <内容>    (
 //   pangu memory forget <id>                (
+//   pangu memory events [--session <id>] [--kind <k>] [--task <id>] [--topic <t>] [--limit N]
 
 import { RefinedMemoryStore } from '../memory/RefinedMemoryStore.js';
+import { MemoryEventStore } from '../memory/events.js';
+import { listRecent } from './repl/rolloutStore.js';
 import { writeFileSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { FailureCategory } from '../memory/FailureMemory.js';
+import type { AgentEventKind } from './repl/types.js';
+
+/** 取一个展示用时间串（异常时间戳不抛）。 */
+function fmtTs(ts: number): string {
+  try {
+    return new Date(ts).toISOString().replace('T', ' ').slice(0, 19);
+  } catch {
+    return String(ts);
+  }
+}
+
+/** 从 args 里读 `--flag value`（缺值返回 undefined）。 */
+function readFlag(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  return i > -1 ? args[i + 1] : undefined;
+}
+
+/**
+ * `/memory events` —— R4 事件账本的查询视图（只读）。
+ * sessionId 缺省时回退到最近一个 rollout 会话（无会话则给出指引）。
+ */
+function renderEvents(args: string[], workspaceRoot: string): string {
+  const sessionId = readFlag(args, '--session') ?? process.env.PANSHA_SESSION_ID?.trim();
+  let sid = sessionId;
+
+  if (!sid) {
+    const recent = listRecent(1);
+    if (recent.length === 0) {
+      return '当前没有可查的事件会话（rollouts 目录为空）。用 --session <id> 指定会话。';
+    }
+    sid = recent[0].id;
+  }
+
+  const store = new MemoryEventStore(sid!);
+  const kind = readFlag(args, '--kind') as AgentEventKind | undefined;
+  const taskId = readFlag(args, '--task');
+  const topic = readFlag(args, '--topic');
+  const limitRaw = readFlag(args, '--limit');
+  const limit = limitRaw ? Number(limitRaw) : 20;
+
+  // `--stats`：聚合视图（topic 分布 + 任务摘要），不列明细
+  if (args.includes('--stats')) {
+    const topics = store.topicStats();
+    const tasks = store.taskSummaries();
+    if (topics.length === 0 && tasks.length === 0) {
+      return `会话 ${sid} 暂无业务事件。`;
+    }
+    const lines: string[] = [`会话 ${sid} 事件统计：\n`];
+    if (topics.length > 0) {
+      lines.push('按 topic：');
+      for (const t of topics.slice(0, 20)) {
+        lines.push(`  ${t.count.toString().padStart(4)}  ${t.topic}  (last: ${fmtTs(t.lastTs)})`);
+      }
+    }
+    if (tasks.length > 0) {
+      lines.push('', '按任务：');
+      for (const t of tasks.slice(0, 20)) {
+        lines.push(`  ${t.taskId}  ${t.count} 条  [${t.kinds.join(', ')}]`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  const events = store.query({ kind, taskId, topic, limit: Number.isFinite(limit) && limit > 0 ? limit : 20 });
+  if (events.length === 0) {
+    const filterDesc = [kind && `kind=${kind}`, taskId && `task=${taskId}`, topic && `topic=${topic}`]
+      .filter(Boolean)
+      .join(' ');
+    return `会话 ${sid} 没有匹配的事件${filterDesc ? `（${filterDesc}）` : ''}。`;
+  }
+
+  const lines: string[] = [`会话 ${sid} 事件（${events.length} 条${kind ? `，kind=${kind}` : ''}）：\n`];
+  for (const e of events) {
+    const tid = e.taskId ? ` task=${e.taskId}` : '';
+    lines.push(`  [${fmtTs(e.ts)}] ${e.kind}${tid}  ${e.topic ? `(${e.topic}) ` : ''}${e.summary}`);
+  }
+  if (events.length >= (Number.isFinite(limit) && limit > 0 ? limit : 20)) {
+    lines.push('', `（已截断至 ${events.length} 条；用 --limit N 调整）`);
+  }
+  return lines.join('\n');
+}
 
 export async function runMemoryCommand(args: string[], workspaceRoot: string): Promise<string> {
   const subcommand = args[0];
 
   if (!subcommand || subcommand === 'help') {
     return renderHelp();
+  }
+
+  // R4 事件查询：不依赖 RefinedMemoryStore，先分流
+  if (subcommand === 'events') {
+    return renderEvents(args, workspaceRoot);
   }
 
   const store = new RefinedMemoryStore(workspaceRoot);
@@ -114,9 +203,11 @@ Panshalach memory 子命令:
   memory clear [--category X]                      清空（可指定类别）
   memory export [file]                             导出为 JSON（默认输出到 stdout）
   memory import <file> [--merge false]             从 JSON 导入（默认合并）
+  memory events [--session <id>] [--kind <k>]      查询业务事件账本（R4；缺省取最近会话）
+                [--task <id>] [--topic <t>] [--limit N] [--stats]
 
 存储位置: <workspace>/.panshalach-memory.json
-默认加入 .gitignore
+事件账本: ~/.panshalach/rollouts/<sessionId>.jsonl（业务事件随任务执行写入）
 `.trim();
 }
 
