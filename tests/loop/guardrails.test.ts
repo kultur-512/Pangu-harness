@@ -134,6 +134,88 @@ describe('M2-2 ToolCallGuardrailController 单元', () => {
   });
 });
 
+// ==================== 0.8.1 UX：只读拒绝快速通道（DENIED_READONLY ≥2 阻断） ====================
+
+const RO_DENY = 'TOOL_ERROR: DENIED_READONLY ✗ DENIED (readonly) · 写类工具在只读模式被禁用。当前档位为只读；使用 /approvals default 或切换档位放行';
+
+describe('0.8.1 只读拒绝快速通道（ToolCallGuardrailController）', () => {
+  it('readonly 闸：1 次 DENIED_READONLY 不拦，连续 2 次 → beforeCall 阻断并注入强指引', () => {
+    const g = new ToolCallGuardrailController();
+    const c = call('write_file', { file_path: 'a.txt', content: 'x' });
+    g.recordDenied('write_file', RO_DENY);
+    assert.equal(g.beforeCall([c]).blocked, false, '1 次不拦（阈值 2）');
+    g.recordDenied('write_file', RO_DENY);
+    const d = g.beforeCall([c]);
+    assert.equal(d.blocked, true, '连续 2 次 → 阻断');
+    assert.match(d.reason ?? '', /GUARDRAIL_READONLY_DENIED/);
+    assert.match(d.reason ?? '', /请立即 end_turn 并向用户报告/);
+    assert.match(d.reason ?? '', /\/approvals default/, '强指引必须点名 /approvals default');
+    assert.equal(d.halt, undefined, '阻断不是 halt 级（模型仍有 end_turn 报告机会）');
+  });
+
+  it('readonly 闸：reason 非 DENIED_READONLY / 工具执行成功 → 计数归零', () => {
+    const g = new ToolCallGuardrailController();
+    const c = call('write_file', { file_path: 'a.txt', content: 'x' });
+    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('write_file', 'TOOL_ERROR: DENIED_BY_USER 用户拒绝'); // 拒绝性质变化 → 归零
+    g.recordDenied('write_file', RO_DENY);
+    assert.equal(g.beforeCall([c]).blocked, false, '中间被其它拒绝打断 → 不算连续');
+    g.recordDenied('write_file', RO_DENY);
+    assert.equal(g.beforeCall([c]).blocked, true);
+    // 执行成功（用户已放行）→ 归零
+    g.recordResult(c, 'TOOL_OK: write_file\nVERIFICATION: APPLIED', false);
+    assert.equal(g.beforeCall([c]).blocked, false, '该工具成功即归零');
+  });
+});
+
+describe('0.8.1 只读拒绝快速通道（loop 接入）', () => {
+  it('write_file 连续 2 次 DENIED_READONLY → 第 3 步 beforeCall 阻断（不再 execute），强指引回灌后模型 end_turn 报告', async () => {
+    const engine = {
+      executeCalls: [] as any[],
+      async execute(calls: any[]) { this.executeCalls.push(calls); return RO_DENY; },
+    };
+    const writeBlock = `
+<thinking>t</thinking>
+<plan>p</plan>
+<verify>v</verify>
+<>
+  <write_file><file_path>a.txt</file_path><content>x</content></write_file>
+</>
+`;
+    const model = textModel([writeBlock, writeBlock, writeBlock, '写操作被只读档位拒绝。请执行 /approvals default 切换档位后重试。']);
+    // maxConsecutiveFailures 拉高：让 readonly 快速通道（而非连败保护）成为触发者
+    const loop = new VerifyCritiqueLoop(model, engine, { practicalMode: true, maxSteps: 20, maxConsecutiveFailures: 99 });
+    const out = await loop.run('写一个文件');
+
+    assert.equal(engine.executeCalls.length, 2, '前 2 步执行被拒，第 3 步被 readonly 快速通道阻断不执行');
+    const blockedStep = out.steps.find((s) => s.verificationResult.includes('GUARDRAIL_READONLY_DENIED'));
+    assert.ok(blockedStep, '强指引必须作为工具结果回灌（模型可见）');
+    assert.match(blockedStep!.verificationResult, /\/approvals default/);
+    assert.equal(blockedStep!.verificationSignal, 'FAIL');
+    assert.equal(out.stopReason, 'answered', '模型看到强指引后 end_turn 报告 → answered');
+  });
+
+  it('只拒绝 1 次不触发：第 2 步仍执行（阈值 2 语义）', async () => {
+    const engine = {
+      executeCalls: [] as any[],
+      async execute(calls: any[]) { this.executeCalls.push(calls); return RO_DENY; },
+    };
+    const writeBlock = `
+<thinking>t</thinking>
+<plan>p</plan>
+<verify>v</verify>
+<>
+  <write_file><file_path>a.txt</file_path><content>x</content></write_file>
+</>
+`;
+    const model = textModel([writeBlock, '只被拒绝了一次，我停止并向用户报告。']);
+    const loop = new VerifyCritiqueLoop(model, engine, { practicalMode: true, maxSteps: 10, maxConsecutiveFailures: 99 });
+    const out = await loop.run('写一个文件');
+    assert.equal(engine.executeCalls.length, 1, '仅 1 次拒绝 → 不阻断');
+    assert.ok(!out.steps.some((s) => s.verificationResult.includes('GUARDRAIL')), '未达阈值不注入阻断 reason');
+  });
+});
+
 // ==================== loop 接入（与 maxConsecutiveFailures 并行） ====================
 
 function textModel(responses: string[]) {

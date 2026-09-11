@@ -15,7 +15,57 @@ export const ANSI_DIM = '\x1b[2m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_RED = '\x1b[31m';
 const ANSI_ITALIC = '\x1b[3m';
+const ANSI_CYAN = '\x1b[36m';
 export const ANSI_RESET = '\x1b[0m';
+
+// ==================== 0.8.1 UX 收敛（真机 MiniMax-M3 实测驱动） ====================
+// 两个显示层纯助手：只改"渲染时"的文本，落盘原文（turn/trajectory）不受影响。
+
+/** 未解析调用块的折叠提示行（折叠后唯一展示内容）。 */
+export const UNPARSED_CALL_NOTICE = '⚠ 模型输出的调用格式无法解析（已跳过）';
+
+/**
+ * 疑似未解析调用块探测（改进 2）：
+ *  - 以裸 `<>` 块开头；或
+ *  - 含配对的 <tool_name>…</tool_name> 标签，且名字含 `_`（read_file/write_file_path
+ *    等）或配对体内还有嵌套标签（调用块形态；排除 <div>x</div> 等普通 HTML 词）。
+ */
+export function looksLikeUnparsedCallBlock(text: string): boolean {
+  const s = String(text ?? '');
+  if (s.startsWith('<>')) return true;
+  const m = s.match(/<([a-z][a-z0-9_]{1,39})>([\s\S]*?)<\/\1>/i);
+  if (!m) return false;
+  return m[1].includes('_') || /<[a-z][a-z0-9_]{1,39}>/i.test(m[2]);
+}
+
+/** 渲染层折叠：疑似未解析调用块 → 一行提示，不再展示原始 XML 噪声。 */
+export function collapseUnparsedCallBlock(text: string): string {
+  const s = String(text ?? '');
+  return looksLikeUnparsedCallBlock(s) ? UNPARSED_CALL_NOTICE : s;
+}
+
+const ANSI_BOLD_OFF = '\x1b[22m';
+const ANSI_FG_OFF = '\x1b[39m';
+
+/**
+ * line 模式轻量 markdown（改进 3）：`**x**` → ANSI 粗体、`` `x` `` → ANSI 青色。
+ * 只用于整段呈现（answerText 兜底 / step 正文）——流式 delta 逐字路径无法预知
+ * 闭合，不做转换。代码 span 优先占位（内层 `**` 不再二次替换），跨行不匹配。
+ */
+export function renderInlineMarkdown(text: string): string {
+  const s = String(text ?? '');
+  if (!s) return s;
+  const codes: string[] = [];
+  let out = s.replace(/`([^`\n]+)`/g, (_m, inner: string) => {
+    codes.push(`${ANSI_CYAN}${inner}${ANSI_FG_OFF}`);
+    return `\u0000${codes.length - 1}\u0000`;
+  });
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, `${ANSI_BOLD}$1${ANSI_BOLD_OFF}`);
+  if (codes.length > 0) {
+    out = out.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => codes[Number(i)] ?? '');
+  }
+  return out;
+}
 
 /** 终端宽度（列）。非 TTY / 测试环境默认 80。 */
 export function termWidth(): number {
@@ -344,7 +394,14 @@ export function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnConte
   if (t === 'step' || event === 'step') {
     // Turn segment settled → clear live zone before the step card lands
     if (typeof b.resetStream === 'function') { try { b.resetStream(); } catch {} }
-    if (typeof b.pushStep === 'function') b.pushStep(data);
+    if (typeof b.pushStep === 'function') {
+      // 0.8.1 UX：rich 卡片同样折叠疑似未解析调用块（只改显示，事件原文不变）
+      b.pushStep({
+        ...data,
+        ...(typeof data.thinking === 'string' ? { thinking: collapseUnparsedCallBlock(data.thinking) } : {}),
+        ...(typeof data.plan === 'string' ? { plan: collapseUnparsedCallBlock(data.plan) } : {}),
+      });
+    }
     if (Array.isArray(data.toolCalls) && typeof b.pushTool === 'function') {
       for (const tc of data.toolCalls) b.pushTool(tc);
     }
@@ -541,7 +598,12 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
         || (Array.isArray(data.toolCalls) && data.toolCalls.length > 0)
         || String(data.result ?? '').trim());
       if (hasStepContent) {
-        const msg = `[Step ${data.stepNumber}] ${data.thinking || data.plan || ''}`;
+        // 0.8.1 UX：正文呈现前先折叠疑似未解析调用块（改进 2），再做轻量
+        // markdown 转换（改进 3）。只改显示——落盘 step 原文不受影响。
+        const body = renderInlineMarkdown(
+          collapseUnparsedCallBlock(String(data.thinking || data.plan || ''))
+        );
+        const msg = `[Step ${data.stepNumber}] ${body}`;
         r.writeLine(r.color(msg, 'white'));
       }
       // 旧的 step.toolCalls 一行渲染已删除（被实时工具卡片取代）；

@@ -19,7 +19,7 @@ import {
   runSyncCompact,
   updateQueueCount,
 } from './TurnContext.js';
-import { ANSI_DIM, ANSI_RESET, mapSseToBridge, renderSseEvent } from './TurnRenderer.js';
+import { ANSI_DIM, ANSI_RESET, mapSseToBridge, renderInlineMarkdown, renderSseEvent } from './TurnRenderer.js';
 import { createCommandEmitter, handleEditPrefill, handleSlashCommand } from './CommandRouter.js';
 
 /** MCP stdio servers from .panshalach.json mcpServers (append-only config).
@@ -379,10 +379,12 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
         if (useRich && typeof bridge.pushFeed === 'function') {
           bridge.pushFeed({ type: 'markdown', content: answerText });
         } else if (!useRich && ctx.lineUi.streamedAnswerChars < answerText.length) {
-          // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失
+          // 流式不可用（0 字符）输出全文；流式部分送达时补差量，防尾部静默丢失。
+          // 0.8.1 UX（改进 3）：整段呈现做轻量 markdown（**粗体** / `行内代码`）；
+          // recordOutput 保留原文（/edit 取回不受影响）。
           const rest = answerText.slice(ctx.lineUi.streamedAnswerChars);
           if (rest) {
-            ctx.renderer.writeLine(ctx.renderer.color(rest, 'white'));
+            ctx.renderer.writeLine(ctx.renderer.color(renderInlineMarkdown(rest), 'white'));
             recordOutput(ctx, rest);
           }
         }
@@ -430,7 +432,12 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
 
   // drain queued tasks once the turn settles (FIFO, one by one).
   // An aborted turn stops the drain — the user keeps the remaining queue.
-  while (ctx.queue.taskCount > 0 && !ctx.lastAborted) {
+  // 深度护栏：drain 经 runTaskViaSse 递归重入（排队任务 settle 后再次 drain），
+  // 嵌套深度随排队链增长，过深会栈溢出（真机 18 步会话实测）。>8 层即止损，
+  // 剩余任务留在队列，用户按一次回车继续（isRunning 已为 false，idle 路径会跑）。
+  let drainDepth = 0;
+  while (ctx.queue.taskCount > 0 && !ctx.lastAborted && drainDepth < 8) {
+    drainDepth++;
     const next = ctx.queue.drainTasks();
     updateQueueCount(ctx);
     for (const t of next) {
@@ -438,6 +445,9 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       emitFeed(ctx, `▶ 执行排队任务：${t.slice(0, 80)}`, 'info');
       await runTaskViaSse(ctx, t, bridge);
     }
+  }
+  if (ctx.queue.taskCount > 0) {
+    emitFeed(ctx, `⚠ 仍有 ${ctx.queue.taskCount} 个排队任务未执行（连续任务过多），回车继续`, 'warn');
   }
 }
 

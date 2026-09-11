@@ -7,6 +7,9 @@
 //      永不收敛）→ 强制终局 stopReason='consecutive-failures'（复用现有终态）。
 //   3. noProgressBlockAfter=5    —— 幂等工具（read_file/glob/grep）同参数同结果
 //      重复 5 次（无进展空转）→ 同上阻断。
+//   4. readonlyDenyBlockAfter=2  —— 同工具 DENIED_READONLY 连续 ≥2 次 → 阻断并
+//      注入强指引（end_turn 报告 + /approvals default）。readonly 语义确定、重试
+//      无意义，阈值比一般失败更早止损（0.8.1 UX 收敛，真机 MiniMax-M3 实测驱动）。
 // 与现有 maxConsecutiveFailures 并行（互不替代）：前者按步信号粗计数，
 // 本闸按"同参数同工具"签名细计数，阻断发生在 before_call（执行前），而非事后掐。
 
@@ -25,6 +28,8 @@ export interface ToolCallGuardrailOptions {
   exactFailureBlockAfter?: number;
   sameToolFailureHaltAfter?: number;
   noProgressBlockAfter?: number;
+  /** 只读拒绝快速通道阈值：同工具 DENIED_READONLY 连续 N 次 → 阻断（缺省 2）。 */
+  readonlyDenyBlockAfter?: number;
   /** 幂等工具结果比较的预览截断长度（取结果前 N 字符）。 */
   progressPreviewLength?: number;
   /** 幂等工具名白名单（小写化匹配）。 */
@@ -53,6 +58,7 @@ export class ToolCallGuardrailController {
   private readonly exactFailureBlockAfter: number;
   private readonly sameToolFailureHaltAfter: number;
   private readonly noProgressBlockAfter: number;
+  private readonly readonlyDenyBlockAfter: number;
   private readonly progressPreviewLength: number;
   private readonly idempotentTools: Set<string>;
 
@@ -62,11 +68,14 @@ export class ToolCallGuardrailController {
   private toolFailures = new Map<string, number>();
   /** 签名 → { preview, count }：幂等工具同结果重复计数。 */
   private noProgress = new Map<string, { preview: string; count: number }>();
+  /** 工具名 → 连续 DENIED_READONLY 次数（成功 / 非只读拒绝即归零）。 */
+  private readonlyDenials = new Map<string, number>();
 
   constructor(options: ToolCallGuardrailOptions = {}) {
     this.exactFailureBlockAfter = options.exactFailureBlockAfter ?? 5;
     this.sameToolFailureHaltAfter = options.sameToolFailureHaltAfter ?? 8;
     this.noProgressBlockAfter = options.noProgressBlockAfter ?? 5;
+    this.readonlyDenyBlockAfter = options.readonlyDenyBlockAfter ?? 2;
     this.progressPreviewLength = options.progressPreviewLength ?? 200;
     this.idempotentTools = new Set(
       (options.idempotentTools ?? DEFAULT_IDEMPOTENT_TOOLS).map((t) => t.toLowerCase())
@@ -75,12 +84,17 @@ export class ToolCallGuardrailController {
 
   /**
    * 执行前检查本步全部调用。返回首个阻断判定；未阻断返回 { blocked: false }。
-   * 闸门优先级：halt（强制终局，最重）> exact（同参数重复失败）> noProgress（无进展）。
+   * 闸门优先级：halt（强制终局，最重）> readonlyDeny（只读拒绝快速通道，语义
+   * 确定最早止损）> exact（同参数重复失败）> noProgress（无进展）。
    */
   beforeCall(calls: ToolCall[]): GuardrailDecision {
     for (const call of calls) {
       const halt = this.checkHalt(call);
       if (halt) return halt;
+    }
+    for (const call of calls) {
+      const ro = this.checkReadonlyDenial(call);
+      if (ro) return ro;
     }
     for (const call of calls) {
       const exact = this.checkExact(call);
@@ -110,6 +124,8 @@ export class ToolCallGuardrailController {
       // 成功即打破连败：该签名 / 该工具计数归零。
       this.exactFailures.delete(key);
       this.toolFailures.delete(name);
+      // 只读拒绝快速通道：该工具执行成功（如用户已 /approvals default 放行）→ 归零。
+      this.readonlyDenials.delete(name);
     }
 
     // 幂等无进展跟踪：同签名同结果（截断预览）重复计数；结果变化即重置。
@@ -124,6 +140,22 @@ export class ToolCallGuardrailController {
     }
   }
 
+  /**
+   * 只读拒绝快速通道（0.8.1 UX）：execute 返回 DENIED_READONLY 结果时按工具逐
+   * call 调用。reason 含 DENIED_READONLY → 连续计数 +1；否则（拒绝性质变化）
+   * 该工具计数归零。达阈值后 beforeCall 直接阻断——readonly 语义确定，同参数
+   * 重试无意义，比一般失败硬闸（5/8）更早止损。
+   */
+  recordDenied(tool: string, reason: string): void {
+    const name = String(tool ?? '').trim();
+    if (!name) return;
+    if (String(reason ?? '').includes('DENIED_READONLY')) {
+      this.readonlyDenials.set(name, (this.readonlyDenials.get(name) ?? 0) + 1);
+    } else {
+      this.readonlyDenials.delete(name);
+    }
+  }
+
   private checkHalt(call: ToolCall): GuardrailDecision | undefined {
     const name = String(call.toolName ?? '').trim();
     const count = this.toolFailures.get(name) ?? 0;
@@ -134,6 +166,21 @@ export class ToolCallGuardrailController {
         reason:
           `TOOL_ERROR: GUARDRAIL_HALT\n` +
           `同工具 ${name} 已失败 ${count} 次，强制结束本轮（consecutive-failures）。`,
+      };
+    }
+    return undefined;
+  }
+
+  private checkReadonlyDenial(call: ToolCall): GuardrailDecision | undefined {
+    const name = String(call.toolName ?? '').trim();
+    const count = this.readonlyDenials.get(name) ?? 0;
+    if (count >= this.readonlyDenyBlockAfter) {
+      return {
+        blocked: true,
+        reason:
+          `TOOL_ERROR: GUARDRAIL_READONLY_DENIED\n` +
+          `当前为只读档位，写操作无法执行。请立即 end_turn 并向用户报告：` +
+          `需要用户执行 /approvals default 切换档位后重试（${name} 已连续被只读拒绝 ${count} 次）。`,
       };
     }
     return undefined;

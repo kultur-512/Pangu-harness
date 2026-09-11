@@ -748,6 +748,13 @@ export class VerifyCritiqueLoop {
           signal = this.classifySignal(verificationResult);
           if (messagesMode) this.pushToolMessages(toolCalls, wireCalls, verificationResult);
 
+          // 0.8.1 UX：只读拒绝快速通道——execute 返回 DENIED_READONLY 时逐 call
+          // 记入专用计数（下一步 beforeCall 以阈值 2 阻断并注入强指引）。
+          // readonly 语义确定、重试无意义，比一般失败硬闸（5/8）更早止损。
+          for (const call of toolCalls) {
+            this.guardrails.recordDenied(call.toolName, verificationResult);
+          }
+
           // M2-2：execute 后逐 call 喂结果。failed 复用 loop 分段信号语义
           // （classifySignal 已排除只读正文偶含 FAIL/ERROR 字样的误判）。
           const guardrailFailed = signal === 'FAIL' || signal === 'ERROR';

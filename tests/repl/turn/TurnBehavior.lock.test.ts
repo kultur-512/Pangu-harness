@@ -25,7 +25,15 @@ import {
   createModeRing,
   handleLocalCommand,
 } from '../../../src/cli/repl/turn/CommandRouter.js';
-import { renderSseEvent } from '../../../src/cli/repl/turn/TurnRenderer.js';
+import {
+  ANSI_RESET,
+  collapseUnparsedCallBlock,
+  looksLikeUnparsedCallBlock,
+  mapSseToBridge,
+  renderInlineMarkdown,
+  renderSseEvent,
+  UNPARSED_CALL_NOTICE,
+} from '../../../src/cli/repl/turn/TurnRenderer.js';
 import { deleteRollout } from '../../../src/cli/repl/rolloutStore.js';
 
 // ==================== 测试替身 ====================
@@ -517,5 +525,94 @@ describe('M1 行为锁定：命令路由', () => {
     assert.ok(
       bridge.feeds.some((f: any) => f.text.includes('你是不是想要 /mode？（输入 /help 查看全部命令）'))
     );
+  });
+});
+
+// ==================== 7) 0.8.1 UX 收敛：未解析调用块折叠 + 轻量 markdown ====================
+
+describe('0.8.1 UX：未解析调用块折叠（改进 2）', () => {
+  it('探测：<> 块开头 / 配对 <tool_name> 标签 → true；普通正文 / HTML 词 / markdown → false', () => {
+    assert.equal(looksLikeUnparsedCallBlock('<read_file><file_path>a.txt</file_path></read_file>'), true);
+    assert.equal(looksLikeUnparsedCallBlock('<>\n  <bash><command>ls</command></bash>\n</>'), true);
+    assert.equal(looksLikeUnparsedCallBlock('好的，我来读取文件'), false);
+    assert.equal(looksLikeUnparsedCallBlock('对比 a < b 且 c > d 的大小'), false);
+    assert.equal(looksLikeUnparsedCallBlock('用 <div>排版</div> 的方式'), false, '无下划线且无嵌套标签的 HTML 词不误判');
+    assert.equal(looksLikeUnparsedCallBlock('这是 **加粗** 和 `代码`'), false);
+  });
+
+  it('折叠：疑似调用块 → 一行提示；普通正文原样', () => {
+    const raw = '<read_file> <read_file_path>README.md</read_file_path> </read_file>';
+    assert.equal(collapseUnparsedCallBlock(raw), UNPARSED_CALL_NOTICE);
+    assert.equal(collapseUnparsedCallBlock('正常步骤说明'), '正常步骤说明');
+  });
+
+  it('line 模式 step 事件：thinking 含未解析调用块 → 渲染为折叠提示，原始 XML 不外显', () => {
+    const { ctx, renderer } = makeHarness();
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 3,
+      thinking: '<read_file><file_path>a.txt</file_path></read_file>', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    const stepLine = renderer.lines.find((l: string) => l.includes('[Step 3]'));
+    assert.ok(stepLine, 'step 头行仍渲染');
+    assert.ok(stepLine!.includes(UNPARSED_CALL_NOTICE), `折叠提示呈现，got: ${JSON.stringify(stepLine)}`);
+    assert.ok(!stepLine!.includes('<read_file>'), '原始 XML 噪声不得展示');
+    assert.equal(ctx.lineUi.stepCount, 3);
+  });
+
+  it('rich 桥 step：pushStep 收到的 thinking 已折叠（事件原文不入卡）', () => {
+    const pushed: any[] = [];
+    const bridge = { resetStream: () => {}, pushStep: (s: any) => pushed.push(s) };
+    mapSseToBridge('step', {
+      version: 1, type: 'step', stepNumber: 1,
+      thinking: '<write_file><file_path>x</file_path></write_file>', plan: '', toolCalls: [],
+    }, bridge as any);
+    assert.equal(pushed.length, 1);
+    assert.equal(pushed[0].thinking, UNPARSED_CALL_NOTICE, 'rich 卡片同样折叠');
+  });
+});
+
+describe('0.8.1 UX：line 模式轻量 markdown（改进 3）', () => {
+  it('转换：**x** → ANSI 粗体、`x` → ANSI 青色；代码 span 内 ** 不二次替换；纯文本原样', () => {
+    const out = renderInlineMarkdown('这是 **重点** 与 `code` 混排');
+    assert.ok(out.includes('\x1b[1m重点\x1b[22m'), `粗体转换，got: ${JSON.stringify(out)}`);
+    assert.ok(out.includes('\x1b[36mcode\x1b[39m'), `行内代码青色，got: ${JSON.stringify(out)}`);
+    // 代码 span 优先：内层 ** 保持字面（进青色 span，不再套粗体）
+    const codeFirst = renderInlineMarkdown('`**not-bold**`');
+    assert.ok(codeFirst.includes('\x1b[36m**not-bold**\x1b[39m'));
+    assert.ok(!codeFirst.includes('\x1b[1m'));
+    assert.equal(renderInlineMarkdown('没有标记的正文'), '没有标记的正文');
+    assert.ok(!renderInlineMarkdown('**未闭合加粗').includes('\x1b[1m'), '未闭合不转换');
+  });
+
+  it('answerText 兜底呈现：markdown 转换后展示，recordOutput 落盘保留原文', async () => {
+    const { ctx, renderer, controller } = makeHarness();
+    useFakeRun(ctx, async () => ({
+      success: true,
+      stopReason: 'answered',
+      durationMs: 10,
+      answerText: '答案 **加粗** 与 `代码`',
+    }));
+
+    await controller.runTask('你好');
+
+    const shown = renderer.lines.find((l: string) => l.includes('加粗'));
+    assert.ok(shown, '答案行存在');
+    assert.ok(shown!.includes('\x1b[1m加粗\x1b[22m'), `展示层粗体，got: ${JSON.stringify(shown)}`);
+    assert.ok(shown!.includes('\x1b[36m代码\x1b[39m'), '展示层青色');
+    assert.ok(!shown!.includes('**'), '星号不再原样展示');
+    assert.ok(!shown!.includes('`'), '反引号不再原样展示');
+  });
+
+  it('step 正文：markdown 标记转换，未解析调用块折叠优先（两改进同点叠加）', () => {
+    const { ctx, renderer } = makeHarness();
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 2,
+      thinking: '先看 **关键点** 再 `验证`', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    const stepLine = renderer.lines.find((l: string) => l.includes('[Step 2]'));
+    assert.ok(stepLine!.includes('\x1b[1m关键点\x1b[22m'));
+    assert.ok(stepLine!.includes('\x1b[36m验证\x1b[39m'));
+    assert.ok(!stepLine!.includes('**') && !stepLine!.includes('`'));
+    void ANSI_RESET; // 常量导出可用性锁定
   });
 });
