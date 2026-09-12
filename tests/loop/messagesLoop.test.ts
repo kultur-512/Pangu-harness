@@ -409,7 +409,7 @@ describe('0.8 P2 PromptBuilder 三段拆分', () => {
 
     const s = pb.buildStableSegment('chat');
     assert.ok(!s.includes('【硬约束】'), 'chat 跳过 L0 硬约束');
-    assert.ok(!s.includes('档位契约'), 'chat 跳过档位契约');
+    assert.ok(!s.includes('【档位契约】'), 'chat 跳过档位契约块（身份行提及"档位契约"字样不算）');
     assert.ok(!s.includes('<negative_tool_list>'), 'chat 跳过 negative tool list');
     // R4（0.8.1）：tier XML 属工具纪律契约，chat 同样跳过（消除与"不要调用任何
     // 工具"指令的同框矛盾）；身份行保留。

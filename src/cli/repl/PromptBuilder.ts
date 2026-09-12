@@ -249,7 +249,10 @@ export class PromptBuilder {
     const start = this.buildLines.length;
 
     // === System identity (always) ===
-    const systemLine = `你是烛龙（Zhulong），一个基于 openPangu 的记忆增强长程上下文智能体，面向软件工程长期维护场景（内部代号 Panshalach / 盘沙拉克）。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）。`;
+    // 身份画像（2026-09-12 真机反馈）：通用全能智能体，工程是强项不是边界——
+    // 1B 小模型曾把"面向软件工程长期维护场景"理解成"只答工程"（真机实证：英国
+    // 历史追问被拒、话题被拉回 CI/CD）。档位语义显式限定为工程执行参数，防复读。
+    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。`;
     this.buildLines.push(systemLine);
 
     // === L0 硬约束（≤3 条精选，非整段注入） ===
@@ -729,7 +732,7 @@ export class PromptBuilder {
    */
   buildSystemHeader(): string {
     return [
-      `你是烛龙（Zhulong），档位 ${this.session.tier}。`,
+      `你是烛龙（Zhulong），通用智能体——工程任务与日常对话、知识问答皆可，档位 ${this.session.tier}。`,
       this.buildTierContract()
     ].join('\n');
   }
