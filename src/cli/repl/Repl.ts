@@ -540,7 +540,13 @@ export class Repl {
       // answered 时把模型正文呈现给用户
       if (stopReason === 'answered') {
         const traj = (result as any)?.bestTrajectory;
-        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        // replyText 优先（VerifyCritiqueLoop extractUserText 剥离结构块后的纯净回复）；
+        // 回退 step.result（旧路径兼容，仅当其不是 "NO_TOOL_CALLS" 等占位符时使用）。
+        const answerText = traj?.replyText
+          || traj?.steps?.[traj.steps.length - 1]?.replyText
+          || (traj?.steps?.[traj.steps.length - 1]?.result !== 'NO_TOOL_CALLS'
+            ? traj?.steps?.[traj.steps.length - 1]?.result
+            : '');
         if (answerText) {
           const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
           this.renderer.writeLine(preview);

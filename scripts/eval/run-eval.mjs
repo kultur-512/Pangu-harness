@@ -536,20 +536,15 @@ async function runOne(fixture, ablation, opts) {
 
   // ── real-openpangu：spawn harness 子进程 ──
   const isWin = process.platform === 'win32';
-  // R6: 将 prompt 写入临时文件，通过 @path 机制传入——避免 Windows 命令行
-  // 长度/特殊字符限制（spawn EINVAL）。临时文件在进程退出后由 artifact 落盘覆盖。
-  const tmpDir = join(ROOT, '.panshalach-eval-tmp');
-  await mkdir(tmpDir, { recursive: true });
-  const promptFile = join(tmpDir, `prompt-${fixture.id}-${ablation.key}.txt`);
-  await writeFile(promptFile, fixture.prompt, 'utf8');
+  // headless 模式：prompt 通过 stdin 传入（cli.ts 检测 !stdin.isTTY 时读取），
+  // 避免 Windows 命令行长度/特殊字符限制（spawn EINVAL）。
   const cliArgs = [
     'tsx', 'src/cli.ts',
     '--headless',
     '--approval', 'full',
-    'run', `@${promptFile}`,  // @path 机制：eval harness 展开临时文件内容
   ];
 
-  console.log(`  [eval] spawn: npx ${cliArgs.slice(0, -1).join(' ')} run @<prompt>`);
+  console.log(`  [eval] spawn: npx ${cliArgs.join(' ')} (prompt via stdin, ${fixture.prompt.length} chars)`);
   console.log(`  [eval] ablation: inject=${ablation.injectMemory} overflow=${ablation.overflowWindow} semantic=${ablation.semanticSearch}`);
 
   try {
@@ -558,6 +553,7 @@ async function runOne(fixture, ablation, opts) {
         env: evalAblationEnv(ablation, evalTaskId),
         cwd: fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT,
         timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS,
+        stdin: fixture.prompt,
       }
     );
 
@@ -648,9 +644,16 @@ function spawnWithTimeout(command, args, opts = {}) {
     const child = spawn(command, args, {
       env: opts.env || process.env,
       cwd: opts.cwd || ROOT,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      ...(process.platform === 'win32' ? { shell: true } : {}),
     });
+
+    // 将 prompt 通过 stdin 传入（headless 模式 cli.ts 读取 stdin）
+    if (opts.stdin && child.stdin) {
+      child.stdin.write(opts.stdin);
+      child.stdin.end();
+    }
 
     let stdout = '';
     let stderr = '';

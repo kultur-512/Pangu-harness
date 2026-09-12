@@ -21,6 +21,8 @@ export interface TrajectoryStep {
   readBeforeWriteViolation?: boolean;
   terminalNoCheck?: boolean;
   automationNoEffectCheck?: boolean;
+  /** answered 路径：模型面向用户的回复正文（extractUserText 剥离结构块后） */
+  replyText?: string;
 }
 
 export interface Trajectory {
@@ -36,6 +38,8 @@ export interface Trajectory {
    * 宿主（sseInteractive/Repl）据此落带 partialText 的 aborted turn。
    */
   partialText?: string;
+  /** answered 时模型面向用户的回复正文（供 CLI 前端展示） */
+  replyText?: string;
   /** 单 rollout 全部失败时保留的最后错误（空批保护） */
   lastError?: string;
   /** 是否高纪律/验证密集目标 */

@@ -1380,7 +1380,13 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。
       if (stopReason === 'answered' && r) {
         const traj = (r as any).bestTrajectory;
-        const answerText = traj?.steps?.[traj.steps.length - 1]?.result || '';
+        // replyText 优先（extractUserText 剥离结构块后的纯净回复）；
+        // 回退 step.result（仅当其不是 "NO_TOOL_CALLS" 占位符时使用）。
+        const answerText = traj?.replyText
+          || traj?.steps?.[traj.steps.length - 1]?.replyText
+          || (traj?.steps?.[traj.steps.length - 1]?.result !== 'NO_TOOL_CALLS'
+            ? traj?.steps?.[traj.steps.length - 1]?.result
+            : '');
         if (answerText && useRich && typeof bridge.pushFeed === 'function') {
           bridge.pushFeed({ type: 'markdown', content: answerText });
         } else if (answerText && !useRich && ctx.lineUi.streamedAnswerChars < String(answerText).length) {

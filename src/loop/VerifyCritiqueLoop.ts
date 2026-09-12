@@ -42,6 +42,8 @@ export interface LoopStep {
   /** 多任务风格每步信号 */
   terminalNoCheck?: boolean;
   automationNoEffectCheck?: boolean;
+  /** answered 路径：模型面向用户的回复正文（extractUserText 剥离结构块后的剩余文本） */
+  replyText?: string;
 }
 
 export interface VerifyCritiqueLoopOptions {
@@ -205,12 +207,14 @@ export class VerifyCritiqueLoop {
     }
   }
 
-  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason; partialText?: string }> {
+  async run(initialPrompt: string): Promise<{ success: boolean; steps: LoopStep[]; stopReason?: TurnStopReason; partialText?: string; replyText?: string }> {
     let stepNum = 0;
     let done = false;
     let stopReason: TurnStopReason | undefined;
     /** aborted 时本步已流出的模型正文（部分结果，随轨迹带回宿主落盘）。 */
     let partialText: string | undefined;
+    /** answered 时模型面向用户的回复正文（extractUserText 剥离结构块后）。 */
+    let replyText: string | undefined;
     const highRigor = ((this.isStrongMode ?? this.strictStructured) && !this.practicalMode);
 
     while (!done && stepNum < this.maxSteps) {
@@ -501,6 +505,8 @@ export class VerifyCritiqueLoop {
         } else {
           done = true;
           stopReason = hasText ? 'answered' : 'no-verification';
+          // answered：保留模型面向用户的回复正文，供 CLI 前端展示
+          if (hasText) replyText = this.extractUserText(rawContent);
         }
       }
 
@@ -519,6 +525,7 @@ export class VerifyCritiqueLoop {
         detectedFormat,
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
+        ...(replyText ? { replyText } : {}),
       };
 
       this.steps.push(step);
@@ -567,8 +574,9 @@ export class VerifyCritiqueLoop {
     const success = this.steps.some(
       s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
     ) || stopReason === 'answered';
-    // aborted 时携带本步已流出正文，供宿主落 turn（partialText）
-    return { success, steps: this.steps, stopReason, partialText };
+    // aborted 时携带本步已流出正文，供宿主落 turn（partialText）；
+    // answered 时携带 replyText 供 CLI 前端展示模型回复。
+    return { success, steps: this.steps, stopReason, partialText, ...(replyText ? { replyText } : {}) };
   }
 
   /** 剥离结构化块与工具块，返回面向用户的正文（aborted 部分结果提取用）。 */
