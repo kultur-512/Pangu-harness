@@ -148,21 +148,12 @@ const command: Command = {
         return { message: 'task 未找到' };
       }
 
-      // 写盘:严格走 update(不调 applyEvents)
+      // 写盘:严格走 record* 语义原语(recordDecision 内部走 update,不调 applyEvents)
+      // ——对齐王佐 R4/R5 收口(taskState.ts record* 家族);applyEvents 仅用于 AgentEvent 流折叠。
       const decisionWhat = what.trim();
       const decisionWhy = why?.trim() || undefined;
       const beforeVersion = state.version;
-      const updated = store.update(taskId, (cur) => ({
-        ...cur,
-        decisions: [
-          ...cur.decisions,
-          {
-            ts: Date.now(),
-            what: decisionWhat,
-            ...(decisionWhy ? { why: decisionWhy } : {}),
-          },
-        ],
-      }));
+      const updated = store.recordDecision(taskId, decisionWhat, decisionWhy);
 
       // 行内确认
       ctx.renderer.success(
