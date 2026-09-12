@@ -761,6 +761,9 @@ function spawnWithTimeout(command, args, opts = {}) {
       cwd: opts.cwd || ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      // Windows 下 npx.cmd 通过 child_process.spawn 直接拉起会触发 EINVAL；
+      // shell 仅用于解析 npm shim，参数仍来自固定 runner 数组。
+      ...(process.platform === 'win32' ? { shell: true } : {}),
     });
 
     let stdout = '';
