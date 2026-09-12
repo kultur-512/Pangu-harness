@@ -3,9 +3,36 @@ import type { Command, CommandContext, CommandResult, ModelProvider } from '../t
 import { ConfigManager } from '../ConfigManager.js';
 import { writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { buildModelMenuRows, formatModelMenuRow } from '../turn/TurnRenderer.js';
+import { stringWidth } from '../stringWidth.js';
 
 // S2: module-private last /models error — never on globalThis (cross-session leak).
 let lastScnetListError: string | null = null;
+
+/** 本地模型清单（剥 scnet: 前缀后的名称行集；/model 菜单与 /model <N> 共用同序）。 */
+function localModelList(provider: ModelProvider | undefined): string[] {
+  try { return provider?.listModels?.() || []; } catch { return []; }
+}
+
+/** CC 式菜单呈现（2026-09-12 真机对标：编号行 + 列对齐 + 青色名称 + 绿色当前项 + 页脚提示）。 */
+function printModelMenu(ctx: CommandContext, provider: ModelProvider | undefined): void {
+  const models = localModelList(provider);
+  ctx.renderer.writeLine(ctx.renderer.color('选择模型', 'bold'));
+  ctx.renderer.writeLine(ctx.renderer.color('切换默认模型，立即在本会话生效。', 'gray'));
+  ctx.renderer.writeLine('');
+  if (models.length === 0) {
+    ctx.renderer.writeLine(`当前模型: ${ctx.session.model}`);
+    ctx.renderer.warn('没有已注册的模型入口 —— /model list 可拉取远程列表，或在 .panshalach.json 配置 providers。');
+    return;
+  }
+  const rows = buildModelMenuRows(models, String(ctx.session.model || ''));
+  const nameWidth = Math.min(32, Math.max(...rows.map((r) => stringWidth(r.name)), 1));
+  for (const row of rows) {
+    ctx.renderer.writeLine(formatModelMenuRow(row, nameWidth, true));
+  }
+  ctx.renderer.writeLine('');
+  ctx.renderer.writeLine(ctx.renderer.color('切换：/model <名称|编号> · /model list 拉取远程列表', 'gray'));
+}
 
 const command: Command = {
   name: 'model',
@@ -25,15 +52,32 @@ const command: Command = {
     } catch {}
 
     if (!args[0]) {
-      ctx.renderer.writeLine(`当前模型: ${ctx.session.model}`);
-      if (provider) {
-        const models = provider.listModels?.() || [];
-        ctx.renderer.info('已注册/可用入口: ' + models.join(', '));
-      }
+      printModelMenu(ctx, provider);
       return {};
     }
 
     const sub = args[0];
+
+    // Normal switch
+    let name = sub;
+
+    // CC 式编号直达：/model 3 → 本地清单第 3 行（与 /model 菜单展示同序）。
+    if (/^\d+$/.test(sub)) {
+      const models = localModelList(provider);
+      const idx = parseInt(sub, 10);
+      if (idx < 1 || idx > models.length) {
+        ctx.renderer.warn(`编号 "${sub}" 超出范围（清单共 ${models.length} 项）—— /model 查看编号。`);
+        return {};
+      }
+      const picked = models[idx - 1] || '';
+      name = picked.includes(':') ? picked.slice(picked.indexOf(':') + 1) : picked;
+    }
+
+    // Normalize "scnet:xxx" → bare name.
+    // Explicit model names like "openPangu-7B" are passed through as-is.
+    if (name.startsWith('scnet:')) {
+      name = name.slice(6);
+    }
 
     // /model list  -> list remote models for scnet (or current provider)
     if (sub === 'list' || sub === 'ls') {
@@ -297,9 +341,6 @@ const command: Command = {
 
       return {};
     }
-
-    // Normal switch
-    let name = sub;
 
     // Normalize "scnet:xxx" → bare name.
     // Explicit model names like "openPangu-7B" are passed through as-is.

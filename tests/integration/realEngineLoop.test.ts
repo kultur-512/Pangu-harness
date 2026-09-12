@@ -12,7 +12,7 @@
 // 另含 T1#2 三入口透传的 RunCommand 级断言（approvalMode/sessionAllowlist/
 // approvalBridge/signal 必须从 CommandContext 抵达 solveIssue）。
 
-process.env.PANSHA_HEADLESS = '1'; // 逃出非 TTY mock 门（node --test 每文件独立进程，互不影响）
+process.env.PANSHA_HEADLESS = '1'; // 0.8 起为兼容别名（非 TTY 默认真执行）；node --test 每文件独立进程，互不影响
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -86,10 +86,18 @@ describe('0.7.3 真实引擎 completed 闭环（T1#3）', () => {
     // 真实写盘确证（非 mock：mock 引擎不落盘）
     assert.equal(fs.readFileSync(path.join(ws, 'hello.txt'), 'utf-8'), 'pong', '引擎真实写盘');
 
-    // 记忆闭环激活：completed → refine→save 产 success 卡
+    // 记忆闭环激活：completed → refine→save 产卡。
+    // 语义更新（2026-09-11 S 级记忆缺陷修复）：本任务首步"未读先写"，引擎判
+    // readBeforeWriteViolation → 按新规则不再产"已验证可行的做法"成功卡，改产
+    // RBW 失败教训卡；且写集提取器修复后 referencedFiles 不再恒空（引用落在卡上，
+    // 引用过滤与 markVerified 才有交集可判）。
     const file = new RefinedMemoryStore(ws).load();
-    const positive = file.cards.filter((c) => String(c.summary || '').startsWith('已验证可行的做法'));
-    assert.ok(positive.length >= 1, `completed 任务必须自动产卡，实际 ${file.cards.length} 张`);
+    assert.ok(file.cards.length >= 1, `completed 任务必须自动产卡，实际 ${file.cards.length} 张`);
+    const rbw = file.cards.find((c) => c.category === 'READ_BEFORE_WRITE_VIOLATION');
+    assert.ok(rbw, 'RBW 违规 → 失败教训卡');
+    assert.deepEqual((rbw as any)?.referencedFiles, ['hello.txt'], '写集提取修复：引用落在卡上');
+    assert.ok(!file.cards.some((c) => String(c.summary || '').startsWith('已验证可行的做法')),
+      'RBW 违规任务不得产成功卡');
 
     const ev = events.find((e) => e.type === 'memory.finalized');
     assert.ok(ev, '必须发出 memory.finalized 事件');

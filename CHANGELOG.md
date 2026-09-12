@@ -1,5 +1,72 @@
 # Changelog
 
+> 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
+
+## 合并记录（2026-09-12 · 四分支收口 develop）
+
+合并窗口（操作：翟苑皓；顺序=主线先落、增量按冲突从机械到实质消化，每步全量验证门）：
+
+1. `zhaiyuanhao1` → develop：fast-forward（25 提交，0.8.0-rc 全量 + 文档对齐）——968 例绿
+2. `wangzuo1` 合入（b4ba061）：/memory events 查询子命令 + TaskState.record* 原语——并集 package.json 取 0.8.0-rc、CHANGELOG 0.7.5 段归位——977 例绿
+3. `wanghaoyu1` 合入（5b15fb6）：U5 Repl 三口接线 + TurnStopReason 同步 + smoke-eval CI gate——runAgentTask 冲突并集：写集提取器取 trajectoryFiles 共享模块版（旧内联实现语义已全覆盖）、finalizeTaskMemory export 吸收——977 例绿
+4. `zhaotianang1` 合入（403e6e8）：R5 task CLI 三子命令 + R6 follow-up + 集成——零冲突（wanghaoyu1 先合后 merge-base 前移）——**1008 例绿** + smoke-eval A/B/C/C4 冒烟全过
+
+合并窗口后旧分支冻结，新工作自 develop 拉 <pinyin>2。master 发布由 kultur 在 R6 数据回填后执行。
+
+## 0.8.0-rc 追加（对话链路治理 + CC 交互对齐 + 记忆链审计修复 · 2026-09-10 ~ 09-12）
+
+M1/M2 落地后的真机驱动迭代（每项均有真机故障→根因→修复实证链）：
+
+- **对话链路迭代**：chat 正文三端渲染修复 + 流式直答（streamChatMessages 增量透传）+ 意图收敛 + 答案落盘（b010b09）；chat 直答三级回落（streamChatMessages→chat→complete）
+- **smoke mock 门摘除**：mock 仅 PANSHA_SMOKE=1 显式 opt-in，非交互默认真实执行（d91999f）
+- **网关适配**：registry 透传 chat/streamChatMessages（M1 缺口）+ 网关 <think>/<thinking> 推理剥离（流式状态机跨 chunk 缓冲，chat 与 consumeChunks 双路）
+- **意图分类修复**：显式写/续接请求优先于疑问与扩展名启发（"继续完成 memo.txt 任务"不再误判 search 只读）；isMeta 移除 run 前缀（"run npm install 会发生什么"不再被劫持执行）
+- **栈溢出根因修复**：renderSseEvent default 分支自递归守卫（真机 Maximum call stack size exceeded 堆栈定位）+ drain 深度护栏 8 层
+- **记忆链三缺陷治理**（0.8.1 对抗性审计）：产卡携带任务信息（通用卡零信息）/ markVerified 断链接通（injectedCardIds ∩ 真实写集）/ count 封顶 min(count,3) 防永生卡（b8b65b4）
+- **UI/UX 三改进**：U1 spinner 帧动画 / U2 流式正文行缓冲 / U4 空闲状态行（模型·档位·模式·ctx%）
+- **headless 多轮**：RunCommand turn 落盘 + one-shot --resume 支持（含 --resume last token 消费修复）
+- **审批鲁棒性**：非 TTY（管道/CI）审批桥自动拒绝——不再挂 60s 等不可达 stdin
+- **CC 级交互四件套**（真机对标 Claude Code 2.x）：①输入 / 即时斜杠菜单（过滤/↑↓ 导航/分组/滚动视口，07a3662）②档位环每档专属色徽标（plan 蓝/auto-accept 青/full 品红，回执/启动徽标/空闲状态行三处接线，1e8a77b）③/model 菜单化（编号直达/当前项绿色/列对齐）④/tier 思考强度水平滑杆（更快←→更强刻度 + ▲ 光标 + ←→ 调节 Enter 确认 Esc 取消 + ex/pangu 品红扩展区，5ea4a00）
+- **身份画像通用化**：通用全能智能体（工程/对话/知识/创作皆为所长）——chat 直答指令不再以工程助手自居设限（真机实证：1B 模型把工程人设执行成拒绝历史话题）；档位语义限定为工程执行参数防复读；补"不编造事实数据年代"约束
+
+Tests: tsc 干净；全量 968（967 pass + 1 skip + 0 fail）；verify-m2-e2e + check-protected-files 双契约 PASS
+
+## 0.8.0-rc（M1 地基 + M2 执行层七项全量落地）
+
+依据 GAP-MATRIX-0.8 交叉对比与 PLAN-0.8-FOUNDATION（换地基、保语义）：
+
+- **M1-TurnController 四模块搬家**：sseInteractive.ts 2200→358 行（会话壳），新增 `src/cli/repl/turn/{TurnContext,TurnRenderer,CommandRouter,TurnController}`（共 1967 行）——零行为变更（455 行行为锁定测试全程绿）
+- **M1-PROTOCOL messages 双通道**：`ChatMessage` + `ModelClient.chat/streamChatMessages` 加性接口；openai-compatible `toWireMessages` 单点映射（system 原样/assistant tool_calls 透传/tool role 按网关能力配对或文本降级）；loop 维护 messages 栈（system 一次 + assistant/tool 交替），双通道门（chat 能力 + `PANSHA_MESSAGES_MODE=off` 逃生门）；PromptBuilder 拆 stable/volatile 三段（stable→system 首条，任务间字节级相同→网关前缀缓存可命中）；`PANSHA_MESSAGES_MODE=off` 与 0.7.4 逐字节等价（deepEqual 锁定）
+- **M2-1 工具并行分段调度**：只读段并发≤3 + 写/bash/MCP barrier 串行；结果/事件按原始序装配；批次 420s 超时
+- **M2-2 卡死硬闸**（guardrails.ts）：同参数连败 5 阻断/同工具败 8 终局/幂等同结果 5 阻断——905s 空转家族最后栅栏
+- **M2-3 工具结果落盘回读**：超 20k 输出写 scratch 目录 + persisted-output 预览；read_file 永不落盘
+- **M2-4 真实 usage 计量**：网关 usage 字段解析 + onUsage 回调；len/4 降级 fallback
+- **M2-5 错误分类器**：八类分类，auth/billing 快速失败；overflow→强制 compact→重试（≤1 次）
+- **M2-6 敏感路径写保护**：.ssh/.aws/.kube/.git-credentials/.netrc/id_rsa*/.env* 全档位拒写 + undo 拒还原
+- **M2-7 Turn.role 字段**：user/assistant 标注 + 旧格式迁移 + 摘要 prompt 用户原文逐字保留约束
+
+Tests: tsc 干净；全量 847（846+1skip+0 fail，+98 例）；双契约脚本 PASS
+
+
+## 0.7.5 (R4/R5 挂载收口：`/memory events` 查询子命令 + TaskState.record* 原语)
+
+王佐 U3 收口（R4/R5 存储层自 0.6.5 落地后，此处补齐对齐清单里的"剩余项"）：
+
+**R4 挂载：`/memory events` 查询子命令**（`src/cli/MemoryCommand.ts`）
+- MemoryEventStore 此前"已落地但无入口"（ROADMAP/MEMORY-DESIGN/ARCHITECTURE 三处均记"`/memory events` 查询子命令未挂载"）——本轮补上。
+- 用法：`memory events [--session <id>] [--kind <k>] [--task <id>] [--topic <t>] [--limit N] [--stats]`；缺省 session 回退最近 rollout 会话；`--stats` 给按 topic / 按任务的聚合视图。
+- 纪律：只读（复用 R4 `MemoryEventStore.query/topicStats/taskSummaries`），不自行读 JSONL；空会话返回指引而非抛错。
+
+**R5 接口对齐：`TaskState.record*` 显式记录原语**（`src/memory/taskState.ts`）
+- 9/14 评审清单第 4 项 `TaskState.record* / getOrCreate`——`getOrCreate` 已于 11dbea3 落地，本轮补 `record*` 家族：`recordDecision / recordRisk / recordOpenQuestion / recordMilestone / recordVerified / setNextStep / setCurrentGoal`。
+- 全部走 `update()`：沿用同一乐观锁（version 冲突抛错）与 `originalRequirement` 锚定纪律；`setNextStep('')` 清空而非留过期值（防误导）。
+- 定位：语义原语（真实业务节点 / CLI 用户声明显式调用），不猜自然语言轨迹（与"禁止 NLP 抽取"同一纪律）。
+- **R4 别名**：`MemoryEventStore.listTopics()`（= `topicStats().map(topic)`），对齐 9/14 清单签名 `MemoryEvent/listTopics`。
+
+**Tests**: `npx tsc --noEmit` EXIT=0；`npm test` **758 例：757 pass + 1 skip + 0 fail**（新增 `tests/commands/MemoryEvents.test.ts` 6 例 + `tests/repl/TaskState.test.ts` record* 3 例）；`verify-panshalach-cleanup.mjs` PASS。
+**Risks**: 无（加性：新增子命令 + 新增方法，未改既有路径语义）；`/task` CLI 仍属赵天昂 R5 另半，本批不涉。
+
+
 ## 0.7.4 (部署陈旧 dist 修复 + 中断语义修正 + `?` 透传 + hermes 二次对齐调研)
 
 方案：`docs/panshalach/PLAN-0.7.4-FOR-CLAUDECODE.md`（控制人实测驱动）。用户跑的 zhulong 是 **09-06 00:03 的旧 dist**（0.7.1 批次 B 中途构建），0.7.2/0.7.3 全部修复只在 src——"莫名中断""explore/rollout 英文相位线""旧 `?` 输出"三个观测全是旧代码。"提交任务后莫名中断（235ms）"因果链：LM Studio 对 diffusion 模型（openpangu-7b-diffusion-base-i1）chat/completions 报 `Unexpected endpoint or method. Returning 200 anyway` → 200-garbage → `EMPTY_RESPONSE` → streamChat 回退裸 doComplete（无 withRetry/无 emptyResponse 捕获）穿透 → chaser catch 兜底硬编码 `stopReason='aborted'` → UI 渲染"已中断·现场已保留"。**模型错误被伪装成用户中断。**

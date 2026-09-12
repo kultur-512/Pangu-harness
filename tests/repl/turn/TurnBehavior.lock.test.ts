@@ -18,11 +18,22 @@ import path from 'node:path';
 import { Session } from '../../../src/cli/repl/Session.js';
 import {
   createTurnContext,
-  createTurnController,
+  type TurnContext,
+} from '../../../src/cli/repl/turn/TurnContext.js';
+import { createTurnController } from '../../../src/cli/repl/turn/TurnController.js';
+import {
   createModeRing,
   handleLocalCommand,
-  type TurnContext,
-} from '../../../src/cli/repl/sseInteractive.js';
+} from '../../../src/cli/repl/turn/CommandRouter.js';
+import {
+  ANSI_RESET,
+  collapseUnparsedCallBlock,
+  looksLikeUnparsedCallBlock,
+  mapSseToBridge,
+  renderInlineMarkdown,
+  renderSseEvent,
+  UNPARSED_CALL_NOTICE,
+} from '../../../src/cli/repl/turn/TurnRenderer.js';
 import { deleteRollout } from '../../../src/cli/repl/rolloutStore.js';
 
 // ==================== 测试替身 ====================
@@ -228,13 +239,16 @@ describe('M1 行为锁定：abort → partialText 落盘', () => {
 // ==================== 3) answered 路径：正文流式呈现 / 兜底全文 ====================
 
 describe('M1 行为锁定：answered 正文呈现', () => {
-  it('line 模式无流式 → 兜底输出全文（bestTrajectory 末步 result）', async () => {
+  it('line 模式无流式 → 兜底输出全文（RunResult.answerText）', async () => {
     const { ctx, renderer, controller } = makeHarness();
     useFakeRun(ctx, async () => ({
       success: true,
       stopReason: 'answered',
       durationMs: 10,
-      bestTrajectory: { steps: [{ result: '模型最终回答全文ABC' }] },
+      // R1（0.8.1）：mock 与真实 RunResult 形状对齐——runAgentTask 返回
+      // answerText（从轨迹末步 result 带出），不存在 bestTrajectory 字段。
+      // 旧 mock 塞了实现没有的 bestTrajectory → 假阴性（漂移掩盖正文丢失）。
+      answerText: '模型最终回答全文ABC',
     }));
 
     await controller.runTask('你好');
@@ -253,7 +267,7 @@ describe('M1 行为锁定：answered 正文呈现', () => {
         success: true,
         stopReason: 'answered',
         durationMs: 10,
-        bestTrajectory: { steps: [{ result: '模型最终回答全文ABC' }] },
+        answerText: '模型最终回答全文ABC',
       };
     });
 
@@ -276,12 +290,12 @@ describe('M1 行为锁定：answered 正文呈现', () => {
     useFakeRun(ctx, async (req, cctx) => {
       cctx.onEvent({ type: 'message.start' });
       cctx.onEvent({ type: 'message.delta', text: '流式片段' });
-      cctx.onEvent({ type: 'result', stopReason: 'answered', success: true });
+      cctx.onEvent({ type: 'result', stopReason: 'answered', success: true, answerText: '模型最终回答全文ABC' });
       return {
         success: true,
         stopReason: 'answered',
         durationMs: 10,
-        bestTrajectory: { steps: [{ result: '模型最终回答全文ABC' }] },
+        answerText: '模型最终回答全文ABC',
       };
     });
 
@@ -297,6 +311,12 @@ describe('M1 行为锁定：answered 正文呈现', () => {
     );
     assert.deepEqual(bridge.running, [true, false], 'setRunning(true) 提交、result 后复位');
     assert.equal(session.turns[session.turns.length - 1].result.stopReason, 'answered');
+    // R6（0.8.1）：chat 答案落盘——turn.result.answerText（截 400 字符）
+    assert.equal(
+      (session.turns[session.turns.length - 1].result as any).answerText,
+      '模型最终回答全文ABC',
+      'answered 回合的 turn.result 必须携带 answerText（问答对落盘）'
+    );
   });
 });
 
@@ -392,6 +412,60 @@ describe('M1 行为锁定：运行中排队与 drain', () => {
   });
 });
 
+// ==================== 6) F3/F4（0.8.1 第 2 轮）：[Step N] 空头不渲染 + 终态分型 ====================
+
+describe('F3/F4（0.8.1 第 2 轮）：chat 直答界面净化', () => {
+  it('step 事件 thinking/plan/toolCalls/正文全空 → 不渲染 [Step N] 头行；任一非空仍渲染', () => {
+    const { ctx, renderer } = makeHarness();
+
+    // chat 直答曾发的空 step（[Step 1] 噪声源）
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 1,
+      thinking: '', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    assert.ok(
+      !renderer.lines.some((l) => l.includes('[Step 1]')),
+      `全空 step 不得打头行，got: ${JSON.stringify(renderer.lines)}`
+    );
+    assert.equal(ctx.lineUi.stepCount, 1, '步数计数仍记录（终态组装用）');
+
+    // loop 路径有内容的 step 回归：仍渲染
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 2,
+      thinking: '先读 README 定位错别字', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    assert.ok(
+      renderer.lines.some((l) => l.includes('[Step 2]') && l.includes('先读 README 定位错别字')),
+      '有 thinking 的 step 仍渲染头行（loop 路径不受净化影响）'
+    );
+    assert.equal(ctx.lineUi.stepCount, 2);
+  });
+
+  it('result(answered) 终态无步数（✓ 已回复 · Xs）；result(completed) 保持 N 步', () => {
+    const answered = makeHarness();
+    answered.ctx.lineUi.stepCount = 1;
+    answered.ctx.lineUi.taskStartedAt = Date.now() - 2600;
+    renderSseEvent(answered.ctx, 'result', { stopReason: 'answered', success: true }, answered.renderer);
+    const answeredLine = answered.renderer.lines.find((l) => l.includes('已回复'));
+    assert.ok(answeredLine, 'answered 终态行存在');
+    assert.ok(answeredLine!.includes('✓ 已回复'));
+    assert.ok(answeredLine!.includes('2.6s'), `耗时保留，got: ${answeredLine}`);
+    assert.ok(!/[0-9]+ 步/.test(answeredLine!), `chat 直答终态不显示步数，got: ${answeredLine}`);
+    assert.ok(
+      answered.renderer.lines.some((l) => l.includes('继续追问或下达新任务')),
+      'answered 的下一步提示保持'
+    );
+
+    const loop = makeHarness();
+    loop.ctx.lineUi.stepCount = 3;
+    loop.ctx.lineUi.taskStartedAt = Date.now() - 5000;
+    renderSseEvent(loop.ctx, 'result', { stopReason: 'completed', success: true }, loop.renderer);
+    const doneLine = loop.renderer.lines.find((l) => l.includes('已通过验证'));
+    assert.ok(doneLine, 'completed 终态行存在');
+    assert.ok(doneLine!.includes('3 步'), `loop 轮终态保持 N 步，got: ${doneLine}`);
+  });
+});
+
 // ==================== 5) 命令路由：/help /mode 未知命令建议 ====================
 
 describe('M1 行为锁定：命令路由', () => {
@@ -415,7 +489,8 @@ describe('M1 行为锁定：命令路由', () => {
     await controller.runTask('/mode plan');
     assert.equal(session.planMode, true, '/mode plan 必须落在 plan（set 而非 cycle）');
     assert.equal(session.approvalMode, 'readonly');
-    assert.ok(renderer.lines.some((l) => l.includes('已切换: plan') && l.includes('只读计划模式')));
+    // CC 式回执（2026-09-12 对标）：`⏸ plan mode on · 后果`
+    assert.ok(renderer.lines.some((l) => l.includes('plan mode on') && l.includes('只读计划模式')));
   });
 
   it('/mode 无参：cycle 推进一格（default → auto-accept）', async () => {
@@ -451,5 +526,94 @@ describe('M1 行为锁定：命令路由', () => {
     assert.ok(
       bridge.feeds.some((f: any) => f.text.includes('你是不是想要 /mode？（输入 /help 查看全部命令）'))
     );
+  });
+});
+
+// ==================== 7) 0.8.1 UX 收敛：未解析调用块折叠 + 轻量 markdown ====================
+
+describe('0.8.1 UX：未解析调用块折叠（改进 2）', () => {
+  it('探测：<> 块开头 / 配对 <tool_name> 标签 → true；普通正文 / HTML 词 / markdown → false', () => {
+    assert.equal(looksLikeUnparsedCallBlock('<read_file><file_path>a.txt</file_path></read_file>'), true);
+    assert.equal(looksLikeUnparsedCallBlock('<>\n  <bash><command>ls</command></bash>\n</>'), true);
+    assert.equal(looksLikeUnparsedCallBlock('好的，我来读取文件'), false);
+    assert.equal(looksLikeUnparsedCallBlock('对比 a < b 且 c > d 的大小'), false);
+    assert.equal(looksLikeUnparsedCallBlock('用 <div>排版</div> 的方式'), false, '无下划线且无嵌套标签的 HTML 词不误判');
+    assert.equal(looksLikeUnparsedCallBlock('这是 **加粗** 和 `代码`'), false);
+  });
+
+  it('折叠：疑似调用块 → 一行提示；普通正文原样', () => {
+    const raw = '<read_file> <read_file_path>README.md</read_file_path> </read_file>';
+    assert.equal(collapseUnparsedCallBlock(raw), UNPARSED_CALL_NOTICE);
+    assert.equal(collapseUnparsedCallBlock('正常步骤说明'), '正常步骤说明');
+  });
+
+  it('line 模式 step 事件：thinking 含未解析调用块 → 渲染为折叠提示，原始 XML 不外显', () => {
+    const { ctx, renderer } = makeHarness();
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 3,
+      thinking: '<read_file><file_path>a.txt</file_path></read_file>', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    const stepLine = renderer.lines.find((l: string) => l.includes('[Step 3]'));
+    assert.ok(stepLine, 'step 头行仍渲染');
+    assert.ok(stepLine!.includes(UNPARSED_CALL_NOTICE), `折叠提示呈现，got: ${JSON.stringify(stepLine)}`);
+    assert.ok(!stepLine!.includes('<read_file>'), '原始 XML 噪声不得展示');
+    assert.equal(ctx.lineUi.stepCount, 3);
+  });
+
+  it('rich 桥 step：pushStep 收到的 thinking 已折叠（事件原文不入卡）', () => {
+    const pushed: any[] = [];
+    const bridge = { resetStream: () => {}, pushStep: (s: any) => pushed.push(s) };
+    mapSseToBridge('step', {
+      version: 1, type: 'step', stepNumber: 1,
+      thinking: '<write_file><file_path>x</file_path></write_file>', plan: '', toolCalls: [],
+    }, bridge as any);
+    assert.equal(pushed.length, 1);
+    assert.equal(pushed[0].thinking, UNPARSED_CALL_NOTICE, 'rich 卡片同样折叠');
+  });
+});
+
+describe('0.8.1 UX：line 模式轻量 markdown（改进 3）', () => {
+  it('转换：**x** → ANSI 粗体、`x` → ANSI 青色；代码 span 内 ** 不二次替换；纯文本原样', () => {
+    const out = renderInlineMarkdown('这是 **重点** 与 `code` 混排');
+    assert.ok(out.includes('\x1b[1m重点\x1b[22m'), `粗体转换，got: ${JSON.stringify(out)}`);
+    assert.ok(out.includes('\x1b[36mcode\x1b[39m'), `行内代码青色，got: ${JSON.stringify(out)}`);
+    // 代码 span 优先：内层 ** 保持字面（进青色 span，不再套粗体）
+    const codeFirst = renderInlineMarkdown('`**not-bold**`');
+    assert.ok(codeFirst.includes('\x1b[36m**not-bold**\x1b[39m'));
+    assert.ok(!codeFirst.includes('\x1b[1m'));
+    assert.equal(renderInlineMarkdown('没有标记的正文'), '没有标记的正文');
+    assert.ok(!renderInlineMarkdown('**未闭合加粗').includes('\x1b[1m'), '未闭合不转换');
+  });
+
+  it('answerText 兜底呈现：markdown 转换后展示，recordOutput 落盘保留原文', async () => {
+    const { ctx, renderer, controller } = makeHarness();
+    useFakeRun(ctx, async () => ({
+      success: true,
+      stopReason: 'answered',
+      durationMs: 10,
+      answerText: '答案 **加粗** 与 `代码`',
+    }));
+
+    await controller.runTask('你好');
+
+    const shown = renderer.lines.find((l: string) => l.includes('加粗'));
+    assert.ok(shown, '答案行存在');
+    assert.ok(shown!.includes('\x1b[1m加粗\x1b[22m'), `展示层粗体，got: ${JSON.stringify(shown)}`);
+    assert.ok(shown!.includes('\x1b[36m代码\x1b[39m'), '展示层青色');
+    assert.ok(!shown!.includes('**'), '星号不再原样展示');
+    assert.ok(!shown!.includes('`'), '反引号不再原样展示');
+  });
+
+  it('step 正文：markdown 标记转换，未解析调用块折叠优先（两改进同点叠加）', () => {
+    const { ctx, renderer } = makeHarness();
+    renderSseEvent(ctx, 'step', {
+      version: 1, type: 'step', rolloutId: 'rollout-0', stepNumber: 2,
+      thinking: '先看 **关键点** 再 `验证`', plan: '', toolCalls: [], result: '',
+    }, renderer);
+    const stepLine = renderer.lines.find((l: string) => l.includes('[Step 2]'));
+    assert.ok(stepLine!.includes('\x1b[1m关键点\x1b[22m'));
+    assert.ok(stepLine!.includes('\x1b[36m验证\x1b[39m'));
+    assert.ok(!stepLine!.includes('**') && !stepLine!.includes('`'));
+    void ANSI_RESET; // 常量导出可用性锁定
   });
 });

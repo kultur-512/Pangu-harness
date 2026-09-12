@@ -29,6 +29,11 @@ export interface BudgetReport {
   budgetTokens: number;
   estimatedUsedTokens: number;
   usageRatio: number;
+  /**
+   * M2-4：true = 网关实测 usage 累计（onUsage 回调汇总）；
+   * false = 字符长度 /4 估算（usage 缺失时的回落口径）。
+   */
+  usageMeasured: boolean;
   triggeredSoftLimit: boolean;
   triggeredDegradation: boolean;
   rolloutsExecuted: number;
@@ -78,6 +83,20 @@ export interface ChaserConfig {
    * history 超 70% 窗口裁中段。
    */
   windowTokens?: number;
+  /**
+   * M2-5：context_overflow 通知透传（loop 捕获分类为 context_overflow 时
+   * 回调，每任务至多一次）。宿主可据此触发 compactService 的强制档
+   * shouldAutoCompact(session, ratio, { force: true }) 做会话级压缩。
+   */
+  onContextOverflow?: (info: { error: unknown }) => void | Promise<void>;
+  /**
+   * 0.8 P2（M1-PROTOCOL）：messages 模式下 stable 段
+   * （PromptBuilder.buildStableSegment 产物）→ role:'system' 首消息；
+   * volatile 段（buildVolatileSegment 产物）与任务文本合流进首条 user。
+   * 两者缺一或 PANSHA_MESSAGES_MODE=off 时走文本路径（0.7.4 语义逐字节等价）。
+   */
+  stableSegment?: string;
+  volatileSegment?: string;
 }
 
 /**
@@ -85,9 +104,6 @@ export interface ChaserConfig {
  * 推荐：import { PanshalachChaser } from './PanshalachChaser.js'
  */
 export class PanshalachChaser {
-  // 记忆 store 句柄（任务边界 invalidateProjection 重建投影）
-  private memStoreForInvalidate: any = null;
-
   constructor(
     private modelClient: any,
     private defaultModeOrTier: ModelMode | Tier | string = DEFAULT_TIER
@@ -176,16 +192,28 @@ export class PanshalachChaser {
 
     // 任务前仓库扫描/锚点注入、任务风格提示头、FailureMemory 轨道均已摘除
     // （archive/2026-09-05-removals/）。记忆注入（RefinedMemoryStore）保留——这是主线。
+    // 0.8 P2（M1-PROTOCOL）：messages 双通道门——客户端有 chat/streamChatMessages 能力、
+    // 未关闭、且调用方提供了 stable/volatile 分段时，stable 段 → system 首消息、
+    // volatile 段与任务文本合流进首条 user（前缀缓存可命中）；否则文本路径（0.7.4 逐字节等价）。
+    const streamableClient = this.modelClient as any;
+    const hasMessagesCapability = typeof streamableClient?.chat === 'function'
+      || typeof streamableClient?.streamChatMessages === 'function';
+    const messagesEnabled = hasMessagesCapability
+      && process.env.PANSHA_MESSAGES_MODE !== 'off'
+      && typeof config.stableSegment === 'string' && config.stableSegment.length > 0
+      && typeof config.volatileSegment === 'string' && config.volatileSegment.length > 0;
+    const taskText = messagesEnabled ? (config.volatileSegment as string) : issueDescription;
+
     // 按意图分支组装 prompt——chat 用单轮对话指令（不灌工具教学），
     // search 用只读搜索指令；execution 才走完整推理 + 格式教学。
     let basePrompt: string;
     if (intent === 'chat') {
       basePrompt = StructuredReasoner.buildChatDirective(issueDescription);
     } else if (intent === 'search') {
-      basePrompt = StructuredReasoner.buildSearchDirective(issueDescription);
+      basePrompt = StructuredReasoner.buildSearchDirective(taskText);
     } else {
       basePrompt = StructuredReasoner.buildReasoningPrompt(
-        `Issue: ${issueDescription}`,
+        `Issue: ${taskText}`,
         [],
         {
           practicalMode: !isHighRigor,
@@ -204,14 +232,171 @@ export class PanshalachChaser {
       }
     }
 
-    // chat 意图：单次 complete 直接回答，不进 agent 循环。
+    // chat 意图：单次直答，不进 agent 循环。
+    // R3（0.8.1）：能力回落阶梯 streamChatMessages（流式，message.delta 增量透传
+    // 给 line/rich 前端）→ chat（整段）→ complete（整段，0.7 原路径）；
+    // 显式 temperature 0.7 + maxTokens 4096（摆脱网关默认值）；finish_reason=length
+    // 截断时正文尾追加标注；空回答（R2）在最终正文上判。
+    // F3（0.8.1 第 2 轮）：chat 直答不发 phase 事件——真机实测 `── 侦察 ──`+`── 执行 ──`
+    // 双相位线是 rollout 语义的 UI 噪声（explore 由 runAgentTask 按意图门控，
+    // 这里的 rollout 相位线直接删除）。
     if (intent === 'chat') {
-      config.onStep?.({ version: 1, type: 'phase', phase: 'rollout' });
       const chatClient = this.modelClient as any;
-      const chatReply = await chatClient.complete(basePrompt, { signal: config.signal });
-      const chatText = typeof chatReply === 'string'
-        ? chatReply
-        : (chatReply?.content ?? chatReply?.raw ?? '');
+      // M2-4：单次回复同样走 onUsage 计量（网关返回 usage 时记实测）。
+      const chatUsage = { prompt: 0, completion: 0 };
+      let chatUsageSamples = 0;
+      const onChatUsage = (u: { prompt?: number; completion?: number }) => {
+        if (typeof u?.prompt === 'number' && u.prompt >= 0) chatUsage.prompt += u.prompt;
+        if (typeof u?.completion === 'number' && u.completion >= 0) chatUsage.completion += u.completion;
+        chatUsageSamples++;
+      };
+      const chatOpts = {
+        temperature: 0.7,
+        maxTokens: 4096,
+        signal: config.signal,
+        onUsage: onChatUsage,
+      };
+      // messages 通道形态：system 承载对话指令（不含用户输入），user 承载原文
+      // （buildChatDirective 整段内嵌会让输入在 payload 里出现两次）。
+      const chatMessages = [
+        { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
+        { role: 'user' as const, content: issueDescription },
+      ];
+
+      // 直答失败的合成返回（R2 空回答 / R3 异常）——照用 syntheticFailureTrajectory
+      // 的 abort 语义（TASK_ABORTED → aborted；其余 → error），与 loop 路径一致。
+      const chatFailure = (errMsg: string) => {
+        const failTraj = syntheticFailureTrajectory(errMsg);
+        const failBudgetReport: BudgetReport = {
+          budgetTokens,
+          estimatedUsedTokens: 0,
+          usageRatio: 0,
+          usageMeasured: false,
+          triggeredSoftLimit: false,
+          triggeredDegradation: false,
+          rolloutsExecuted: 1,
+          stepsExecuted: 0,
+          notes: ['chat 单次回复（不进 agent 循环）', `rollout 失败原因：${errMsg}`],
+        };
+        return {
+          success: false,
+          bestTrajectory: failTraj,
+          totalRollouts: 1,
+          budgetReport: failBudgetReport,
+          tierConfig,
+          message: failTraj.lastError,
+        };
+      };
+
+      let truncated = false;
+      // 非流式返回的对象形态可能带 truncated 标记（finish_reason=length）
+      const extractReplyText = (reply: any): string => {
+        if (typeof reply === 'string') return reply;
+        if (reply && typeof reply === 'object' && (reply as any).truncated === true) truncated = true;
+        return String(reply?.content ?? reply?.raw ?? '');
+      };
+
+      let chatText: string;
+      try {
+        const canStreamMessages = typeof chatClient?.streamChatMessages === 'function';
+        const canChat = typeof chatClient?.chat === 'function';
+        if (canStreamMessages) {
+          let text = '';
+          let startedThinking = false;
+          let startedMessage = false;
+          // F1（0.8.1 第 2 轮，P0）：流式路径的 <think> 状态机过滤。MiniMax-M3/
+          // Qwen3 系把推理以 `<think>...</think>` 内嵌在 content 里（网关未剥离时
+          // 走这里）——此前只有非流式正文过 stripThinkTags，流式 chunk 直写导致
+          // 推理原文整段暴露。标签可能被 chunk 边界切开 → 尾部保留 ≤10 字符缓冲
+          // 跨 chunk 拼接后再检测；thinkMode 期间增量全吞；流结束时仍未闭合
+          // （截断响应常见）→ 正文视为空，走下方 R2 空检查。
+          let thinkMode = false;
+          let pending = '';
+          const emitVisible = (segment: string) => {
+            if (!segment) return;
+            if (!startedMessage) config.onStep?.({ version: 2, type: 'message.start' });
+            startedMessage = true;
+            config.onStep?.({ version: 2, type: 'message.delta', text: segment });
+            text += segment;
+          };
+          // buf 尾部可能是被切开的半个标签 → 返回需保留的长度（< 标签全长）。
+          const holdbackLen = (buf: string, tag: string): number => {
+            const max = Math.min(buf.length, 10, tag.length - 1);
+            for (let k = max; k > 0; k--) {
+              if (buf.endsWith(tag.slice(0, k))) return k;
+            }
+            return 0;
+          };
+          for await (const chunk of chatClient.streamChatMessages(chatMessages, chatOpts)) {
+            // finish_reason 检查先于内容过滤——空文本的尾 chunk 只携带截断标记
+            if ((chunk as any)?.finishReason === 'length') truncated = true;
+            if (!chunk || typeof (chunk as any).text !== 'string' || !(chunk as any).text) continue;
+            if ((chunk as any).type === 'thinking') {
+              // 思考增量照发（渲染端已支持），但不进正文
+              if (!startedThinking) config.onStep?.({ version: 2, type: 'thinking.start' });
+              startedThinking = true;
+              config.onStep?.({ version: 2, type: 'thinking.delta', text: (chunk as any).text });
+              continue;
+            }
+            // F1：正文 chunk 先过 <think> 状态机，只发射边界外的可见段
+            pending += (chunk as any).text;
+            for (;;) {
+              if (!thinkMode) {
+                const open = pending.indexOf('<think>');
+                if (open !== -1) {
+                  emitVisible(pending.slice(0, open));
+                  pending = pending.slice(open + '<think>'.length);
+                  thinkMode = true;
+                  continue;
+                }
+                const hold = holdbackLen(pending, '<think>');
+                if (hold < pending.length) emitVisible(pending.slice(0, pending.length - hold));
+                pending = pending.slice(pending.length - hold);
+                break;
+              }
+              const close = pending.indexOf('</think>');
+              if (close !== -1) {
+                pending = pending.slice(close + '</think>'.length);
+                thinkMode = false;
+                continue;
+              }
+              pending = pending.slice(pending.length - holdbackLen(pending, '</think>'));
+              break;
+            }
+          }
+          if (thinkMode) {
+            // 未闭合 <think>（截断场景）→ 推理全部吞掉、正文视为空 → R2 EMPTY_RESPONSE，
+            // 绝不把半截推理原文伪装成回答。
+            chatText = '';
+          } else {
+            emitVisible(pending); // 收尾冲刷尾部缓冲（最多 9 字符的半个标签残留）
+            chatText = text;
+          }
+        } else if (canChat) {
+          // 无流式但有 chat：整段直答（正文由宿主 answered 兜底呈现——R1 路径）
+          chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
+        } else {
+          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）
+          chatText = extractReplyText(await chatClient.complete(basePrompt, chatOpts));
+        }
+      } catch (e: any) {
+        return chatFailure((e as Error)?.message || String(e));
+      }
+
+      // 网关侧推理剥离：DeepSeek-R1 系/MiniMax-M3/Qwen3 等把 <think> 推理内嵌
+      // 在 content 里，展示与落盘前必须剥离（stripThinkTags 同时处理未闭合块）。
+      chatText = StructuredReasoner.stripThinkTags(String(chatText));
+      // R2（0.8.1）：空回答不伪装成功——EMPTY_RESPONSE 重试耗尽后网关侧返回空串
+      // （chatCompleteWithRetry 吞错转 ''），直答路径不得记 answered + 空内容。
+      if (!String(chatText).trim()) {
+        return chatFailure('EMPTY_RESPONSE: 模型返回空内容');
+      }
+      // R3：截断标注——finish_reason=length（流式尾 chunk 或非流式对象标记）时
+      // 正文尾追加明示，用户可见"回答不完整"而非静默截断。
+      if (truncated) {
+        chatText = `${chatText}\n\n[回答被 max_tokens 截断]`;
+      }
+      const chatMeasured = chatUsageSamples > 0 ? chatUsage.prompt + chatUsage.completion : 0;
       const traj: Trajectory = {
         id: 'rollout-0',
         steps: [{
@@ -229,24 +414,19 @@ export class PanshalachChaser {
       };
       const budgetReport: BudgetReport = {
         budgetTokens,
-        estimatedUsedTokens: 0,
-        usageRatio: 0,
+        estimatedUsedTokens: chatMeasured,
+        usageRatio: chatMeasured > 0 ? Math.min(1, chatMeasured / budgetTokens) : 0,
+        usageMeasured: chatMeasured > 0,
         triggeredSoftLimit: false,
         triggeredDegradation: false,
         rolloutsExecuted: 1,
         stepsExecuted: 0,
         notes: ['chat 单次回复（不进 agent 循环）'],
       };
-      config.onStep?.({
-        version: 1,
-        type: 'step',
-        rolloutId: 'rollout-0',
-        stepNumber: 1,
-        thinking: '',
-        plan: '',
-        toolCalls: [],
-        result: chatText,
-      });
+      // F3/F4（0.8.1 第 2 轮）：chat 直答不再发 step 事件——空 thinking/plan 的
+      // step 会渲染成 `[Step 1]` 空头行并把终态撑成 `✓ 已回复 · 1 步 · Xs`（步数
+      // 对单轮直答无意义）。正文已随 message.delta 流式呈现，answerText 由
+      // runAgentTask 从轨迹末步带出，均不依赖该事件。
       return { success: true, bestTrajectory: traj, totalRollouts: 1, budgetReport, tierConfig };
     }
 
@@ -259,6 +439,18 @@ export class PanshalachChaser {
     const rolloutsExecuted = 1; // 恒单 rollout
     let stepsExecuted = 0;
     const budgetNotes: string[] = [];
+
+    // M2-4：真实 usage 计量——loop 每次模型调用经 wrapper 传 onUsage 累加；
+    // usage 缺失（网关无 usage 字段）时回落 len/4 估算（budgetReport 标注实测/估算）。
+    const usageAccum = { prompt: 0, completion: 0 };
+    let usageSamples = 0;
+    let usageMeasured = false;
+    const onUsage = (u: { prompt?: number; completion?: number }) => {
+      if (!u || typeof u !== 'object') return;
+      if (typeof u.prompt === 'number' && u.prompt >= 0) usageAccum.prompt += u.prompt;
+      if (typeof u.completion === 'number' && u.completion >= 0) usageAccum.completion += u.completion;
+      usageSamples++;
+    };
 
     // search 意图用受限只读循环（≤3 步，写/bash 被拒）；execution 用完整循环。
     const isSearchIntent = intent === 'search';
@@ -274,6 +466,10 @@ export class PanshalachChaser {
       ironLawInjectionLevel: isSearchIntent ? 'none' : tierConfig.ironLawInjectionLevel,
       signal: config.signal,
       windowTokens: config.windowTokens,
+      // 0.8 P2：messages 模式下 system 首消息（stable 段）；未启用时 undefined（loop 回落文本路径）。
+      systemSegment: messagesEnabled ? config.stableSegment : undefined,
+      // M2-5：overflow 通知透传（宿主 → compactService 强制档）
+      onContextOverflow: config.onContextOverflow,
     };
 
     const rolloutId = 'rollout-0';
@@ -284,75 +480,145 @@ export class PanshalachChaser {
       const originalClient = this.modelClient;
 
       // 流式感知 wrapper（协议 v2 增量）。当底层暴露 streamChat() 时消费流，
-      // 否则回退 plain complete()。
+      // 否则回退 plain complete()。0.8 P2：消费循环提取为 consumeChunks——文本
+      // 流式与 messages 流式（streamChatMessages）共用（thinking/message delta
+      // 事件发射逻辑复用）。
+      const emitDelta = (type: 'thinking' | 'message', text: string, first: boolean) => {
+        if (!config.onStep) return;
+        try {
+          if (first) {
+            config.onStep({ version: 2, type: type === 'thinking' ? 'thinking.start' : 'message.start' });
+          }
+          config.onStep({ version: 2, type: type === 'thinking' ? 'thinking.delta' : 'message.delta', text });
+        } catch {}
+      };
+
+      const consumeChunks = async (chunks: AsyncIterable<any>): Promise<string | ModelClientOutput> => {
+        let text = '';
+        let startedThinking = false;
+        let startedMessage = false;
+        let streamToolCalls: unknown[] | null = null;
+        // 流式尾 chunk 的 finish_reason（'length' = max_tokens 截断）
+        let truncated = false;
+        // <think> 状态机（与 chat 直答分支同构）：loop 流式路径同样会收到
+        // 网关内嵌推理（MiniMax-M3/Qwen3），不过滤则推理原文整段直写终端。
+        let thinkMode = false;
+        let pending = '';
+        const holdbackLen = (buf: string, tag: string): number => {
+          const max = Math.min(buf.length, 10, tag.length - 1);
+          for (let k = max; k > 0; k--) {
+            if (buf.endsWith(tag.slice(0, k))) return k;
+          }
+          return 0;
+        };
+
+        for await (const chunk of chunks) {
+          // finish_reason 检查必须先于 toolCalls continue——截断的 tool_calls
+          // （arguments 半截 JSON）正是本防御的目标场景。
+          if ((chunk as any).finishReason === 'length') truncated = true;
+          if (chunk && (chunk as any).type === 'toolCalls' && Array.isArray((chunk as any).toolCalls)) {
+            streamToolCalls = ((chunk as any).toolCalls as unknown[]).slice();
+            continue;
+          }
+          if (!chunk || typeof chunk.text !== 'string') continue;
+          if (chunk.type === 'thinking') {
+            emitDelta('thinking', chunk.text, !startedThinking);
+            startedThinking = true;
+          } else {
+            // <think> 状态机：thinkMode 期间增量全吞，边界外可见段才发射/累积
+            pending += chunk.text;
+            for (;;) {
+              if (!thinkMode) {
+                const open = pending.indexOf('<think>');
+                if (open !== -1) {
+                  const vis = pending.slice(0, open);
+                  emitDelta('message', vis, !startedMessage);
+                  text += vis;
+                  startedMessage = true;
+                  pending = pending.slice(open + '<think>'.length);
+                  thinkMode = true;
+                  continue;
+                }
+                const hold = holdbackLen(pending, '<think>');
+                if (hold < pending.length) {
+                  const vis = pending.slice(0, pending.length - hold);
+                  emitDelta('message', vis, !startedMessage);
+                  startedMessage = true;
+                  text += vis;
+                }
+                pending = pending.slice(pending.length - hold);
+                break;
+              }
+              const close = pending.indexOf('</think>');
+              if (close !== -1) {
+                pending = pending.slice(close + '</think>'.length);
+                thinkMode = false;
+                continue;
+              }
+              pending = pending.slice(pending.length - holdbackLen(pending, '</think>'));
+              break;
+            }
+          }
+        }
+        if (thinkMode) {
+          // 未闭合 <think>（截断场景）→ 推理全吞、正文视为空（R2 空检查兜底）
+          text = '';
+        } else {
+          text += pending; // 收尾冲刷尾部缓冲
+        }
+
+        try {
+          ToolCallFormatDetector.probeAndParse(text, { strictStructured: isHighRigor });
+        } catch {}
+
+        const truncTag = truncated ? { truncated: true } : {};
+        if (streamToolCalls && streamToolCalls.length > 0) {
+          return {
+            content: text,
+            toolCalls: streamToolCalls,
+            detectedFormat: 'openai-json',
+            ...truncTag,
+          } as ModelClientOutput;
+        }
+
+        // 截断时必须以对象返回（裸 string 无法携带 truncated 标记）
+        if (truncated) return { content: text, truncated: true } as ModelClientOutput;
+        return text;
+      };
+
       const makeStreamingComplete = (): ((prompt: string, opts?: any) => Promise<string | ModelClientOutput>) => {
         const streamable = originalClient as any;
         if (typeof streamable?.streamChat !== 'function') {
-          return (prompt: string, opts?: any) => originalClient.complete(prompt, opts);
+          // M2-4：非流式路径同样透传 onUsage（网关 usage 直接计量）
+          return (prompt: string, opts?: any) => originalClient.complete(prompt, { ...(opts ?? {}), onUsage });
         }
+        return (prompt: string, opts?: any) => consumeChunks(streamable.streamChat(prompt, { ...(opts ?? {}), onUsage }));
+      };
 
-        const emitDelta = (type: 'thinking' | 'message', text: string, first: boolean) => {
-          if (!config.onStep) return;
-          try {
-            if (first) {
-              config.onStep({ version: 2, type: type === 'thinking' ? 'thinking.start' : 'message.start' });
-            }
-            config.onStep({ version: 2, type: type === 'thinking' ? 'thinking.delta' : 'message.delta', text });
-          } catch {}
-        };
-
-        return async (prompt: string, opts?: any): Promise<string | ModelClientOutput> => {
-          let text = '';
-          let startedThinking = false;
-          let startedMessage = false;
-          let streamToolCalls: unknown[] | null = null;
-          // 流式尾 chunk 的 finish_reason（'length' = max_tokens 截断）
-          let truncated = false;
-
-          for await (const chunk of streamable.streamChat(prompt, opts)) {
-            // finish_reason 检查必须先于 toolCalls continue——截断的 tool_calls
-            // （arguments 半截 JSON）正是本防御的目标场景。
-            if ((chunk as any).finishReason === 'length') truncated = true;
-            if (chunk && (chunk as any).type === 'toolCalls' && Array.isArray((chunk as any).toolCalls)) {
-              streamToolCalls = ((chunk as any).toolCalls as unknown[]).slice();
-              continue;
-            }
-            if (!chunk || typeof chunk.text !== 'string') continue;
-            if (chunk.type === 'thinking') {
-              emitDelta('thinking', chunk.text, !startedThinking);
-              startedThinking = true;
-            } else {
-              emitDelta('message', chunk.text, !startedMessage);
-              startedMessage = true;
-            }
-            text += chunk.text;
+      // 0.8 P2（M1-PROTOCOL）：messages 通道 wrapper——优先 streamChatMessages
+      // （消费循环与文本路径同构），否则 chat（非流式，无 v2 delta，与文本路径
+      // 非流式回退一致）；客户端两者皆无 → undefined（loop 回落文本路径）。
+      const makeMessagesComplete = (): ((messages: any[], opts?: any) => Promise<string | ModelClientOutput>) | undefined => {
+        const streamable = originalClient as any;
+        const canStream = typeof streamable?.streamChatMessages === 'function';
+        const canChat = typeof streamable?.chat === 'function';
+        if (!canStream && !canChat) return undefined;
+        return async (messages: any[], opts?: any): Promise<string | ModelClientOutput> => {
+          if (canStream) {
+            return consumeChunks(streamable.streamChatMessages(messages, { ...(opts ?? {}), onUsage }));
           }
-
-          try {
-            ToolCallFormatDetector.probeAndParse(text, { strictStructured: isHighRigor });
-          } catch {}
-
-          const truncTag = truncated ? { truncated: true } : {};
-          if (streamToolCalls && streamToolCalls.length > 0) {
-            return {
-              content: text,
-              toolCalls: streamToolCalls,
-              detectedFormat: 'openai-json',
-              ...truncTag,
-            } as ModelClientOutput;
-          }
-
-          // 截断时必须以对象返回（裸 string 无法携带 truncated 标记）
-          if (truncated) return { content: text, truncated: true } as ModelClientOutput;
-          return text;
+          return streamable.chat(messages, { ...(opts ?? {}), onUsage });
         };
       };
 
       const streamingComplete = makeStreamingComplete();
+      const messagesComplete = makeMessagesComplete();
 
-      const effectiveClient = useLegacyParser ? originalClient : {
-        complete: streamingComplete,
-      };
+      const effectiveClient = useLegacyParser
+        ? originalClient
+        : messagesComplete
+          ? { complete: streamingComplete, chat: messagesComplete }
+          : { complete: streamingComplete };
 
       // 真实工具执行 + 审批透传 + 0.7 signal 贯穿。
       // search 意图：approvalMode 强制 readonly（写/bash 被拒）。
@@ -382,9 +648,21 @@ export class PanshalachChaser {
       const tag = `[Rollout: ${rolloutId}]${extraFormat}`;
       const loopResult = await loop.run(basePrompt + tag);
 
-      // 预算累计：按模型调用估算（网关无 usage 字段时用长度估算，标注估算）。
-      estimatedUsedTokens += Math.ceil((basePrompt.length + tag.length) / 4)
-        + loopResult.steps.reduce((acc, s) => acc + Math.ceil((s.reasoning.raw?.length ?? 0) / 4), 0);
+      // M2-4 预算累计：优先真实 usage（onUsage 累计），usage 缺失时回落
+      // 字符长度 /4 估算（预算百分比口径不变，budgetReport 标注实测/估算）。
+      const measuredTotal = usageAccum.prompt + usageAccum.completion;
+      if (usageSamples > 0 && measuredTotal > 0) {
+        usageMeasured = true;
+        estimatedUsedTokens = measuredTotal;
+        budgetNotes.push(`usage 实测：${measuredTotal} tokens（prompt ${usageAccum.prompt} + completion ${usageAccum.completion}，${usageSamples} 次响应采样）`);
+      } else {
+        estimatedUsedTokens = Math.ceil((basePrompt.length + tag.length) / 4)
+          + loopResult.steps.reduce((acc, s) => acc + Math.ceil((s.reasoning.raw?.length ?? 0) / 4), 0);
+        budgetNotes.push('usage 估算（网关未返回 usage 字段，按字符长度 /4 估算）');
+      }
+      if (loopResult.contextOverflowCompacted) {
+        budgetNotes.push('context_overflow 触发强制压缩并重试本步');
+      }
       stepsExecuted = loopResult.steps.length;
 
       // Emit per-step event
@@ -440,8 +718,9 @@ export class PanshalachChaser {
     }
 
     const success = !!best.success;
-    // 任务边界 → 投影重建（下一任务反映最新衰减与记忆）
-    try { this.memStoreForInvalidate?.invalidateProjection?.(); } catch {}
+    // R7（0.8.1）：memStoreForInvalidate 死代码已删——全仓无赋值（恒 null），
+    // `?.invalidateProjection?.()` 从未触达任何真实 store；记忆投影重建由
+    // RefinedMemoryStore 的使用方自行负责。
     if (!success && best.lastError) {
       budgetNotes.push(`rollout 失败原因：${best.lastError}`);
     }
@@ -449,6 +728,7 @@ export class PanshalachChaser {
       budgetTokens,
       estimatedUsedTokens,
       usageRatio: Math.min(1, estimatedUsedTokens / budgetTokens),
+      usageMeasured,
       triggeredSoftLimit,
       triggeredDegradation,
       rolloutsExecuted,

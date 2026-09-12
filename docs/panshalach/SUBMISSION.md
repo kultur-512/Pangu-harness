@@ -2,7 +2,7 @@
 
 > 命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 产品：烛龙（Zhulong）· 内部代号 Panshalach（盤沙拉克）
-> 版本基线：v0.7.4（终止语义重构 + 意图前移 + 记忆落定主线版 + 主链确定性修复 + 中断语义修正——模型故障与用户中断严格分离）
+> 版本基线：v0.8.0-rc（0.7 终止语义重构/意图前移/记忆落定 → 0.8 turn 四模块会话壳 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链三缺陷治理 + 身份画像通用化）
 > 配套文档：[ARCHITECTURE.md](ARCHITECTURE.md)（架构）· [MEMORY-DESIGN.md](MEMORY-DESIGN.md)（记忆子系统）· [DEPLOY-CN.md](DEPLOY-CN.md)（部署）· [EVALUATION.md](EVALUATION.md)（评测，数据位为诚实占位）
 > 事实纪律：本文只声明已在代码中落地的能力；未完成项与待验证项显式标注，评测数据一律以真实 openPangu 运行回填（见 §6）。
 
@@ -32,6 +32,8 @@
 6. **AbortSignal 贯穿**（0.7，已落地）：`runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，Ctrl+C 真正中止任务（回合记 `aborted`），UI 等待底层 settle；0.7.3 起 one-shot/classic/simulate 三入口透传审批与中断信号，aborted 回合现场落盘（保留已流出正文）。0.7.4 中断语义修正：模型/网络/解析异常落独立 `error` 终态（UI"任务执行失败" + 端点检查提示），与用户中断严格分离；streamChat 非流式回退具备与 complete 一致的 withRetry/空响应保护。已知边界如实声明：fetch 已发出后 abort 中断读取/连接，网关侧生成可能仍在后台算完；bash 子进程强杀已落地（0.7.1 tree-kill）。
 7. **记忆写入闭环（任务自动产卡）**：主线已接线（0.7.2 `finalizeTaskMemory` 单一落定点）——completed 任务自动 `refine`（信号收紧为 `stopReason==='completed'` 或用户正向反馈）→ `save` → 投影失效重建，注入卡被真实写集触碰时自动 `markVerified`；0.7.3 真实成功信号入册后 completed 真机可达。覆盖 SSE/server/headless 路径（Repl 直调三口待统一执行器）；**尚未完成端到端真机验证，不以"已全面验证"口径声明**。压缩补漏提炼与用户显式 `/memory remember` 两条写入源已实现。
 8. **双通道工具协议 + 零依赖国产亲和**：原生 function calling 请求侧透传（tools + tool_choice:auto 随每次请求下发，抓包实证）与文本协议三路自适应解析（OpenAI JSON/文本/`<>` XML）——弱格式遵循小模型可用；`dependencies: {}` 零运行时依赖，Node ≥18 即可部署（详见 [DEPLOY-CN.md](DEPLOY-CN.md)）。
+9. **messages 双通道上下文协议 + stable/volatile 三段 prompt**（0.8 M1，已落地）：ChatMessage（system/user/assistant/tool role）数组通道与文本协议通道自适应降级（1B/7B 小模型不认 tool role 自动回落文本标注，`PANSHA_MESSAGES_MODE=off` 逃生门）；稳定契约（身份/硬约束/档位契约）任务间字节级相同置 system 首消息——网关前缀缓存可命中，易变内容（记忆卡/环境/任务）走 volatile 段。面向国产小模型网关的上下文协议工程（真机 MiniMax-M3/1B 实测驱动）。
+10. **执行层可靠性七件套**（0.8 M2，已落地）：卡死硬闸（同参失败 5 次阻断/同工具 8 次强制终局/幂等无进展 5 次——治弱模型空转烧步数）、读并发+写 barrier 分段调度、大输出落盘回读三层防溢出、真实 usage 计量、错误八类分类（context_overflow→强制压缩重试闭环；auth/billing 快速失败）、敏感路径全档位写保护、排队 drain 深度护栏。
 
 ## 4. 差异化对比
 
@@ -39,7 +41,8 @@
 |---|---|---|
 | **vs 通用 RAG 记忆** | 向量库存"文档片段"，检索靠语义相似度，注入即忘、无使用反馈 | 记忆卡是**任务中提炼的教训/经验/偏好**（不是静态语料）；注入→使用有二态语义与逐任务审计账本；衰减/合并/容量是确定性规则，离线可测试可复现，不烧推理 token；证据链落在事件账本（context 事件 + compact 账本），可 replay 重建 |
 | **vs 长上下文堆窗口** | 窗口加大/截断搬运，成本随长度线性上涨，"中期遗忘"只是被推迟 | 关键事实**显式外置**进固定预算的注入槽位，不依赖模型把 N 轮前 token 记住；压缩时以血统账本防信息丢失、以补漏提炼把"被挤出窗口"的信号转为结构化卡；token 成本近似常数而非随会话长度增长 |
-| **vs 朴素 agent loop** | 单一执行循环对待一切输入：问答被灌工具 schema 空转、终止靠步数耗尽或外部判官续跑 | 意图分类前置分流（chat 直答 / search 只读受限 / task 完整验证）；回合三态给出**语义化结局**（真实验证通过 / 有正文答复 / 空白空转），记忆信号按三态收紧；AbortSignal 全链真中止 |
+| **vs 朴素 agent loop** | 单一执行循环对待一切输入：问答被灌工具 schema 空转、终止靠步数耗尽或外部判官续跑 | 意图分类前置分流（chat 直答 / search 只读受限 / task 完整验证）；回合三态给出**语义化结局**（真实验证通过 / 有正文答复 / 空白空转），记忆信号按三态收紧；AbortSignal 全链真中止；卡死硬闸对"换参数重试永不收敛"的空转 before_call 止血 |
+| **vs Claude Code / hermes 等前端 agent** | 面向强模型（Claude/GPT 级）与英文生态设计，协议/交互不可降级 | 烛龙以 1B-7B 国产模型为一等公民：messages/文本双通道自适应、意图分流减负、工具格式教学收敛、情境框架式身份（不对抗模型原生身份）、通用全能画像——全部由 1B/7B/MiniMax 真机故障驱动修复，每个机制有实证故事链；交互手感（斜杠菜单/档位环/模型菜单/思考强度滑杆）对标 Claude Code 全键盘可达 |
 
 ## 5. 部署
 
@@ -53,4 +56,4 @@
 
 ## 7. 总结与展望
 
-已完成：0.6.0–0.7.x 七个迭代把多模型接入、记忆 v3（二态/衰减锚/账本）、终止语义重构（判官摘除 + 三态 + 意图分类 + AbortSignal）落到主线，全套自动化测试以 `npm test` 实际输出为准。进行中：记忆写入闭环收口接线、评测基建（R6）接入、真机 openPangu 端到端验证与资源实测。后续：事件/任务状态运行时全量接线、语义检索 C4 消融、多级滚动摘要、[M1] 卡号引用实验（7B）、昇腾/麒麟真机部署验证——路线与验收门见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。
+已完成：0.6.0–0.7.x 把多模型接入、记忆 v3（二态/衰减锚/账本）、终止语义重构（判官摘除 + 三态 + 意图分类 + AbortSignal）落到主线；0.8 周期完成换地基——turn 四模块会话壳、messages 双通道协议、stable/volatile 三段 prompt、执行层七项强化、Claude Code 级交互手感、记忆链三缺陷治理（对抗性审计驱动）、身份画像通用化，全套自动化测试（当前基线 968 例）以 `npm test` 实际输出为准。进行中：评测基建（R6）真机数据回填、真机 openPangu 端到端验证与资源实测。后续：语义检索 C4 消融、跨任务连续 messages 会话、不对称压缩、[M1] 卡号引用实验（7B）、昇腾/麒麟真机部署验证——路线与验收门见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。

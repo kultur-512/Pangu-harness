@@ -17,7 +17,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Session } from './Session.js';
+import { inferTurnRole, type Session } from './Session.js';
 import type { Turn, AgentEvent } from './types.js';
 
 /** 接口契约 v3：ContextSnapshot 事件载荷——逐任务注入审计（"模型当时看见了什么"的唯一证据源）。 */
@@ -108,6 +108,9 @@ export function appendMeta(session: Session): void {
 }
 
 export function appendTurn(sessionId: string, turn: Turn): void {
+  // M2-7：rollout 是 turn 权威源——序列化前补角色标注（幂等，显式 role 优先；
+  // addTurn 已标注时无副作用）。旧版读新 JSONL 忽略未知字段，无碍。
+  turn.role ??= inferTurnRole(turn);
   appendEvent(sessionId, { type: 'turn', ts: Date.now(), turn });
 }
 
@@ -133,6 +136,9 @@ export function appendCompactMarker(
   beforeTokens?: number,
   afterTokens?: number
 ): boolean {
+  // M2-7：压缩合成轮是助手侧历史摘要 → 序列化前补 'assistant'（幂等，显式优先）。
+  // 调用方（compactService）随后把同一对象写入 session.turns，故内存态同步携带。
+  syntheticTurn.role ??= 'assistant';
   return appendEvent(sessionId, {
     type: 'compact', ts: Date.now(),
     syntheticTurn, coveredTurnIds: [...coveredTurnIds],
@@ -251,6 +257,8 @@ export function replayInto(session: Session, events: RolloutEvent[]): number {
     } else if (ev.type === 'compact' && ev.syntheticTurn) {
       // 接口契约 v3：resume 端消费压缩标记——与在线 applyCompactResult 同一语义：
       // 覆盖账本内的轮次以 synthetic turn 替换，其余（含标记后新增轮）保留。
+      // M2-7：旧 compact 标记无 role → 回放时按现状补 'assistant'（迁移）；新标记原样。
+      if (ev.syntheticTurn.role === undefined) ev.syntheticTurn.role = 'assistant';
       const covered = new Set(ev.coveredTurnIds || []);
       session.turns = [ev.syntheticTurn, ...session.turns.filter(t => !covered.has(t.id))];
     }

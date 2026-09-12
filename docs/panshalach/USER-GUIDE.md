@@ -1,7 +1,7 @@
 # Panshalach 使用手册（烛龙 Zhulong）
 
-> 烛龙（Zhulong）· 内部代号盤沙拉克 Panshalach：基于 openPangu 的记忆增强长程上下文智能体。
-> 本手册对齐 **0.6.5 部署落地 + 0.7.0 终止语义重构 + 0.7.1–0.7.4 迭代**（意图前移 / 记忆落定 / 审批全入口透传 / 窗口预算挂真值 / 中断现场保留 / 中断与错误语义分离 / `?` 透传）。
+> 烛龙（Zhulong）· 内部代号盤沙拉克 Panshalach：基于 openPangu 的记忆增强通用智能体。
+> 本手册对齐 **v0.8.0-rc**（0.7 终止语义重构/意图前移/记忆落定 → 0.8 turn 四模块 + messages 双通道 + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理 + 身份画像通用化）。
 
 ## 1. 环境要求
 - Node ≥ 18（含全局 fetch；开发实测 Node 22）；TypeScript 5.6（构建）。
@@ -20,7 +20,7 @@ npm link           # 全局部署：生成 zhulong / panshalach bin（旧别名 
 zhulong                             # 交互式 REPL（对外主名）
 panshalach --help                   # 帮助（同义 bin）
 panshalach run "任务..."            # 单条任务（one-shot）
-panshalach --headless run "任务..." # 显式逃逸 isTTY 守卫（真实执行）
+panshalach --headless run "任务..." # 兼容别名（0.8 起非 TTY 默认真实执行；写仍受审批档位门禁）
 panshalach --approval full run "…"  # one-shot/headless 指定审批档位（见 §4）
 ```
 
@@ -71,7 +71,17 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 - one-shot/headless：`--approval <readonly|default|full>` 或 `PANSHA_APPROVAL` env（0.6.5 前锁死 readonly，写文件必然被拒）。**0.7.3 起审批语义在全部入口真实生效**——one-shot / classic / simulate 向执行引擎透传 `approvalMode`、会话放行清单与审批桥（此前 flag 只改会话字段、引擎收不到）。
 - REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。审批提示选 **`a`（本会话总是允许）**时，决策同时持久化到项目配置 `.panshalach.json` 的 `approvalAllowlist`（0.7.3 起）——下次会话启动自动并入放行清单，不再重复确认（best-effort，写失败不影响审批流）。
 
-## 5. 意图分类与执行行为（0.7）
+## 5. 交互手感（0.8 · Claude Code 级）
+
+| 操作 | 行为 |
+|---|---|
+| 输入 `/` | 即时弹出斜杠命令菜单：继续输入实时过滤（前缀精确→模糊兜底）、↑↓ 导航反显、分组小标题、Enter 执行、Esc 关闭；任务运行中/审批挂起不激活 |
+| `shift+tab` | 档位环循环：⏸ plan（蓝）→ ⏵ default（灰）→ ⏵⏵ auto-accept（青）→ ⏵⏵⏵ full（品红）——每档专属符号与颜色的徽标行/回执 |
+| `/model` | 菜单化呈现：编号行 + 青色模型名 + 绿色当前项（`>` 前缀 + "当前生效"）；`/model <名称|编号>` 直达，`/model list` 拉远程列表 |
+| `/tier` | 思考强度水平滑杆（对标 CC /effort）：更快←→更强刻度 + ▲ 光标，←/→ 调节、Enter 确认、Esc 取消；ex/pangu 为品红扩展区；`/tier <名称|编号>` 直达 |
+| `?` | 问号是给模型的普通输入；帮助只走 `/help`（常用 8 条 + 全量命令） |
+
+## 6. 意图分类与执行行为（0.7 落地 · 0.8 通用画像）
 
 输入任务后，入口先做轻量意图分类（`src/cli/taskIntent.ts`，纯函数）：
 
@@ -87,7 +97,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
   - 0.7.3 起 `completed` **真机可达**：执行引擎对真实成功的工具结果（bash `EXIT_CODE:0` 尾行、写/改成功）确定性追加 `VERIFICATION: PASS` 规范尾标，验证信号不再只认 smoke mock；截断响应（`finish_reason=length`）禁判 answered，execution 意图下"只说话不动手"首次会被注入格式提醒重试一步。
   - 0.7.4 起模型端点异常不再空转或伪装中断：EMPTY_RESPONSE/网络错误经重试后仍失败 → 回合落 `error`，UI 显示错误首行 + 端点检查提示（diffusion/embedding 类模型不被 LM Studio chat 端点支持）。
 
-## 6. Ctrl+C 与中断（0.7 AbortSignal 贯穿 + 0.7.4 语义分离）
+## 7. Ctrl+C 与中断（AbortSignal 贯穿 + 中断/错误语义分离）
 
 - 运行中 Ctrl+C **真正中止任务**：信号贯穿 `runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ 工具执行`，回合记 `stopReason='aborted'`，UI 显示"已中断"并等待底层 settle——不再"提示符回来了、网关还在刷 POST"（0.7.3 起 classic REPL 路径同样贯穿，不再假中止）。
 - **中断 vs 错误（0.7.4）**：只有用户/信号主动中止才显示"已中断·现场已保留"；模型/网络/解析异常落 `stopReason='error'`，显示"✗ 任务执行失败 · <错误首行> · 检查模型端点是否为对话模型（diffusion/embedding 不受支持）· 或重试"。
@@ -95,22 +105,24 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 - 会话安全（0.7.3 起**现场保留有数据支撑**）：中断的回合写入 session 与 rollout jsonl（可 `/rewind`/`--resume` 续接），并保留中断时已流出的部分正文（turn 的 `partialText` 字段）；中断前已解析未执行的工具调用补合成结果保持 call/result 成对；已写盘文件可用 `/undo` 撤销。
 - **dist-fresh 提醒（0.7.4）**：npm link 的全局 bin 指向 dist/——若 src 有比 dist 更新的改动，交互模式启动时会出现"⚠ dist 落后于 src，请执行 npm run build"黄字提醒（headless/一次性执行不打扰）。
 
-## 7. 命令总表（REPL 内 `/` 前缀）
+## 8. 命令总表（REPL 内 `/` 前缀）
 
 | 命令 | 作用 |
 |---|---|
-| `/tier <t>` | 六档强度 quick/standard/high/max/ex/pangu（默认 high） |
-| `/model list` / `/model <name>` | 拉模型/切换模型 |
+| `/tier` / `/tier <t\|N>` | 六档思考强度滑杆（quick/standard/high/max/ex/pangu，默认 high；编号与刻度同序） |
+| `/model` / `/model <name\|N>` / `/model list` | 模型菜单 / 切换（编号直达）/ 拉远程列表 |
 | `/approvals <mode>` | 审批 readonly/default/full |
 | `/undo` `/rewind` | 撤销最近写盘 / 按回合回放 |
-| `/compact` | 压缩会话历史（保留最近 6 轮 + 摘要） |
-| `/resume` `/tree` | 会话续接 / 会话树（branch） |
-| `/memory` | 记忆管理（见下） |
-| `/feature list|add|done` | 当前特性跟踪（任务状态） |
+| `/compact` | 压缩会话历史（保留最近 6 轮 + 摘要 + 血统账本） |
+| `/resume` `/tree` | 会话续接 / 会话树（branch）；`--resume last` 可 one-shot 续接 |
+| `/memory` | 记忆管理（见 §10） |
+| `/feature list\|add\|done` | 当前特性跟踪（任务状态） |
 | `/run "任务"` `r 任务` | 执行任务；`s 任务` simulate |
 | `/review` `/trace` `/usage` `/status` `/config` `/init` `/session` `/history` `/workspace` `/agents` `/serve` `/exit` | 其余命令 |
 
-## 8. 档位速查（0.7：单 rollout · 判官已摘除）
+> 全部命令在 REPL 输入 `/` 即有即时菜单可浏览（过滤/↑↓/分组）——本表与菜单同源（命令注册表元数据）。
+
+## 9. 档位速查（单 rollout）
 
 六档 `maxRollouts` 恒为 1（0.6.2 起）；0.7 判官摘除后**回合上界 = 单次 maxSteps**，无续跑×N。`search` 意图无论档位一律 ≤3 步。
 
@@ -123,7 +135,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 
 写工具（write_file/edit_file）0.6.5 起**全档位注册**（安全性由审批门禁兜底，不靠隐藏工具）；预算软限按每次模型调用真实累计（0.7 修复 `[最终预算 0%]` 恒 0），`/usage` 可查。
 
-## 9. 记忆命令（长程记忆入口）
+## 10. 记忆命令（长程记忆入口）
 
 ```
 /memory list [--kind failure|success|preference]   列出记忆卡
@@ -136,9 +148,10 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 记忆卡存于 `<workspace>/.panshalach-memory.json`（内部名），自动加入 `.gitignore`。
 
 > 0.7 信号收紧：success 卡只来自 `stopReason==='completed'`（真实验证通过）或用户正向反馈——**纯问答/闲聊的 answered 回合不再产生成功卡**（UI 成功 ≠ 记忆成功）。
-> 0.7.2 起任务落定**自动产卡**：completed 任务在落定点自动 refine→save（无需 `/memory remember`）；被注入的卡若其参照文件被本任务真实写集触碰，自动 `markVerified` 保鲜（发 `memory.finalized` 事件）。覆盖 SSE/server/headless 路径；classic 直调路径待统一执行器收口。
+> 0.7.2 起任务落定**自动产卡**：completed 任务在落定点自动 refine→save（无需 `/memory remember`）；被注入的卡若其参照文件被本任务真实写集触碰，自动 `markVerified` 保鲜（发 `memory.finalized` 事件）。覆盖 SSE/server/headless 路径。
+> 0.8.1 记忆链治理（对抗性审计驱动）：产卡携带任务信息（修复通用卡零信息）、markVerified 断链接通、count 封顶 min(count,3) 防"永生卡"霸榜。
 
-## 10. 长程使用姿势
+## 11. 长程使用姿势
 1. 开场用 `/init` 生成项目指令页 `.panshalach/AGENTS.md`（验证命令 + 不变量），agent 每轮能读到"如何验证"。
 2. 关键约束用 `/memory remember` 或让回合写闭环（R1 里程碑后自动提炼）沉淀；执行类任务尽量给出验证方式（"跑 npm test 验证"）以提高 completed 率。
 3. 只找文件不改动：直接说文件名（触发 search 只读搜索）；它搜不到会反问你意图，而不是乱建文件。
@@ -146,7 +159,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 5. 会话长了自动/手动 `/compact`；跨进程用 `/resume` 续接。
 6. 远程/前端演示：`/serve --port 3456`（SSE，Bearer token 或 localhost-only）。
 
-## 11. 内部名说明（品牌迁移中）
+## 12. 内部名说明（品牌迁移中）
 对外品牌为**烛龙 Zhulong**；内部仍使用历史名保证既有会话/记忆/脚本兼容：
 `.panshalach.json` / `.panshalach-memory.json` / `~/.panshalach/` / `PANSHA_*` 环境变量 / `PanshalachChaser` 类 / `zorge` bin（保留别名）。
-收敛到统一名的迁移计划见 [ROADMAP.md](ROADMAP.md) P6。
+收敛到统一名的迁移计划见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md) §3.2。

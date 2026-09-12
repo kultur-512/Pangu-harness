@@ -43,6 +43,13 @@ export interface Turn {
   timestamp: number;
   userInput: string;
   userInputType: 'command' | 'task' | 'multiline';
+  /**
+   * 会话角色标注（M2-7，0.8 加性字段）：'user' = 用户指令回合（task/multiline 入口），
+   * 'assistant' = 助手侧合成回合（压缩摘要等）。旧 JSONL/会话文件无此字段 → undefined（兼容，
+   * 迁移推断见 Session.inferTurnRole 与 rolloutStore 序列化/回放标注）。
+   * R8 不对称压缩（compactService 分区改造）消费本字段。
+   */
+  role?: 'user' | 'assistant';
   result?: {
     success: boolean;
     summary: string;
@@ -58,6 +65,12 @@ export interface Turn {
     verifyCmd?: string[];
     /** R3: 回合结局显式枚举（stopReason 的规范化版本，便于聚合） */
     outcome?: TurnOutcome;
+    /**
+     * R1/R6（0.8.1）：chat 直答 / loop answered 的模型正文（截 400 字符防膨胀）。
+     * 落盘通道——resume 回放与 PromptBuilder.getRecentContext 的"最近上下文"
+     * 由此呈现问答对（此前只见问不见答）。
+     */
+    answerText?: string;
   };
   tier: Tier;
   durationMs?: number;
@@ -114,6 +127,11 @@ export interface CommandContext {
    */
   approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
   signal?: AbortSignal;
+  /**
+   * CC 式 /tier 交互滑杆选择态（TurnContext.effortSel 的宿主注入引用）。
+   * classic Repl 不注入 → /tier 只打印滑杆不进入交互选择态。
+   */
+  effortSel?: { active: boolean; tiers: string[]; sublabels: string[]; index: number } | null;
 }
 
 export interface CommandResult {
@@ -325,9 +343,33 @@ export type ModelStreamChunk =
   | { type: 'thinking'; text: string }
   | { type: 'toolCalls'; toolCalls: unknown[] };
 
+/**
+ * 0.8 P1（M1-PROTOCOL）消息数组通道的原子消息。
+ * 与 openai-compatible.ts 的本地 ChatMessage 定义同步（后者镜像避免 import cycle）。
+ */
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  /** role==='tool' 时：对应的工具调用 id（原生 FC 网关） */
+  toolCallId?: string;
+  /** 工具名（文本协议网关的降级标注） */
+  name?: string;
+  /**
+   * 0.8 P1：assistant 消息携带的原生 tool_calls 数组（原样透传进请求体，
+   * 用于多轮工具调用的会话续接）。仅在原生 FC 网关模式有意义。
+   */
+  toolCalls?: unknown[];
+}
+
 /** 最小可调用模型客户端接口，与 PanshalachChaser 兼容 */
 export interface ModelClient {
   complete(prompt: string, opts?: CompleteOptions): Promise<string | ModelClientOutput>;
+  /**
+   * 0.8 P1 新通道：实现方支持 messages 时优先走此路径。
+   * 把 messages 原样进请求体（{role, content} + system 首位由调用方保证 +
+   * tool 结果按网关能力选 role:'tool' 或文本降级标注）。
+   */
+  chat?(messages: ChatMessage[], opts?: CompleteOptions): Promise<string | ModelClientOutput>;
   /**
    * optional token-level streaming. When present, the chaser wrapper
    * prefers it over complete() and re-emits deltas as protocol-v2 events.
@@ -335,6 +377,8 @@ export interface ModelClient {
    * just fall back internally to complete() if streaming is unavailable.
    */
   streamChat?(prompt: string, opts?: CompleteOptions): AsyncIterable<ModelStreamChunk>;
+  /** 0.8 P1 新通道：messages 流式版（SSE 读循环与 streamChat 同构，仅请求体不同）。 */
+  streamChatMessages?(messages: ChatMessage[], opts?: CompleteOptions): AsyncIterable<ModelStreamChunk>;
 }
 
 export interface CompleteOptions {

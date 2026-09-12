@@ -58,8 +58,12 @@ describe('B2 runAgentTask reuses the caller Session', () => {
 
     const prompts: string[] = [];
     const events: any[] = [];
+    // R4（0.8.1）：任务文本须为 execution 类输入——chat 意图不再注入 tier XML
+    // （tier 契约与"不要调用任何工具"指令同框矛盾，属本轮减负对象），旧文本
+    // 'do the thing'（chat 类）此前靠"富化文本整体内嵌"侥幸带出 tier XML。
+    // 本测试意图是 session 档位进 prompt，execution 输入才对准该契约。
     const r = await runAgentTask(
-      { task: 'do the thing', session },
+      { task: 'fix the thing', session },
       { provider: fakeProvider(prompts), onEvent: (e) => events.push(e) }
     );
 

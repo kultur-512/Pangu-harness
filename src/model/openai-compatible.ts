@@ -9,6 +9,8 @@
 //
 // All failures are thrown with useful info; callers decide how to surface.
 
+import { classifyApiError } from './errorClassify.js';
+
 export interface OpenAICompatConfig {
   baseUrl: string;
   apiKey: string;
@@ -93,13 +95,59 @@ export function convertOpenAIToolCalls(rawToolCalls: unknown[]): OpenAICompatToo
   return out;
 }
 
+/**
+ * 0.8 P1（M1-PROTOCOL）消息数组通道的原子消息
+ * （镜像 src/cli/repl/types.ts ChatMessage，避免 import cycle；两处同步维护）。
+ */
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  /** role==='tool' 时：对应的工具调用 id（原生 FC 网关） */
+  toolCallId?: string;
+  /** 工具名（文本协议网关的降级标注） */
+  name?: string;
+  /**
+   * 0.8 P1：assistant 消息携带的原生 tool_calls 数组（原样透传进请求体，
+   * 用于多轮工具调用的会话续接）。仅在原生 FC 网关模式有意义。
+   */
+  toolCalls?: unknown[];
+}
+
+/**
+ * 0.8 P1：ChatMessage[] → 请求体 wire 形状。
+ * - system/user/assistant：{role, content} 原样映射（顺序即数组顺序，system 首位由调用方保证）；
+ * - assistant 携带 toolCalls 时透传原生 tool_calls 数组（多轮工具调用续接）；
+ * - role==='tool' 按网关能力二选一：nativeTools（opts.tools 存在，原生 FC 模式）
+ *   → { role:'tool', tool_call_id }；否则文本降级 → role:'user' + `【工具 <name> 结果】` 标注。
+ */
+export function toWireMessages(messages: ChatMessage[], nativeTools: boolean): any[] {
+  return messages.map((m) => {
+    if (m.role === 'tool') {
+      if (nativeTools) {
+        return { role: 'tool', tool_call_id: m.toolCallId, content: m.content };
+      }
+      const label = m.name ? `【工具 ${m.name} 结果】\n` : '';
+      return { role: 'user', content: label + m.content };
+    }
+    const out: any = { role: m.role, content: m.content };
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.length > 0) {
+      out.tool_calls = m.toolCalls;
+    }
+    return out;
+  });
+}
+
 export interface OpenAICompatClient {
   listModels(): Promise<string[]>;
   /** 网关返回原生 tool_calls 时返回结构化对象（detectedFormat:'openai-json'），否则返回文本 */
   complete(prompt: string, opts?: CompleteOptions): Promise<string | OpenAICompatOutput>;
   /** streamChat 回退专用（0.7.4 B4）：withRetry + emptyResponse 语义的非流式回退。 */
   completeLikeFallback(prompt: string, opts?: CompleteOptions): Promise<string | OpenAICompatOutput>;
+  /** 0.8 P1：messages 数组通道（tool 结果按 opts.tools 存在与否选原生 tool 或文本降级）。 */
+  chat(messages: ChatMessage[], opts?: CompleteOptions): Promise<string | OpenAICompatOutput>;
   streamChat?(prompt: string, opts?: CompleteOptions): AsyncIterable<ModelStreamChunk>;
+  /** 0.8 P1：messages 流式通道（SSE 读循环与 streamChat 同构，仅请求体不同）。 */
+  streamChatMessages(messages: ChatMessage[], opts?: CompleteOptions): AsyncIterable<ModelStreamChunk>;
 }
 
 export interface CompleteOptions {
@@ -110,7 +158,32 @@ export interface CompleteOptions {
   tools?: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
   /** 0.7：外部中止信号（合并进 fetch/SSE 读流）。 */
   signal?: AbortSignal;
+  /**
+   * M2-4 真实 usage 计量：响应解析出 usage 时回调
+   * （{prompt_tokens, completion_tokens}，缺省字段为 undefined）。
+   * 网关普遍返回 json.usage；流式下 usage 通常在最后一个含 data 的
+   * chunk 或 [DONE] 前的 usage chunk，找不到则本回调不触发（上层回落估算）。
+   */
+  onUsage?: (u: { prompt?: number; completion?: number }) => void;
   [key: string]: unknown;
+}
+
+/**
+ * M2-4：从响应 json 提取 usage（prompt_tokens/completion_tokens）。
+ * 无 usage 或字段非数字 → null（total_tokens 不参与回调，仅做解析参考）。
+ */
+export function extractUsage(json: any): { prompt?: number; completion?: number } | null {
+  const usage = json?.usage;
+  if (!usage || typeof usage !== 'object') return null;
+  const out: { prompt?: number; completion?: number } = {};
+  if (typeof usage.prompt_tokens === 'number') out.prompt = usage.prompt_tokens;
+  if (typeof usage.completion_tokens === 'number') out.completion = usage.completion_tokens;
+  return (out.prompt !== undefined || out.completion !== undefined) ? out : null;
+}
+
+function reportUsage(opts: CompleteOptions | undefined, u: { prompt?: number; completion?: number } | null): void {
+  if (!u || typeof opts?.onUsage !== 'function') return;
+  try { opts.onUsage(u); } catch { /* usage 回调是计量旁路，绝不打断主流程 */ }
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -144,6 +217,12 @@ function parseRetryAfter(res: Response): number | null {
 }
 
 function isRetryableErr(e: any): boolean {
+  // M2-5：分类器接入——auth/billing/context_overflow 类快速失败（不再白吃
+  // 5 次退避）；context_overflow 的重试交由 loop 的强制 compact 路径接管。
+  const cls = classifyApiError(e);
+  if (cls === 'auth' || cls === 'billing' || cls === 'context_overflow') return false;
+  // 超时是瞬态故障 → 可重试（客户端层 timeout 错误不带 status/network 标记）
+  if (cls === 'timeout') return true;
   // 补传输类错误——undici 层故障常表现为 TypeError（"terminated"）或
   // message 含 "fetch failed" 的网络错误，此前一律不重试。
   // TypeError 必须带传输类 message 才重试：裸 name 匹配会把解析层的
@@ -230,21 +309,21 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     }
   }
 
-  /** Shared non-streaming completion (used by complete() and as streamChat fallback). */
-  async function doComplete(prompt: string, opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
-    if (!prompt || typeof prompt !== 'string') {
-      throw new Error('complete requires a non-empty prompt string');
-    }
-
+  /**
+   * Shared non-streaming completion engine (0.8 P1 重构：接受 messages 数组).
+   * complete() 是它的单 user 消息包装；chat() 直传消息数组——两者共享
+   * withRetry/finish_reason/usage/EMPTY_RESPONSE 全部逻辑（零行为变更）。
+   */
+  async function doComplete(messages: ChatMessage[], opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
     const model = opts.model || 'default';
     const temperature = typeof opts.temperature === 'number' ? opts.temperature : 0.7;
     const max_tokens = typeof opts.maxTokens === 'number' ? opts.maxTokens : undefined;
+    // 原生 FC 模式判定：tools 存在 → tool 结果走 role:'tool' + tool_call_id；否则文本降级。
+    const nativeTools = Array.isArray(opts.tools) && opts.tools.length > 0;
 
     const body: any = {
       model,
-      messages: [
-        { role: 'user', content: prompt },
-      ],
+      messages: toWireMessages(messages, nativeTools),
       temperature,
       // EXPLICIT non-stream. Some gateways (a6api) default to
       // stream semantics and 422/behave erratically per-model when the flag
@@ -256,8 +335,8 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     }
     // P1.1 请求侧：tools 非空时透传 OpenAI function calling schema，
     // 网关/模型据此在响应里返回结构化 tool_calls（响应侧转换已就绪）。
-    if (Array.isArray(opts.tools) && opts.tools.length > 0) {
-      body.tools = opts.tools.map((t) => ({
+    if (nativeTools) {
+      body.tools = opts.tools!.map((t) => ({
         type: 'function',
         function: {
           name: t.name,
@@ -275,8 +354,15 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       body: JSON.stringify(body),
     }, timeoutMs, opts.signal).catch((e: any) => {
       if (e?.name === 'AbortError') {
-        const err: any = new Error('TASK_ABORTED');
-        err.code = 'ABORTED';
+        // M2-5：区分用户主动中止（外部 signal / 显式 ABORTED 码）与内部超时。
+        // 超时是瞬态故障 → 可重试且终态归 'error'（不再伪装成用户中断）。
+        if (e?.code === 'ABORTED' || (opts.signal && opts.signal.aborted)) {
+          const err: any = new Error('TASK_ABORTED');
+          err.code = 'ABORTED';
+          throw err;
+        }
+        const err: any = new Error(`complete timeout: 请求超过 ${timeoutMs}ms 未完成`);
+        err.timeout = true;
         throw err;
       }
       const err: any = new Error(`complete network error: ${e?.message || e}`);
@@ -309,6 +395,9 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     // Standard OpenAI response shape
     const message = json?.choices?.[0]?.message;
     const content = message?.content;
+
+    // M2-4：解析 json.usage 并回调（网关普遍返回；无则 null，上层回落估算）。
+    reportUsage(opts, extractUsage(json));
     // finish_reason==='length' → 响应被 max_tokens 截断。残缺内容
     // （尤其残缺 tool_calls/半句答复）静默通过会引发弱模型空转——标记 truncated
     // 让 VerifyCritiqueLoop 禁判 answered 并注入精简提示。
@@ -349,6 +438,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     // a NON-streaming request — parse `data:` lines and concat delta.content.
     if (!json && bodyText.includes('data:')) {
       const parts: string[] = [];
+      let sseUsage: { prompt?: number; completion?: number } | null = null;
       for (const line of bodyText.split('\n')) {
         const t = line.trim();
         if (!t.startsWith('data:')) continue;
@@ -356,12 +446,17 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         if (payload === '[DONE]') break;
         try {
           const ev = JSON.parse(payload);
+          const u = extractUsage(ev); // usage 通常挂在最后一个 data chunk 上
+          if (u) sseUsage = u;
           const d = ev?.choices?.[0]?.delta;
           if (typeof d?.content === 'string') parts.push(d.content);
           else if (typeof ev?.choices?.[0]?.text === 'string') parts.push(ev.choices[0].text);
         } catch {}
       }
-      if (parts.length > 0) return parts.join('');
+      if (parts.length > 0) {
+        reportUsage(opts, sseUsage);
+        return parts.join('');
+      }
     }
     // 改动包 B：可识别的响应形状（有 choices）但提取失败 → 保留 stringify 兜底；
     // 其余（真正空响应/无 choices）标记为可重试 EMPTY_RESPONSE，重试耗尽才返回空——
@@ -377,18 +472,25 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     throw emptyErr;
   }
 
+  /**
+   * complete/chat/流式回退共用的 withRetry + emptyResponse 语义包装（0.8 P1 重构后单点）。
+   * 空响应重试耗尽 → 返回空（调用方按 NO_TOOL_CALLS 处理），不挂起。
+   */
+  async function chatCompleteWithRetry(messages: ChatMessage[], opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
+    try {
+      return await withRetry(() => doComplete(messages, opts));
+    } catch (e: any) {
+      if (e && e.emptyResponse === true) {
+        return '';
+      }
+      throw e;
+    }
+  }
+
   return {
     /** streamChat 回退专用：与 complete() 同语义的非流式回退。 */
-    async completeLikeFallback(prompt: string, opts: CompleteOptions): Promise<string | OpenAICompatOutput> {
-      try {
-        return await withRetry(() => doComplete(prompt, opts));
-      } catch (e: any) {
-        if (e && e.emptyResponse === true) {
-          // 空响应重试耗尽 → 返回空（调用方按 NO_TOOL_CALLS 处理），不挂起
-          return '';
-        }
-        throw e;
-      }
+    async completeLikeFallback(prompt: string, opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
+      return chatCompleteWithRetry([{ role: 'user', content: prompt }], opts);
     },
 
     async listModels(): Promise<string[]> {
@@ -421,37 +523,43 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
     },
 
     async complete(prompt: string, opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
-      try {
-        return await withRetry(() => doComplete(prompt, opts));
-      } catch (e: any) {
-        if (e && e.emptyResponse === true) {
-          // 空响应重试耗尽 → 返回空（调用方按 NO_TOOL_CALLS 处理），不挂起
-          return '';
-        }
-        throw e;
+      if (!prompt || typeof prompt !== 'string') {
+        throw new Error('complete requires a non-empty prompt string');
       }
+      return chatCompleteWithRetry([{ role: 'user', content: prompt }], opts);
     },
 
     /**
-     * token-level streaming via SSE (stream:true).
-     * Yields {type:'thinking'} for delta.reasoning_content (OpenAI-compatible style)
-     * and {type:'text'} for delta.content. Falls back to a single text chunk
-     * built from complete() when the endpoint does not support streaming.
+     * 0.8 P1（M1-PROTOCOL）消息数组通道：messages 原样进请求体
+     * （system 首位约定由调用方保证；tool 结果按 opts.tools 存在与否
+     * 选原生 role:'tool'+tool_call_id 或文本降级标注）。
+     * 与 complete() 共享 withRetry/finish_reason/usage/EMPTY_RESPONSE 全部逻辑。
      */
-    async *streamChat(prompt: string, opts: CompleteOptions = {}): AsyncIterable<ModelStreamChunk> {
-      if (!prompt || typeof prompt !== 'string') {
-        throw new Error('streamChat requires a non-empty prompt string');
+    async chat(messages: ChatMessage[], opts: CompleteOptions = {}): Promise<string | OpenAICompatOutput> {
+      if (!Array.isArray(messages) || messages.length === 0) {
+        throw new Error('chat requires a non-empty messages array');
+      }
+      return chatCompleteWithRetry(messages, opts);
+    },
+
+    /**
+     * 0.8 P1（M1-PROTOCOL）messages 流式通道：SSE 读循环/回退与 streamChat 同构，
+     * 仅请求体不同。tool 结果映射与 chat() 一致（opts.tools 存在 → role:'tool' +
+     * tool_call_id；否则文本降级 `【工具 <name> 结果】`）。
+     */
+    async *streamChatMessages(messages: ChatMessage[], opts: CompleteOptions = {}): AsyncIterable<ModelStreamChunk> {
+      if (!Array.isArray(messages) || messages.length === 0) {
+        throw new Error('streamChatMessages requires a non-empty messages array');
       }
 
       const model = opts.model || 'default';
       const temperature = typeof opts.temperature === 'number' ? opts.temperature : 0.7;
       const max_tokens = typeof opts.maxTokens === 'number' ? opts.maxTokens : undefined;
+      const nativeTools = Array.isArray(opts.tools) && opts.tools.length > 0;
 
       const body: any = {
         model,
-        messages: [
-          { role: 'user', content: prompt },
-        ],
+        messages: toWireMessages(messages, nativeTools),
         temperature,
         stream: true,
       };
@@ -459,8 +567,8 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         body.max_tokens = max_tokens;
       }
       // P1.1 请求侧：stream 路径同样透传 tools（delta.tool_calls 拼装已就绪）。
-      if (Array.isArray(opts.tools) && opts.tools.length > 0) {
-        body.tools = opts.tools.map((t) => ({
+      if (nativeTools) {
+        body.tools = opts.tools!.map((t) => ({
           type: 'function',
           function: {
             name: t.name,
@@ -481,20 +589,25 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         }, timeoutMs, opts.signal);
       } catch (e: any) {
         if (e?.name === 'AbortError') {
-          const err: any = new Error('TASK_ABORTED');
-          err.code = 'ABORTED';
-          throw err;
+          if (e?.code === 'ABORTED' || (opts.signal && opts.signal.aborted)) {
+            const err: any = new Error('TASK_ABORTED');
+            err.code = 'ABORTED';
+            throw err;
+          }
+          // 内部超时（瞬态）→ 与其余传输类错误同语义：回退非流式（withRetry 会重试）。
+          for (const c of chunksFromCompleteOutput(await chatCompleteWithRetry(messages, opts))) yield c;
+          return;
         }
         // Transport-level failure → fall back to non-streaming so callers keep working.
         // 0.7.4：与 complete() 同语义——withRetry 包裹 + emptyResponse 耗尽转空串，
         // 消灭"三连发裸调用穿透 → chaser 误判 aborted"（LM Studio diffusion 实测）。
-        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
+        for (const c of chunksFromCompleteOutput(await chatCompleteWithRetry(messages, opts))) yield c;
         return;
       }
 
       if (!res.ok || !(res as any).body) {
         // Non-OK → fall back to complete() which surfaces a rich error
-        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
+        for (const c of chunksFromCompleteOutput(await chatCompleteWithRetry(messages, opts))) yield c;
         return;
       }
 
@@ -504,6 +617,9 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       let sawAny = false;
       // 尾 delta 的 finish_reason（'length' = max_tokens 截断）
       let streamFinishReason: string | undefined;
+      // M2-4：流式 usage 计量——usage 通常在最后一个含 data 的 chunk
+      // 或 [DONE] 前的 usage chunk 上，取最后一次出现的值，流结束后统一回调。
+      let streamUsage: { prompt?: number; completion?: number } | null = null;
       // SSE delta.tool_calls 增量拼接（按 index 聚合 id/name/arguments 分片）
       const toolCallAcc = new Map<number, { id?: string; name: string; args: string }>();
 
@@ -534,6 +650,10 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
           let json: any;
           try { json = JSON.parse(dataStr); } catch { continue; }
+
+          // usage chunk（choices 常为空数组）——先于 choices 检查捕获
+          const u = extractUsage(json);
+          if (u) streamUsage = u;
 
           const delta = json?.choices?.[0]?.delta;
           if (!delta && typeof json?.choices?.[0]?.finish_reason !== 'string') continue;
@@ -589,10 +709,29 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         yield { type: 'text', text: '', finishReason: 'length' } as ModelStreamChunk;
       }
 
+      // M2-4：流式 usage 统一在流结束后回调一次（找不到则 null，上层回落估算）
+      reportUsage(opts, streamUsage);
+
       // Endpoint accepted stream:true but sent nothing parseable — fall back once.
       if (!sawAny) {
-        for (const c of chunksFromCompleteOutput(await this.completeLikeFallback(prompt, opts))) yield c;
+        // 已上报过 SSE usage 时不再透传 onUsage（防同一次调用双计）
+        const fallbackOpts = streamUsage ? { ...opts, onUsage: undefined } : opts;
+        for (const c of chunksFromCompleteOutput(await chatCompleteWithRetry(messages, fallbackOpts))) yield c;
       }
+    },
+
+    /**
+     * token-level streaming via SSE (stream:true).
+     * Yields {type:'thinking'} for delta.reasoning_content (OpenAI-compatible style)
+     * and {type:'text'} for delta.content. Falls back to a single text chunk
+     * built from complete() when the endpoint does not support streaming.
+     * 0.8 P1：单 user 消息包装（streamChatMessages 引擎的 thin wrapper，行为不变）。
+     */
+    async *streamChat(prompt: string, opts: CompleteOptions = {}): AsyncIterable<ModelStreamChunk> {
+      if (!prompt || typeof prompt !== 'string') {
+        throw new Error('streamChat requires a non-empty prompt string');
+      }
+      yield* this.streamChatMessages([{ role: 'user', content: prompt }], opts);
     },
   };
 }

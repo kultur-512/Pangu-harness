@@ -56,6 +56,14 @@ export interface RefinedMemoryCard {
   /** pin 卡冻结衰减（decayWeight 恒 1.0）—— /remember --pin */
   pinned?: boolean;
 
+  // ===== 卡片关键字 =====
+  /**
+   * 关键字（success 卡从任务文本与写入文件名提取，≤4 个 token；小写）。
+   * 加性字段：旧文件无此字段照常加载；检索/相关性排序的未来消费方预留
+   * （当前 loadFiltered 的 keywords 相关性仍匹配 summary）。
+   */
+  keywords?: string[];
+
   // ===== 确定性合并归档字段 =====
   /** active（默认）/ archived（合并后原卡软删除，不物理删） */
   status?: 'active' | 'archived';

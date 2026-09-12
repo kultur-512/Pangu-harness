@@ -1,65 +1,57 @@
-# Panshalach — 基于 openPangu 的记忆增强长程上下文智能体
+# 烛龙 Zhulong — 基于 openPangu 的记忆增强通用智能体
 
 > **命题**：基于 openPangu-1B/7B/7B-VL 构建具备长程上下文管理能力的智能体（华为 · 国产操作系统软件组）。
-> **场景主线**：软件工程长期维护——跨多轮需求演进、跨文件/长文档关联分析、持续任务状态跟踪。
-> **一句话**：把"每轮都从零记"的 Agent，变成"有卡片记忆 + 会话资产 + 事件/状态持续跟踪"的长程智能体，基于 openPangu 推理验证。
-> **当前版本 v0.7.4**（0.7.0 终止语义重构 → 0.7.1 UI 手感两批次 → 0.7.2 意图前移 + 记忆落定主线版 → 0.7.3 主链确定性修复 → 0.7.4 部署陈旧 dist 修复 + 中断语义修正；分版详录见根 [CHANGELOG.md](../../CHANGELOG.md)）· 外部产品 **烛龙 Zhulong** / 内部代号 **盤沙拉克 Panshalach**。
+> **一句话**：把"每轮都从零记"的 Agent，变成"有卡片记忆 + 会话资产 + 事件/状态持续跟踪"的长程智能体；既擅长软件工程（读写代码、执行命令、验证变更），也直接回答日常对话、知识问答与创作（0.8.0-rc 身份画像对齐）。
+> **当前版本 v0.8.0-rc**（0.7 终止语义重构/意图前移/记忆落定 → **0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链三缺陷治理**）· 分版详录见 [CHANGELOG.md](../../CHANGELOG.md) · 外部产品 **烛龙 Zhulong** / 内部代号 **盤沙拉克 Panshalach**。
 
-## 0.7.0 架构速览
+## 0.8.0-rc 架构速览
 
-- **单层终止**：外置验证判官（continuationJudge）与 TestTimeOrchestrator 已摘除归档（`archive/2026-09-05-removals/`）——chaser 单次 `loop.run`，回合上界 = 单次 `maxSteps`，无续跑×N。
-- **回合三态**：`completed`（真实验证 PASS，喂记忆成功卡）/ `answered`（end_turn 有面向用户正文，计入成功并呈现正文，**不**进记忆成功卡）/ `no-verification`（空白空转，失败）；另有 max-steps / consecutive-failures / aborted。
-- **意图分类**（`src/cli/taskIntent.ts`）：`chat` 单次 complete 直答（不进循环、不灌格式教学与工具 schema）/ `search` 受限只读循环（≤3 步、禁写禁 bash、搜不到询问用户）/ `task`（execution）完整验证循环 / `meta`；`PANSHA_INTENT_GATE=0` 逃生门。
-- **AbortSignal 贯穿**：`runAgentTask → solveIssue → loop → 模型请求（fetch/streamChat）→ engineAdapter/executor`——Ctrl+C 真正中止任务（回合记 `aborted`），UI 不再"提前返回但网关继续刷 POST"。
-- **预算真实累计**：`estimatedUsedTokens` 按每次模型调用累加（修复 `[最终预算 0%]` 恒 0）。
-- **主链确定性（0.7.3）**：真实工具成功信号入册（engineAdapter 按 `res.ok`+工具类别追加 `VERIFICATION: PASS`/`NEUTRAL` 规范尾标 → **completed 真机可达**，记忆闭环激活）；`--approval`/Ctrl+C 在 one-shot/classic/simulate 三入口真实透传（此前引擎收不到）；上下文窗口预算挂 provider 真值（`modelContexts` → 未知回落 **32768** 保守值，`/model list` 未知持久化 null 不再写 256000 假值）；aborted 回合**现场落盘**（turn 带 `partialText` 已流出正文）。
-- **中断语义修正（0.7.4）**：`TurnStopReason` 加性新增 `'error'`——模型/网络/解析异常与用户中断严格分离（`isAbortLikeError` 判定），模型故障不再被伪装成"已中断·现场已保留"；streamChat 三处非流式回退走 `completeLikeFallback`（withRetry + emptyResponse 转空串，与 complete 同语义）；EMPTY_RESPONSE 文案追加 diffusion/embedding 端点指引；`src/cli.ts` dist-fresh mtime 检查（陈旧 dist 启动时黄字提醒）；line 模式 `?` 不再截获、作为普通任务透传（帮助只走 `/help`）。方案：[PLAN-0.7.4-FOR-CLAUDECODE.md](PLAN-0.7.4-FOR-CLAUDECODE.md)。
+- **turn 会话壳四模块**（`src/cli/repl/turn/`）：2115 行巨函数 sseInteractive 拆为 `TurnContext`（巨状态显式化）/ `TurnController`（任务提交/审批桥/中断/排队 drain）/ `TurnRenderer`（SSE 事件渲染/CC 式视觉纯函数）/ `CommandRouter`（命令注册派发）+ `SlashMenu`（斜杠即时菜单纯函数状态机）——sseInteractive 收缩为会话壳。
+- **messages 双通道协议**（M1-PROTOCOL）：`ChatMessage`（system/user/assistant/tool role）+ `ModelClient.chat()/streamChatMessages()` 加性接口，`complete(prompt)` 文本协议保留为降级路径；`PANSHA_MESSAGES_MODE=off` 逃生门。
+- **stable/volatile 三段 prompt**：stable 段（身份+L0+档位契约）任务间字节级相同 → 置 system 首消息命中网关前缀缓存；volatile 段（记忆卡/环境/任务）每任务变。
+- **执行层七项**（M2，hermes 对齐落地）：读并发+写 barrier 分段调度 / 卡死硬闸 `src/loop/guardrails.ts`（同参失败 5 次阻断·同工具 8 次强制终局·幂等无进展 5 次）/ 工具大输出落盘 scratch + read_file 回读 / 真实 usage 计量 / 错误分类器 + overflow→强制 compact / 敏感路径全档位写保护 / Turn.role 字段。
+- **CC 级交互**：输入 `/` 即时弹出斜杠菜单（过滤/↑↓/分组/滚动）· shift+tab 档位环每档专属色徽标（plan 蓝/auto-accept 青/full 品红）· `/model` 菜单化（编号直达/当前项绿色）· `/tier` 思考强度水平滑杆（←→ 调节/Enter 确认/Esc 取消）。
+- **记忆链治理**（0.8.1 审计驱动三修复）：通用卡产卡携带任务信息（零信息卡根因）/ markVerified 断链接通（injectedCardIds ∩ 真实写集）/ count 封顶 min(count,3) 防"永生卡"；success 卡只认 `stopReason==='completed'`。
+- **身份画像通用化**：通用全能智能体（工程/对话/知识/创作皆为所长），档位语义限定为工程执行参数——1B 小模型不再把"工程助手"执行成"只答工程"。
+- **回合七态终止**：completed / answered / max-steps / consecutive-failures / aborted / no-verification / error（`TurnStopReason`）——模型故障与用户中断严格分离。
 
-> 0.7 方案与遗留边界全文见 [FIX-0.7-TERMINATION.md](FIX-0.7-TERMINATION.md)；0.7.3 方案见 [USABLE-PLAN-0.7.3.md](USABLE-PLAN-0.7.3.md)；路线见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。
-
-## 文档导航
+## 文档导航（活文档）
 
 | 文档 | 内容 | 用途 |
 |---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 系统分层架构、记忆模块设计、推理流程、资源消耗、核心创新点 | **命题提交物 (1) 架构设计文档**（雏形） |
-| [MEMORY-DESIGN.md](MEMORY-DESIGN.md) | 记忆增强层深挖：卡片 schema、提炼/过滤/衰减/注入、差距与补齐路线 | 记忆子系统设计说明 |
-| [EVALUATION.md](EVALUATION.md) | 场景设定、评测方法、基线对比指标、openPangu 运行步骤与数据表 | **命题提交物 (2) 效果评估报告**（骨架，待真实数据） |
-| [SUBMISSION.md](SUBMISSION.md) | 国创赛项目书：概述/完整方案/创新点/差异化对比/部署/评测 | 命题提交物初稿（项目书） |
-| [DEPLOY-CN.md](DEPLOY-CN.md) | 从零到一部署：本机已验证路径 + 昇腾/麒麟框架（待实测）+ PANSHA_* 全集 + FAQ | 部署指南 |
-| [USER-GUIDE.md](USER-GUIDE.md) | 安装、配置 openPangu、命令总表、档位/审批/记忆命令 | 用户手册 |
-| [PROJECT-BRIEF.md](PROJECT-BRIEF.md) | 项目总览：模块表、一句话架构、初学者版、上级汇报版 | 汇报底稿 |
-| [ROADMAP.md](ROADMAP.md) | 从"评估基线"到"完整命题交付"的里程碑（P0-P7） | 执行计划 |
-| [ROADMAP-NEXT.md](ROADMAP-NEXT.md) | U1-U9 时间盒内的 R0-R9 剩余路线 + 实施合同 + 遗留表 | 当前执行路线 |
-| [FIX-0.7-TERMINATION.md](FIX-0.7-TERMINATION.md) | 0.7.0 终止语义重构方案（根因 R1-R7 / 三态 / 意图 / AbortSignal） | 0.7 设计依据 |
-| [UI-UX-REVAMP-0.7.1.md](UI-UX-REVAMP-0.7.1.md) | UI/UX 手感改良全量方案（0.7.1 两批次，P0-P3） | 0.7.1 设计依据 |
-| [REFLECTION-0.7.2.md](REFLECTION-0.7.2.md) | 反思迭代方案（8 维度诊断 → 意图前移 + 记忆落定） | 0.7.2 设计依据 |
-| [USABLE-PLAN-0.7.3.md](USABLE-PLAN-0.7.3.md) | 基本可用实施方案（五报告收敛 13 项三梯队） | 0.7.3 设计依据 |
-| [ALIGNMENT-REVIEW-0.7.3.md](ALIGNMENT-REVIEW-0.7.3.md) | 企业命题偏离审查报告（五报告共识 + 风险销项跟踪） | 0.7.3 审查报告 |
-| [PLAN-0.7.4-FOR-CLAUDECODE.md](PLAN-0.7.4-FOR-CLAUDECODE.md) | 0.7.4 执行计划（部署陈旧 dist / 中断语义 / `?` 透传 / hermes 调研） | 0.7.4 设计依据 |
-| [HERMES-ALIGN-0.7.4.md](HERMES-ALIGN-0.7.4.md) | hermes-agent 二次对齐调研（上轮未采纳项五项判定） | 对齐调研 |
-| [GAP-MATRIX-0.8.md](GAP-MATRIX-0.8.md) | 烛龙 × Claude Code × hermes 交叉对比矩阵（CC 15 维 + hermes 11 机制） | 0.8 立项输入 |
-| [PLAN-0.8-FOUNDATION.md](PLAN-0.8-FOUNDATION.md) | 0.8 迭代设计：换地基（M1 协议地基 / M2 执行层七项 / M3 余量） | 0.8 设计方案 |
-| [solution/](solution/) | 命题方案系列 10 篇（01 命题与证据边界 … 10 交付实施与后续） | 方案深化系列 |
-| [REFACTOR-ASSESSMENT.md](../../REFACTOR-ASSESSMENT.md) | 现有工程代码逐模块对照命题的改造路径评估 | 重构依据 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 系统分层架构、记忆模块设计、推理流程、资源消耗、核心创新点 | **命题提交物 (1) 架构设计文档** |
+| [MEMORY-DESIGN.md](MEMORY-DESIGN.md) | 记忆增强层深挖：卡片 schema、提炼/过滤/衰减/注入、已知差距 | 记忆子系统设计说明 |
+| [EVALUATION.md](EVALUATION.md) | 场景设定、消融口径（A/B/C/C4）、指标、数据表（真实数据回填位） | **命题提交物 (2) 效果评估报告** |
+| [SUBMISSION.md](SUBMISSION.md) | 国创赛项目书：概述/方案/创新点/差异化/部署/评测 | 命题提交物（项目书） |
+| [DEPLOY-CN.md](DEPLOY-CN.md) | 从零到一部署：本机已验证路径 + 昇腾/麒麟框架（待实测）+ PANSHA_* 全集 | 部署指南 |
+| [USER-GUIDE.md](USER-GUIDE.md) | 安装、配置、交互手感（斜杠菜单/档位环/滑杆）、命令总表 | 用户手册 |
+| [ROADMAP-NEXT.md](ROADMAP-NEXT.md) | R0-R9 路线 + 实施合同 + 遗留表（0.8 M3 项/记忆审计剩余项） | 当前执行路线 |
+| [solution/](solution/) | 命题方案系列 10 篇（01 命题与证据边界 … 10 交付实施与后续） | 项目书素材库 |
+| [../../CHANGELOG.md](../../CHANGELOG.md) | 分版本变更详录 | 变更史 |
+| [../../REFACTOR-ASSESSMENT.md](../../REFACTOR-ASSESSMENT.md) | 代码逐模块对照命题的改造路径评估 | 重构依据 |
+
+> 迭代过程文档（0.7.x 各版方案、GAP-MATRIX、hermes 对齐、反思/审查报告等 14 篇）已归档至 [archive/2026-09-12-process-docs/](../../archive/2026-09-12-process-docs/)——内容已被上述活文档吸收，仅供追溯设计缘由。
 
 ## 目录（仓库根）
 
 ```
 src/
-  PanshalachChaser.ts            核心执行引擎（solveIssue 单次 loop.run + 意图路由，0.7）
-  cli/taskIntent.ts              入口意图分类：chat / search / task / meta（0.7）
-  loop/VerifyCritiqueLoop.ts     执行循环（三路解析、Read-Before-Write、Verify-Before-Claim 铁律、回合三态）
-  loop/trajectory.ts             轨迹类型（0.7 自 TestTimeOrchestrator 迁出；continueCount 已删）
-  tools/*                        真实工具引擎：read_file/write_file/edit_file/bash/glob/grep + 四档审批
-  memory/*                       记忆卡提炼/过滤/衰减/合并（持久化）
-  cli/repl/*                     交互式 REPL、会话资产(rollout jsonl/branch/compact)、提示组装、ConfigManager/modelSeed
-  archive/2026-09-05-removals/   已摘除装置归档（判官/TestTimeOrchestrator/打分器/锚点注入…）
+  PanshalachChaser.ts            核心执行引擎（solveIssue + 意图路由 + chat 直答三级回落 + think 剥离）
+  cli/taskIntent.ts              入口意图分类：chat / search / task / meta
+  cli/repl/turn/                 会话壳四模块 + SlashMenu（0.8 拆分：Context/Controller/Renderer/CommandRouter）
+  loop/VerifyCritiqueLoop.ts     执行循环（messages 双轨/三路解析/铁律/七态终止/guardrails 接入）
+  loop/guardrails.ts             卡死硬闸（同参失败/同工具失败/幂等无进展）
+  model/errorClassify.ts         API 错误八类分类（overflow 优先，auth/billing 快速失败）
+  tools/*                        真实工具引擎 + 四档审批 + 敏感路径写保护 + 大输出落盘
+  memory/                        记忆卡 store / 事件账本 / 任务状态 / 轨迹写集 / embed v0
+  model/openai-compatible.ts     chat()/streamChatMessages() 双通道 + usage 解析 + withRetry
+  cli/repl/*                     REPL、会话资产(rollout jsonl/branch/compact)、PromptBuilder 三段拆分
   server/*                       SSE 服务化（前端/远程演示）
 docs/panshalach/                 命题交付文档（本目录）
-REFACTOR-ASSESSMENT.md           重构评估报告
+archive/                         已摘除装置与过程文档归档
 ```
 
-## 安装与部署（0.6.5 起）
+## 安装与部署
 
 ```bash
 cd <repo>
@@ -69,19 +61,18 @@ npm link           # 全局部署：生成 zhulong / panshalach bin（旧别名 
 ```
 
 - **bin**：`zhulong`（对外主名）/ `panshalach` / `zorge`（兼容别名），均指向 `dist/cli.js`。
-- **配置两级加载**：用户级 `~/.panshalach/config.json` 为基底 → 项目级 `.panshalach.json` 深合并覆盖（项目级优先）；用户级目录可用 `PANSHA_USER_CONFIG_DIR` 重定向。
-- **模型选择优先级**：`PANSHA_MODEL` env > 配置文件 `model` 字段（0.6.5 modelSeed 播种——此前配置 model 从未生效）> `/model` 显式切换。
-- **审批档位**：`--approval <readonly|default|full>`（或 `PANSHA_APPROVAL` env）——headless/一次性执行不再锁死 readonly。
+- **配置两级加载**：用户级 `~/.panshalach/config.json` 为基底 → 项目级 `.panshalach.json` 深合并覆盖（项目级优先）。
+- **模型选择优先级**：`PANSHA_MODEL` env > 配置 `model` 字段（modelSeed 播种）> `/model` 切换。
+- **审批档位**：`--approval <readonly|default|full>`（或 `PANSHA_APPROVAL` env）；非 TTY 管道审批自动拒绝（不挂起）。
 
 ## 长程能力速览
 
-- **记忆卡（结构化记忆）**：失败教训 / 成功经验 / 用户偏好三类卡，含类别分档可见性、参照文件过滤、四段阶梯衰减、同主题合并、容量控制。
-- **会话资产（事件日志形态）**：追加式 jsonl（turn/approval/rewind + 业务事件/压缩标记/注入审计）、`--resume`/`--branch` 续接、崩溃容错。
-- **上下文压缩**：模型摘要旧轮次 + 保留最近 6 轮；压缩时补漏提炼成功卡（0.7 起信号收紧为 `stopReason==='completed'`，纯问答不产成功卡）。
-- **任务状态跟踪**：`feature_list.json` 单一 active feature + 下一步 + 证据（演进为多轮任务状态机）。
-- **意图分类（0.7）**：chat 单次直答 / search 受限只读（≤3 步、搜不到询问用户）/ task 完整验证循环——问答不再被灌工具 schema 空转。
-- **真中止（0.7）**：AbortSignal 贯穿 solveIssue→loop→模型请求/工具执行，Ctrl+C 即停（回合记 `aborted`）。
-- **注入工程**：L0 硬约束(≤3) / L1 记忆卡(按档位 3/6/8/10) / 分档契约 / 注入去重 / token 预算 / 参照文件过滤。
-- **执行纪律**：读前必读、验证后声明、可回滚、审批分级——支撑长周期持续执行的可靠性。
+- **记忆卡（结构化记忆）**：失败教训 / 成功经验 / 用户偏好；类别分档可见性 + 参照文件过滤 + 四段阶梯衰减 + 验证保鲜 + 同主题合并 + 容量控制（`/memory`）。
+- **会话资产**：追加式 rollout jsonl（turn/approval/rewind + 业务事件/压缩标记/注入审计）+ `--resume`/`--branch`/`/tree` 续接与分支。
+- **上下文压缩**：模型摘要旧轮 + 保留最近 6 轮 + 血统账本（generation/coveredTurnIds 防覆盖期丢轮）+ 压缩补漏提炼成功卡 + overflow 强制压缩。
+- **任务状态跟踪**：TaskState（原始需求锚/决策/未决/进度）+ `/feature` 单特性视图。
+- **注入工程**：stable/volatile 三段（前缀缓存友好）/ L0 硬约束 / L1 记忆注入(分档 3/6/8/10 + token 预算) / 逐任务注入审计（injectedCardIds + promptHash）。
+- **执行纪律**：Read-Before-Write、Verify-Before-Claim、可回滚、审批分级、卡死硬闸、敏感路径写保护。
+- **意图分流**：chat 单次直答（不进循环、通用画像有问必答）/ search 受限只读（≤3 步、搜不到询问用户）/ task 完整验证循环。
 
-> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*`、`PanshalachChaser` 均为内部存储/旧兼容名，不影响对外品牌 **Panshalach**；收敛计划见 [ROADMAP.md](ROADMAP.md)。
+> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*`、`PanshalachChaser` 均为内部存储/兼容名，对外品牌为**烛龙 Zhulong**；P6 存储名迁移收口见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md) §3.2。

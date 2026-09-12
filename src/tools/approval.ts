@@ -142,6 +142,11 @@ export function createCliApprovalBridge(opts: { timeoutMs?: number } = {}): (req
   description: string;
   danger?: boolean;
 }) => Promise<string> {
+  // 非 TTY（管道/CI）：没有可交互的 stdin——挂 60s 等输入既卡管道又让 ANSI
+  // 倒计时序列泄漏进重定向输出。直接返回自动拒绝桥（语义与超时一致，零等待）。
+  if (!process.stdout.isTTY || process.env.PANSHA_HEADLESS === '1') {
+    return (req) => Promise.resolve(`n:（非交互环境自动拒绝：${req.tool}）`);
+  }
   const timeoutMs = opts.timeoutMs ?? 60_000;
   return (req) => new Promise<string>((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

@@ -23,6 +23,7 @@ import WorkspaceCommand from './commands/WorkspaceCommand.js';
 import ModelCommand from './commands/ModelCommand.js';
 import HistoryCommand from './commands/HistoryCommand.js';
 import RunCommand from './commands/RunCommand.js';
+import TaskCommand from './commands/TaskCommand.js';
 import SimulateCommand from './commands/SimulateCommand.js';
 import ReviewCommand from './commands/ReviewCommand.js';
 import MemoryCommand from './commands/MemoryCommand.js';
@@ -86,6 +87,7 @@ export class Repl {
     this.registry.register(ModelCommand);
     this.registry.register(HistoryCommand);
     this.registry.register(RunCommand);
+    this.registry.register(TaskCommand);
     this.registry.register(SimulateCommand);
     this.registry.register(ReviewCommand);
     this.registry.register(MemoryCommand);
@@ -265,7 +267,7 @@ export class Repl {
   private printWelcome() {
     // 外部产品名：烛龙（Zhulong）。内部代号：盘沙拉克 Panshalach（不展示在启动文案）
     this.renderer.writeLine(this.renderer.color('烛龙（Zhulong） Interactive Shell', 'bold'));
-    this.renderer.writeLine('基于 openPangu 的记忆增强长程上下文智能体 — 面向软件工程长期维护场景。');
+    this.renderer.writeLine('基于 openPangu 的通用智能体 — 软件工程、知识问答、日常对话皆为所长。');
     this.renderer.writeLine(`默认档位: ${this.session.tier} · 工作区: ${this.session.workspace}`);
     this.renderer.writeLine('输入 /help 查看命令，/exit 退出\n');
   }

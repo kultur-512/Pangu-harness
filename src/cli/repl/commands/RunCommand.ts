@@ -103,6 +103,25 @@ const command: Command = {
         : stopReason === 'answered' ? '已回复'
         : stopReason === 'error' ? '任务执行失败'
         : result.success ? '已通过验证' : '未通过验证';
+      // turn 落盘（headless/one-shot 路径此前完全不落 turn——resume 链断裂根因）
+      try {
+        const { appendTurn } = await import('../rolloutStore.js');
+        appendTurn(ctx.session.id, {
+          id: `mtx-${Date.now().toString(36)}`,
+          timestamp: Date.now(),
+          userInput: finalTask,
+          userInputType: 'task',
+          tier: ctx.session.tier,
+          result: {
+            success: result.success,
+            summary,
+            stopReason,
+            ...(result.answerText ? { answerText: String(result.answerText).slice(0, 400) } : {}),
+            ...(result.partialText ? { partialText: String(result.partialText).slice(0, 400) } : {}),
+          },
+          role: 'user',
+        } as any);
+      } catch {}
       if (stopReason === 'error') {
         const errLine = String(result.error || '').split('\n')[0].slice(0, 120);
         ctx.renderer.error(`完成 (${duration}ms) · ${summary}${errLine ? ' · ' + errLine : ''}`);
@@ -111,8 +130,11 @@ const command: Command = {
       }
 
       // answered 时把模型正文呈现给用户
+      // R1（0.8.1）：改读 result.answerText（runAgentTask 从轨迹末步带出的正文）。
+      // 旧实现误读 partialText——那是 aborted 专用字段，answered 时恒空 →
+      // headless 路径 answered 正文不可见。
       if (stopReason === 'answered') {
-        const answerText = result.partialText || '';
+        const answerText = result.answerText || '';
         if (answerText) {
           const preview = answerText.length > 600 ? answerText.slice(0, 597) + '…' : answerText;
           ctx.renderer.writeLine(preview);
@@ -135,6 +157,8 @@ const command: Command = {
           changedFiles: result.changedFiles ?? [],
           verifyCmd: result.verifyCmd ?? [],
           outcome: mapOutcome(stopReason),
+          // R6（0.8.1）：chat 答案落盘（截 400 字符防膨胀）
+          ...(result.answerText ? { answerText: result.answerText.slice(0, 400) } : {}),
         },
       });
 

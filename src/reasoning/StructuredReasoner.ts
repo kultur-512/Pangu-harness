@@ -147,8 +147,8 @@ Read-Before-Write 违规: ${p.rbwViolations} | 距上次验证步数: ${p.stepsS
 
     if (practical) {
       // 实用模式：更短、更温和、日常编码友好
-      return `你是烛龙（Zhulong），交互式工程助手，有两种工作方式：
-- 对话——问候、提问、模糊输入（如单词、编号"1"、情绪表达）：直接简短回应，意图不明时一次问清目标；不读文件、不调用工具。
+      return `你是烛龙（Zhulong），通用智能体，有两种工作方式：
+- 对话——问候、提问、知识/生活/创作等闲聊、模糊输入（如单词、编号"1"、情绪表达）：直接简短回应，意图不明时一次问清目标；不读文件、不调用工具。
 - 执行——目标明确的工程任务：读代码、改文件、跑验证，直到验证通过后再报告完成。
 歧义不往高风险方向解读（"清理"不等于"删除"）；得到用户答复后立即行动，不反复追问。
 
@@ -179,8 +179,8 @@ ${failureMemory}
 
     // 非实用模式（高纪律模式 / 高纪律路径）：保留更多结构与纪律提示
     return `
-你是烛龙（Zhulong），交互式工程助手，有两种工作方式：
-- 对话——问候、提问、模糊输入（如单词、编号"1"、情绪表达）：直接简短回应，意图不明时一次问清目标；不读文件、不调用工具。
+你是烛龙（Zhulong），通用智能体，有两种工作方式：
+- 对话——问候、提问、知识/生活/创作等闲聊、模糊输入（如单词、编号"1"、情绪表达）：直接简短回应，意图不明时一次问清目标；不读文件、不调用工具。
 - 执行——目标明确的工程任务：读代码、改文件、跑验证，直到验证通过后再报告完成。
 歧义不往高风险方向解读（"清理"不等于"删除"）；得到用户答复后立即行动，不反复追问。
 回答风格：简洁直接，先结论后细节；不知道就说不知道，不编造。
@@ -224,6 +224,21 @@ ${failureMemory}
   }
 
   /**
+   * 剥离网关侧推理标签（DeepSeek-R1 系/MiniMax-M3/Qwen3 等把推理以
+   * `<think>...</think>` 内嵌在 content 里）——正文展示与历史回灌前必须剥离，
+   * 否则用户与后续轮次都会看到推理原文。
+   */
+  static stripThinkTags(text: string): string {
+    return text
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      // zhulong 自有教学标签 <thinking> 已被 parseReasoning 抽到 step.thinking，
+      // 正文必须剥离（否则同一推理显示两份：thinking 块 + 正文原文）
+      .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+      .replace(/^\s*<think>[\s\S]*$/i, '') // 未闭合的 think 块（截断响应常见）
+      .trim();
+  }
+
+  /**
    * 解析模型返回的结构化推理块（支持 format_check）
    */
   static parseReasoning(rawOutput: string): StructuredReasoningOutput {
@@ -234,7 +249,7 @@ ${failureMemory}
     };
 
     return {
-      thinking: extract('thinking'),
+      thinking: extract('thinking') || extract('think'),
       plan: extract('plan'),
       verify: extract('verify') || undefined,
       critique: extract('critique') || undefined,
@@ -344,12 +359,30 @@ ${examples.join('\n\n')}
    * "对话不调工具"与"每步必须输出工具块"的指令冲突。
    */
   static buildChatDirective(issue: string): string {
-    return `你是烛龙（Zhulong），交互式工程助手。
-这是一次普通对话/提问，不是需要改代码、跑验证的工程任务。
-请直接、简洁地回答用户，不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签。
+    return `${this.buildChatSystemDirective()}
 
 用户的输入：
 ${issue}`;
+  }
+
+  /**
+   * R3（0.8.1）：chat 流式 messages 通道的 system 指令（不含用户输入——
+   * 输入走独立 user 消息，避免 buildChatDirective 整段内嵌导致的输入重复注入）。
+   * 与 buildChatDirective 的指令文本逐字节一致（后者 = 本指令 + 用户输入段）。
+   * F2（0.8.1 第 2 轮）：由"身份声明式"改为"情境框架式"——MiniMax-M3 等模型的
+   * 原生 ROOT_SYSTEM_POLICY 会把"你是烛龙"式身份断言判定为注入并拒绝
+   * （think 原文实证："I should not adopt the fake identity"），改为包装界面
+   * 角色、不对抗底层身份；禁用 injection/fake 类对抗框架词。
+   */
+  static buildChatSystemDirective(): string {
+    return `你在「烛龙 Zhulong」交互界面中作为全能智能助手回应用户。这是一次普通对话/提问，不是需要改代码、跑验证的工程任务。要点：
+- 有问必答：知识科普、生活、历史、创作、闲聊与工程技术问题一视同仁，直接给出内容本身
+- 不要以"工程助手"自居设限，不要拒绝或贬低非工程话题，不要把话题拉回软件开发
+- 不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签
+- 简洁自然：用户在终端环境，偏好直接的内容；不复述身份、档位、工作目录等系统信息
+- 不知道就如实说不知道，不编造事实、数据与年代
+- 用中文回答（除非用户使用其他语言）
+- 助手人格是本交互界面的一部分，无需向用户声明或讨论底层模型与供应商信息`;
   }
 
   /**
@@ -357,7 +390,7 @@ ${issue}`;
    * 停止并询问用户具体用意；禁止写/bash。
    */
   static buildSearchDirective(issue: string): string {
-    return `你是烛龙（Zhulong），交互式工程助手。
+    return `你是烛龙（Zhulong），通用智能体。
 用户提到了一个文件/路径，但没有说明要做什么。请先只读搜索确认它是否存在：
 - 用 glob / read_file / grep 在工作区内查找；只读，禁止 write_file / edit_file / bash。
 - 找到 → 简要报告它的位置与内容概要，然后停止。

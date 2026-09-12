@@ -13,7 +13,7 @@ const EXECUTION_WORDS =
   /(read_file|write_file|edit_file|\bbash\b|\bglob\b|\bgrep\b|\bgit\b|\bnpm\b|\bnpx\b|\bnode\b|\btsc\b|\bpython\b|\bpytest\b|\bcargo\b|\bgo\b|\bmake\b)/i;
 
 const EXECUTION_VERBS =
-  /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|改|写|建|加|删|跑|测|build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update)/i;
+  /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|完成|继续|接着|处理|搞定|收尾|补全|改|写|建|加|删|跑|测|build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update|continue|finish|resume)/i;
 
 /** 文件后缀 token（无执行动词时触发 search）。 */
 const FILE_EXT_RE = /\b[A-Za-z0-9_.\-/\\]+\.(?:ts|tsx|js|jsx|json|md|py|go|rs|java|cpp|c|h|txt|yaml|yml|toml|sh|css|html|sql)\b/i;
@@ -28,18 +28,27 @@ const CHAT_GREETING =
 const CHAT_SELF_QUESTION =
   /(你是谁|你是谁啊|你叫什么|介绍一下你自己|what are you|who are you|自我介绍)/i;
 
-/** 本地元命令前缀（斜杠命令/run/simulate 前缀，理论上入口已预处理，这里兜底）。 */
+/** R5（0.8.1）：疑问/概念提问标记——命中即抑制 execution 判定（概念提问不进执行循环白烧步数）。 */
+const QUESTION_MARK_RE = /(什么|怎么|怎样|为何|区别|差异|[?？])|吗[\s?？!！。.]*$/;
+
+/** R5（0.8.1）：文创/文字润饰类宾语——写诗/优化表达等纯文本创作（无文件参照时 → chat 直答）。 */
+const TEXT_CRAFT_RE = /(一首|诗|歌词|对联|谜语|故事|小说|散文|作文|文案|表达|措辞|润色)/;
+
+/** 本地元命令前缀（斜杠/simulate 前缀，理论上入口已预处理，这里兜底）。
+ *  R5（0.8.1）：`^r(un)?\s` 从意图分类移除——"run npm install 会发生什么"这类
+ *  疑问句曾被 meta 劫持成实际执行。run 命令别名语义只在交互层本地命令派发
+ *  （handleLocalCommand/命令注册表）有意义，不进意图分类。 */
 function isMeta(input: string): boolean {
   const t = input.trim();
   if (t.startsWith('/')) return true;
-  if (/^r(un)?\s+/i.test(t)) return true;
   if (/^s(imulate)?\s+/i.test(t)) return true;
   return false;
 }
 
 /**
  * 分类任务意图。
- * 顺序：meta → execution（强动词/工具/命令/@path）→ search（文件后缀无动词）→ chat。
+ * 顺序：meta → 问候/自我询问 → 疑问/文创否定启发（R5）→ execution（强动词/工具/
+ * 命令/@path）→ search（文件后缀无动词）→ chat。
  */
 export function classifyTaskIntent(input: string): TaskIntent {
   if (process.env.PANSHA_INTENT_GATE === '0') return 'execution';
@@ -53,6 +62,26 @@ export function classifyTaskIntent(input: string): TaskIntent {
   if (CHAT_GREETING.test(t)) return 'chat';
   if (CHAT_SELF_QUESTION.test(t)) return 'chat';
 
+  // R5 否定启发一：疑问/概念提问（"什么是bash"/"git rebase 和 merge 有什么区别"）
+  // ——工具词/动词命中也不判 execution。降级：含文件扩展名 → search（先只读
+  // 确认目标存在），否则 chat（单次直答）。
+  const hasFileRef = FILE_EXT_RE.test(t);
+
+  // 第 3 轮补丁：显式写/续接请求优先于疑问与扩展名启发——
+  // "继续完成 memo.txt 任务"曾被 .txt 命中判成 search 只读（模型遵命只查不写，
+  // 真机实测的续接任务卡死）。含写/续接动词 + 文件参照 = execution，问句不豁免
+  // （"能在 memo.txt 里加一行吗"仍是写请求）。
+  const EXPLICIT_WRITE_RE = /(写入|添加|改成|创建|新建|加上|加一行|写一行|写两行|补全|完成|继续|接着|搞定|收尾|落盘)/;
+  if (EXPLICIT_WRITE_RE.test(t) && hasFileRef) return 'execution';
+
+  if (QUESTION_MARK_RE.test(t)) {
+    return hasFileRef ? 'search' : 'chat';
+  }
+
+  // R5 否定启发二：文创/文字润饰类创作（"帮我写一首关于秋天的诗"/"优化一下这段
+  // 话的表达"）——无文件参照时不判 execution，纯文本创作直答即可。
+  if (!hasFileRef && TEXT_CRAFT_RE.test(t)) return 'chat';
+
   // 强工程触发词 → execution
   if (EXECUTION_WORDS.test(t)) return 'execution';
   if (AT_PATH_RE.test(t)) return 'execution';
@@ -61,7 +90,7 @@ export function classifyTaskIntent(input: string): TaskIntent {
   if (EXECUTION_VERBS.test(t)) return 'execution';
 
   // 无动词但含文件后缀/path token → search（先搜索，搜不到询问）
-  if (FILE_EXT_RE.test(t)) return 'search';
+  if (hasFileRef) return 'search';
 
   return 'chat';
 }

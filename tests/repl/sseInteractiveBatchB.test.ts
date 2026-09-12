@@ -10,17 +10,16 @@ import {
   pkgVersion,
   stripModelProviderPrefix,
   buildBanner,
-  LINE_COMMANDS,
-  completeLineCommand,
-  suggestCommand,
   buildQuickHelpLines,
   modeBadgeLine,
+  modeBadgeVisual,
   modeSwitchReceipt,
   localizePhase,
   localizeRolloutStatus,
-  createTipGate,
   shouldShowStartupTip,
-} from '../../src/cli/repl/sseInteractive.js';
+} from '../../src/cli/repl/turn/TurnRenderer.js';
+import { LINE_COMMANDS, completeLineCommand, suggestCommand } from '../../src/cli/repl/turn/CommandRouter.js';
+import { createTipGate } from '../../src/cli/repl/turn/TurnContext.js';
 import { padByWidth, stringWidth } from '../../src/cli/repl/stringWidth.js';
 import { buildHelpView } from '../../src/cli/repl/commands/HelpCommand.js';
 
@@ -129,11 +128,29 @@ describe('P2-4 模式徽标行与 /mode 回执', () => {
     assert.equal(modeBadgeLine('full'), '⏵⏵ full · shift+tab 切换');
   });
 
-  it('modeSwitchReceipt states the consequence of each mode', () => {
-    assert.equal(modeSwitchReceipt('default'), '已切换: default · 写操作需确认');
+  it('modeSwitchReceipt = CC 语法 `符号 档位 on` + 后果说明', () => {
+    assert.equal(modeSwitchReceipt('default'), '⏵ default mode on · 写操作需确认');
+    assert.equal(modeSwitchReceipt('auto-accept'), '⏵⏵ auto-accept on · 写操作自动接受（危险操作仍标红）');
+    assert.ok(modeSwitchReceipt('plan').startsWith('⏸ plan mode on · '));
     assert.ok(modeSwitchReceipt('plan').includes('只读计划模式'));
-    assert.ok(modeSwitchReceipt('auto-accept').includes('写操作自动接受'));
     assert.ok(modeSwitchReceipt('full').includes('全部放行'));
+    assert.ok(!/\s$/.test(modeSwitchReceipt('default')), '无尾随空白');
+  });
+
+  it('modeBadgeVisual：每档专属符号与颜色（CC 真机对标：plan 蓝 / accept 青 / full 品红 / default 灰）', () => {
+    assert.deepEqual(
+      { glyph: modeBadgeVisual('plan').glyph, color: modeBadgeVisual('plan').color },
+      { glyph: '⏸', color: 'blue' },
+    );
+    assert.equal(modeBadgeVisual('auto-accept').color, 'cyan');
+    assert.equal(modeBadgeVisual('auto-accept').glyph, '⏵⏵');
+    assert.equal(modeBadgeVisual('full').color, 'magenta');
+    assert.equal(modeBadgeVisual('full').glyph, '⏵⏵⏵');
+    assert.equal(modeBadgeVisual('default').color, 'gray');
+    // 行语法：`<符号> <档位> on · shift+tab 切换`
+    assert.equal(modeBadgeVisual('auto-accept').line, '⏵⏵ auto-accept on · shift+tab 切换');
+    // 未知档兜底 default 视觉，不抛
+    assert.equal(modeBadgeVisual('nonsense').color, 'gray');
   });
 });
 

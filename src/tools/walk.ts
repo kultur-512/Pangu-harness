@@ -13,6 +13,9 @@ import path from 'path';
 export const IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '.next', 'coverage',
   '__pycache__', '.venv', 'venv', 'target', 'out',
+  // M2-3 scratch（工具结果落盘）不入搜索面——否则模型 glob/grep 会搜到
+  // 自己之前的落盘产物造成上下文污染
+  '.panshalach',
 ]);
 
 export interface WalkEntry {

@@ -8,9 +8,10 @@
 //   files/<wsHash>/<id>__<base>   → backup content ("__ABSENT__" marker file
 //                                    records a create; undo deletes the file)
 //
-// Smoke safety: this module is only invoked from the engine adapter AFTER the
-// isSmokeEnvironment gate (non-TTY/CI never reaches it) or from an explicit
-// user command (/undo) — never from tests with fake TTYs.
+// Smoke safety (0.8): mock is explicit opt-in only (PANSHA_SMOKE=1); real
+// executions — interactive or not — reach this module AFTER the approval
+// three-tier gate + pathGuard + sensitive-path checks. /undo remains the
+// explicit user command path.
 
 import fs from 'fs';
 import os from 'os';
@@ -18,6 +19,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { createHash, randomBytes } from 'crypto';
 import { computeLineDiff } from './diff.js';
+import { isSensitiveRelPath } from './sensitivePaths.js';
 import type { DiffHunk } from './types.js';
 
 export interface CheckpointEntry {
@@ -296,6 +298,10 @@ export function undoLatest(workspaceRoot: string, rel?: string): UndoResult {
   const entry = latestCheckpoint(workspaceRoot, rel);
   if (!entry) {
     return { ok: false, message: '没有可撤销的写操作（file-history 为空）' };
+  }
+  // M2-6: /undo must not restore sensitive paths (write-gate bypass defense).
+  if (isSensitiveRelPath(entry.rel)) {
+    return { ok: false, message: `✗ SENSITIVE_PATH: ${entry.rel} 位于敏感路径清单，禁止撤销还原` };
   }
 
   const currentExists = fs.existsSync(entry.abs);

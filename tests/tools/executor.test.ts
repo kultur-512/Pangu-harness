@@ -97,17 +97,24 @@ describe('engineAdapter safety gate', () => {
     delete process.env.PANSHA_HEADLESS; // dogfood-① teardown
   });
 
-  it('non-TTY environment → mock string, real file never read', async () => {
+  it('non-TTY + no PANSHA_SMOKE → real execution; readonly still denies writes (0.8 语义反转)', async () => {
     setStdoutTty(undefined); // pipe
     delete process.env.PANSHA_SMOKE;
-    assert.equal(isSmokeEnvironment(), true);
+    assert.equal(isSmokeEnvironment(), false, 'non-TTY no longer defaults to mock');
 
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
+    // 只读工具真实执行（内容可读，不再被 mock 假结果密封）
     const out = await adapter.execute([
       { toolName: 'read_file', params: [{ name: 'file_path', value: 'secret.txt' }], rawBlock: '' } as any,
     ]);
-    assert.equal(out, SMOKE_MOCK_RESULT);
-    assert.ok(!out.includes('TOP-SECRET-CONTENT'));
+    assert.ok(out.startsWith('READ_SUCCESS: secret.txt'), `expected real read, got: ${out.slice(0, 40)}`);
+    assert.ok(out.includes('TOP-SECRET-CONTENT'));
+    // 非交互写保护转移到了真防护层：readonly 档拒写，文件不被触碰
+    const w = await adapter.execute([
+      { toolName: 'write_file', params: [{ name: 'file_path', value: 'secret.txt' }, { name: 'content', value: 'hacked' }], rawBlock: '' } as any,
+    ]);
+    assert.ok(w.startsWith('TOOL_ERROR: DENIED_READONLY'), w.slice(0, 80));
+    assert.equal(fs.readFileSync(path.join(root, 'secret.txt'), 'utf-8'), 'TOP-SECRET-CONTENT');
   });
 
   it('PANSHA_SMOKE=1 forces mock even in TTY', async () => {
@@ -135,11 +142,11 @@ describe('engineAdapter safety gate', () => {
     assert.ok(out.includes('TOP-SECRET-CONTENT'));
   });
 
-  it('PANSHA_HEADLESS=1 opts out of mock in non-TTY (real execution) (dogfood-①)', async () => {
+  it('PANSHA_HEADLESS=1 in non-TTY → real execution (0.8: no-op compat alias, non-TTY defaults real) (dogfood-①)', async () => {
     setStdoutTty(undefined); // pipe (non-TTY)
     delete process.env.PANSHA_SMOKE;
     process.env.PANSHA_HEADLESS = '1';
-    assert.equal(isSmokeEnvironment(), false, 'HEADLESS must escape the isTTY gate');
+    assert.equal(isSmokeEnvironment(), false, 'HEADLESS is a no-op alias; non-TTY is real by default');
 
     const adapter = createEngineAdapter({ workspaceRoot: root, tierConfig: fakeTierConfig() });
     const out = await adapter.execute([
@@ -155,14 +162,14 @@ describe('engineAdapter safety gate', () => {
     assert.equal(isSmokeEnvironment(), true, 'SMOKE must win over HEADLESS');
   });
 
-  it('unset both + non-TTY → mock (default unchanged) (dogfood-①)', async () => {
+  it('unset both + non-TTY → real execution (0.8 语义反转：非 TTY 不再默认 mock) (dogfood-①)', async () => {
     delete process.env.PANSHA_HEADLESS;
     delete process.env.PANSHA_SMOKE;
     setStdoutTty(undefined);
-    assert.equal(isSmokeEnvironment(), true, 'default non-TTY must stay mock');
+    assert.equal(isSmokeEnvironment(), false, 'non-TTY default is now real execution');
   });
 
-  it('HEADLESS flag only escapes mock when explicitly set — TTY+SMOKE unset still real (dogfood-①)', async () => {
+  it('explicit opt-in only — TTY + SMOKE unset still real (dogfood-①)', async () => {
     setStdoutTty(true);
     delete process.env.PANSHA_HEADLESS;
     delete process.env.PANSHA_SMOKE;

@@ -1,0 +1,1963 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-09T22:57:40.167Z",
+    "source": "mock-smoke",
+    "model": "mock://smoke",
+    "runnerVersion": "0.2.0"
+  },
+  "summary": {
+    "summaryId": "d36729fb-1dad-454e-a155-17f309e25c6c",
+    "generatedAt": "2026-09-09T22:57:40.167Z",
+    "source": "mock-smoke",
+    "total": 20,
+    "totalRuns": 20,
+    "passed": 20,
+    "failed": 0,
+    "validSamples": 20,
+    "byAblation": {
+      "A": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "B": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "C": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      },
+      "C4": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "invalid": 0,
+        "notApplicable": 0
+      }
+    },
+    "ablations": {
+      "A": "baseline (no memory, no refine) — must overflow",
+      "B": "memory on (refine + markVerified) — zero-injection is line-defense failure",
+      "C": "B + injection budget (L0/L1 contracts)",
+      "C4": "B + semantic retrieval (n-gram, R7)"
+    },
+    "runIds": [
+      "66e3bf52-1a38-4cf1-b154-f93c21ec572f",
+      "ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd",
+      "f2218d5d-dad7-4cc3-a3da-da501e8b3b11",
+      "e37e386b-3cb3-473f-b0bb-b5fd1e42ac30",
+      "7957442c-79ba-4e2f-b356-68380b45eded",
+      "664505ef-12ce-4dbd-9088-534f0a8e2fef",
+      "a31bfa60-5e85-4b3b-8fde-696f288d92f8",
+      "b604ef40-ae48-4a9f-b806-afaac0766c27",
+      "cc258a1f-f6f7-47f7-b19b-d216098688f8",
+      "30dbf295-2518-4818-a739-aa4cb12b8261",
+      "bf7cb267-0553-49ce-9dc6-8e17a3047e5e",
+      "24ee93cc-5a8a-484b-9d5a-662dcb62e0e5",
+      "9cdd36df-9e8d-420d-ad8a-af38e42d8eb2",
+      "f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6",
+      "9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9",
+      "8aa5e375-489d-4753-a574-597d390451b7",
+      "648fe0b2-8f11-4b4e-95c1-ae182ca55c9f",
+      "d15e9144-e2c3-40dc-bc23-921388edc2fd",
+      "75565d78-51f2-4f3e-b423-7a69bcdd3f45",
+      "5660ac40-9d66-4ae6-b721-0b53ee3083b7"
+    ],
+    "results": [
+      {
+        "runId": "66e3bf52-1a38-4cf1-b154-f93c21ec572f",
+        "source": "mock-smoke",
+        "ablation": "A",
+        "taskId": "T1-a-42",
+        "taskFamily": "T1",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.166Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 1,
+        "verdict": "no-verification",
+        "verification": {
+          "signal": "NO_VERIFICATION",
+          "exitCode": 0,
+          "commands": []
+        },
+        "memory": {
+          "injectedCardIds": [],
+          "verifiedCardIds": []
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "565f015575c1c2e289c5402ede93996c58f6b2ba0f435ca9d4e37760766786d4"
+        },
+        "failureTaxonomy": "overflow-skipped",
+        "artifacts": {
+          "rolloutJsonl": "results/66e3bf52-1a38-4cf1-b154-f93c21ec572f/rollout.jsonl"
+        },
+        "tags": [
+          "overflow-skipped",
+          "mock-no-real-overflow"
+        ],
+        "stopReason": "no-verification"
+      },
+      {
+        "runId": "ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd",
+        "source": "mock-smoke",
+        "ablation": "A",
+        "taskId": "T2-a-42",
+        "taskFamily": "T2",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "no-verification",
+        "verification": {
+          "signal": "NO_VERIFICATION",
+          "exitCode": 0,
+          "commands": []
+        },
+        "memory": {
+          "injectedCardIds": [],
+          "verifiedCardIds": []
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "0ad483e01973515a159621915c6c1306cac8ea20a5e6c46526412535c1ede250"
+        },
+        "failureTaxonomy": "overflow-skipped",
+        "artifacts": {
+          "rolloutJsonl": "results/ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd/rollout.jsonl"
+        },
+        "tags": [
+          "overflow-skipped",
+          "mock-no-real-overflow"
+        ],
+        "stopReason": "no-verification"
+      },
+      {
+        "runId": "f2218d5d-dad7-4cc3-a3da-da501e8b3b11",
+        "source": "mock-smoke",
+        "ablation": "A",
+        "taskId": "T3-a-42",
+        "taskFamily": "T3",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "no-verification",
+        "verification": {
+          "signal": "NO_VERIFICATION",
+          "exitCode": 0,
+          "commands": []
+        },
+        "memory": {
+          "injectedCardIds": [],
+          "verifiedCardIds": []
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "52bdc764e362d2564928814559a263efc5e5a25496b62c36d1eb4e46e6ea3e75"
+        },
+        "failureTaxonomy": "overflow-skipped",
+        "artifacts": {
+          "rolloutJsonl": "results/f2218d5d-dad7-4cc3-a3da-da501e8b3b11/rollout.jsonl"
+        },
+        "tags": [
+          "overflow-skipped",
+          "mock-no-real-overflow"
+        ],
+        "stopReason": "no-verification"
+      },
+      {
+        "runId": "e37e386b-3cb3-473f-b0bb-b5fd1e42ac30",
+        "source": "mock-smoke",
+        "ablation": "A",
+        "taskId": "T4-a-42",
+        "taskFamily": "T4",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "no-verification",
+        "verification": {
+          "signal": "NO_VERIFICATION",
+          "exitCode": 0,
+          "commands": []
+        },
+        "memory": {
+          "injectedCardIds": [],
+          "verifiedCardIds": []
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "179802028f536253317d3870575e633c81235ae3cc9d6e6110ee0214299fb4b6"
+        },
+        "failureTaxonomy": "overflow-skipped",
+        "artifacts": {
+          "rolloutJsonl": "results/e37e386b-3cb3-473f-b0bb-b5fd1e42ac30/rollout.jsonl"
+        },
+        "tags": [
+          "overflow-skipped",
+          "mock-no-real-overflow",
+          "resumed"
+        ],
+        "stopReason": "no-verification",
+        "attemptCount": 2
+      },
+      {
+        "runId": "7957442c-79ba-4e2f-b356-68380b45eded",
+        "source": "mock-smoke",
+        "ablation": "A",
+        "taskId": "T5-a-42",
+        "taskFamily": "T5",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "no-verification",
+        "verification": {
+          "signal": "NO_VERIFICATION",
+          "exitCode": 0,
+          "commands": []
+        },
+        "memory": {
+          "injectedCardIds": [],
+          "verifiedCardIds": []
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "290a4a5ddc67f4f7cb3cac8e42ec618b3ae643af2d89a06f349e0e51d87f9bf9"
+        },
+        "failureTaxonomy": "overflow-skipped",
+        "artifacts": {
+          "rolloutJsonl": "results/7957442c-79ba-4e2f-b356-68380b45eded/rollout.jsonl"
+        },
+        "tags": [
+          "overflow-skipped",
+          "mock-no-real-overflow"
+        ],
+        "stopReason": "no-verification"
+      },
+      {
+        "runId": "664505ef-12ce-4dbd-9088-534f0a8e2fef",
+        "source": "mock-smoke",
+        "ablation": "B",
+        "taskId": "T1-b-42",
+        "taskFamily": "T1",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-verify-T1"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T1-001",
+            "card-T1-002"
+          ],
+          "verifiedCardIds": [
+            "card-T1-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "f6ada244827b0b60e4ebdd01eeef06f20552e13babb635cc2df5f1140b109c25"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/664505ef-12ce-4dbd-9088-534f0a8e2fef/rollout.jsonl"
+        },
+        "tags": [],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "a31bfa60-5e85-4b3b-8fde-696f288d92f8",
+        "source": "mock-smoke",
+        "ablation": "B",
+        "taskId": "T2-b-42",
+        "taskFamily": "T2",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-verify-T2"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T2-001",
+            "card-T2-002"
+          ],
+          "verifiedCardIds": [
+            "card-T2-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "f27d479d124b1c59487ebf0ca12aa00aab6081e41145188af043f13d04841652"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/a31bfa60-5e85-4b3b-8fde-696f288d92f8/rollout.jsonl"
+        },
+        "tags": [],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "b604ef40-ae48-4a9f-b806-afaac0766c27",
+        "source": "mock-smoke",
+        "ablation": "B",
+        "taskId": "T3-b-42",
+        "taskFamily": "T3",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-verify-T3"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T3-001",
+            "card-T3-002"
+          ],
+          "verifiedCardIds": [
+            "card-T3-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "a1099c1c54dded8ee7d8d8f2c8c2917005970f065860868ac97c4980759011e9"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/b604ef40-ae48-4a9f-b806-afaac0766c27/rollout.jsonl"
+        },
+        "tags": [],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "cc258a1f-f6f7-47f7-b19b-d216098688f8",
+        "source": "mock-smoke",
+        "ablation": "B",
+        "taskId": "T4-b-42",
+        "taskFamily": "T4",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-verify-T4"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T4-001",
+            "card-T4-002"
+          ],
+          "verifiedCardIds": [
+            "card-T4-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "d53029bf33901c55f6c8106c6ebefebf216e63b32e2d01638e47dfd3de525ab6"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/cc258a1f-f6f7-47f7-b19b-d216098688f8/rollout.jsonl"
+        },
+        "tags": [
+          "resumed"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 2,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "30dbf295-2518-4818-a739-aa4cb12b8261",
+        "source": "mock-smoke",
+        "ablation": "B",
+        "taskId": "T5-b-42",
+        "taskFamily": "T5",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-verify-T5"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T5-001",
+            "card-T5-002"
+          ],
+          "verifiedCardIds": [
+            "card-T5-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "2e4380aed888ad51c45c1638f014225252c04242ddbe2a1abd12c44f6b0170bb"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/30dbf295-2518-4818-a739-aa4cb12b8261/rollout.jsonl"
+        },
+        "tags": [],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "bf7cb267-0553-49ce-9dc6-8e17a3047e5e",
+        "source": "mock-smoke",
+        "ablation": "C",
+        "taskId": "T1-c-42",
+        "taskFamily": "T1",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "ALL_TESTS_PASSED",
+          "exitCode": 0,
+          "commands": [
+            "mock-budget-T1"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T1-001"
+          ],
+          "verifiedCardIds": [
+            "card-T1-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "f049300a388d229363921a2dfb75e66e4ba412f86fff1d8c08b1622c335e2fa5"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/bf7cb267-0553-49ce-9dc6-8e17a3047e5e/rollout.jsonl"
+        },
+        "tags": [
+          "budget-active"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 1,
+          "written": 2,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "24ee93cc-5a8a-484b-9d5a-662dcb62e0e5",
+        "source": "mock-smoke",
+        "ablation": "C",
+        "taskId": "T2-c-42",
+        "taskFamily": "T2",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "ALL_TESTS_PASSED",
+          "exitCode": 0,
+          "commands": [
+            "mock-budget-T2"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T2-001"
+          ],
+          "verifiedCardIds": [
+            "card-T2-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "94bbdfbcc9be824fdb0473654951a07ee17313e9a9ec7aef0d2735845d723ec3"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/24ee93cc-5a8a-484b-9d5a-662dcb62e0e5/rollout.jsonl"
+        },
+        "tags": [
+          "budget-active"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 1,
+          "written": 2,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "9cdd36df-9e8d-420d-ad8a-af38e42d8eb2",
+        "source": "mock-smoke",
+        "ablation": "C",
+        "taskId": "T3-c-42",
+        "taskFamily": "T3",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "ALL_TESTS_PASSED",
+          "exitCode": 0,
+          "commands": [
+            "mock-budget-T3"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T3-001"
+          ],
+          "verifiedCardIds": [
+            "card-T3-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "e183ea4c034c2a2d4fbfb97cda2b24d8926c1a565a6383984b400892474b4e31"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/9cdd36df-9e8d-420d-ad8a-af38e42d8eb2/rollout.jsonl"
+        },
+        "tags": [
+          "budget-active"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 1,
+          "written": 2,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6",
+        "source": "mock-smoke",
+        "ablation": "C",
+        "taskId": "T4-c-42",
+        "taskFamily": "T4",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "ALL_TESTS_PASSED",
+          "exitCode": 0,
+          "commands": [
+            "mock-budget-T4"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T4-001"
+          ],
+          "verifiedCardIds": [
+            "card-T4-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "d59aa9f036b43489a7f4acba39c3fc1d97c6a8477c27002d68eb3dbf8e5e38b4"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6/rollout.jsonl"
+        },
+        "tags": [
+          "budget-active",
+          "resumed"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 2,
+        "refined": {
+          "added": 1,
+          "merged": 1,
+          "written": 2,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9",
+        "source": "mock-smoke",
+        "ablation": "C",
+        "taskId": "T5-c-42",
+        "taskFamily": "T5",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "ALL_TESTS_PASSED",
+          "exitCode": 0,
+          "commands": [
+            "mock-budget-T5"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T5-001"
+          ],
+          "verifiedCardIds": [
+            "card-T5-001"
+          ]
+        },
+        "prompt": {
+          "chars": 19,
+          "estimatedTokens": 5,
+          "hash": "b9264a3c9442a1b4a62aa91ce69ef2e54ed7fd156f0a82ac7933392267e4e554"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9/rollout.jsonl"
+        },
+        "tags": [
+          "budget-active"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 1,
+          "written": 2,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "8aa5e375-489d-4753-a574-597d390451b7",
+        "source": "mock-smoke",
+        "ablation": "C4",
+        "taskId": "T1-c4-42",
+        "taskFamily": "T1",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-semantic-T1"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T1-sem-001"
+          ],
+          "verifiedCardIds": [
+            "card-T1-sem-001"
+          ]
+        },
+        "prompt": {
+          "chars": 20,
+          "estimatedTokens": 5,
+          "hash": "ccc79d1c3a2286c02b14c13014285535edad1a35881682857e9c18814927664d"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/8aa5e375-489d-4753-a574-597d390451b7/rollout.jsonl"
+        },
+        "tags": [
+          "semantic-retrieval"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "648fe0b2-8f11-4b4e-95c1-ae182ca55c9f",
+        "source": "mock-smoke",
+        "ablation": "C4",
+        "taskId": "T2-c4-42",
+        "taskFamily": "T2",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-semantic-T2"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T2-sem-001"
+          ],
+          "verifiedCardIds": [
+            "card-T2-sem-001"
+          ]
+        },
+        "prompt": {
+          "chars": 20,
+          "estimatedTokens": 5,
+          "hash": "055cacb6cb638cfa0fbd1fd86c09ba329ce60579f2aa2c90c56b3094b4aad9aa"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/648fe0b2-8f11-4b4e-95c1-ae182ca55c9f/rollout.jsonl"
+        },
+        "tags": [
+          "semantic-retrieval"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "d15e9144-e2c3-40dc-bc23-921388edc2fd",
+        "source": "mock-smoke",
+        "ablation": "C4",
+        "taskId": "T3-c4-42",
+        "taskFamily": "T3",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-semantic-T3"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T3-sem-001"
+          ],
+          "verifiedCardIds": [
+            "card-T3-sem-001"
+          ]
+        },
+        "prompt": {
+          "chars": 20,
+          "estimatedTokens": 5,
+          "hash": "30e2f6f0811bf5f397897cffe9e78a08aa7e95e164481f6901b7651c090b4ed1"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/d15e9144-e2c3-40dc-bc23-921388edc2fd/rollout.jsonl"
+        },
+        "tags": [
+          "semantic-retrieval"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "75565d78-51f2-4f3e-b423-7a69bcdd3f45",
+        "source": "mock-smoke",
+        "ablation": "C4",
+        "taskId": "T4-c4-42",
+        "taskFamily": "T4",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-semantic-T4"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T4-sem-001"
+          ],
+          "verifiedCardIds": [
+            "card-T4-sem-001"
+          ]
+        },
+        "prompt": {
+          "chars": 20,
+          "estimatedTokens": 5,
+          "hash": "bf5f086c1da1887a9e0f35d33e35270de272fa542b1cf116f4d39b03a8359f23"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/75565d78-51f2-4f3e-b423-7a69bcdd3f45/rollout.jsonl"
+        },
+        "tags": [
+          "semantic-retrieval",
+          "resumed"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 2,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      },
+      {
+        "runId": "5660ac40-9d66-4ae6-b721-0b53ee3083b7",
+        "source": "mock-smoke",
+        "ablation": "C4",
+        "taskId": "T5-c4-42",
+        "taskFamily": "T5",
+        "seed": 42,
+        "seedSupport": true,
+        "modelId": "mock://smoke",
+        "panshalachVersion": "0.6.5",
+        "startedAt": "2026-09-09T22:57:40.167Z",
+        "finishedAt": "2026-09-09T22:57:40.167Z",
+        "durationMs": 0,
+        "verdict": "completed",
+        "verification": {
+          "signal": "PASS",
+          "exitCode": 0,
+          "commands": [
+            "mock-semantic-T5"
+          ]
+        },
+        "memory": {
+          "injectedCardIds": [
+            "card-T5-sem-001"
+          ],
+          "verifiedCardIds": [
+            "card-T5-sem-001"
+          ]
+        },
+        "prompt": {
+          "chars": 20,
+          "estimatedTokens": 5,
+          "hash": "8f4aba8417c579f216dbfeac0f815a90427468fd24db8f4b4b1b66fb4dec4a6f"
+        },
+        "failureTaxonomy": "none",
+        "artifacts": {
+          "rolloutJsonl": "results/5660ac40-9d66-4ae6-b721-0b53ee3083b7/rollout.jsonl"
+        },
+        "tags": [
+          "semantic-retrieval"
+        ],
+        "stopReason": "completed",
+        "attemptCount": 1,
+        "refined": {
+          "added": 1,
+          "merged": 0,
+          "written": 1,
+          "capped": 0
+        }
+      }
+    ],
+    "errors": []
+  },
+  "results": [
+    {
+      "runId": "66e3bf52-1a38-4cf1-b154-f93c21ec572f",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T1-a-42",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.166Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 1,
+      "verdict": "no-verification",
+      "verification": {
+        "signal": "NO_VERIFICATION",
+        "exitCode": 0,
+        "commands": []
+      },
+      "memory": {
+        "injectedCardIds": [],
+        "verifiedCardIds": []
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "565f015575c1c2e289c5402ede93996c58f6b2ba0f435ca9d4e37760766786d4"
+      },
+      "failureTaxonomy": "overflow-skipped",
+      "artifacts": {
+        "rolloutJsonl": "results/66e3bf52-1a38-4cf1-b154-f93c21ec572f/rollout.jsonl"
+      },
+      "tags": [
+        "overflow-skipped",
+        "mock-no-real-overflow"
+      ],
+      "stopReason": "no-verification"
+    },
+    {
+      "runId": "ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T2-a-42",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "no-verification",
+      "verification": {
+        "signal": "NO_VERIFICATION",
+        "exitCode": 0,
+        "commands": []
+      },
+      "memory": {
+        "injectedCardIds": [],
+        "verifiedCardIds": []
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "0ad483e01973515a159621915c6c1306cac8ea20a5e6c46526412535c1ede250"
+      },
+      "failureTaxonomy": "overflow-skipped",
+      "artifacts": {
+        "rolloutJsonl": "results/ea7ad947-5d3c-4f56-b02d-2cd5bfd19afd/rollout.jsonl"
+      },
+      "tags": [
+        "overflow-skipped",
+        "mock-no-real-overflow"
+      ],
+      "stopReason": "no-verification"
+    },
+    {
+      "runId": "f2218d5d-dad7-4cc3-a3da-da501e8b3b11",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T3-a-42",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "no-verification",
+      "verification": {
+        "signal": "NO_VERIFICATION",
+        "exitCode": 0,
+        "commands": []
+      },
+      "memory": {
+        "injectedCardIds": [],
+        "verifiedCardIds": []
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "52bdc764e362d2564928814559a263efc5e5a25496b62c36d1eb4e46e6ea3e75"
+      },
+      "failureTaxonomy": "overflow-skipped",
+      "artifacts": {
+        "rolloutJsonl": "results/f2218d5d-dad7-4cc3-a3da-da501e8b3b11/rollout.jsonl"
+      },
+      "tags": [
+        "overflow-skipped",
+        "mock-no-real-overflow"
+      ],
+      "stopReason": "no-verification"
+    },
+    {
+      "runId": "e37e386b-3cb3-473f-b0bb-b5fd1e42ac30",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T4-a-42",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "no-verification",
+      "verification": {
+        "signal": "NO_VERIFICATION",
+        "exitCode": 0,
+        "commands": []
+      },
+      "memory": {
+        "injectedCardIds": [],
+        "verifiedCardIds": []
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "179802028f536253317d3870575e633c81235ae3cc9d6e6110ee0214299fb4b6"
+      },
+      "failureTaxonomy": "overflow-skipped",
+      "artifacts": {
+        "rolloutJsonl": "results/e37e386b-3cb3-473f-b0bb-b5fd1e42ac30/rollout.jsonl"
+      },
+      "tags": [
+        "overflow-skipped",
+        "mock-no-real-overflow",
+        "resumed"
+      ],
+      "stopReason": "no-verification",
+      "attemptCount": 2
+    },
+    {
+      "runId": "7957442c-79ba-4e2f-b356-68380b45eded",
+      "source": "mock-smoke",
+      "ablation": "A",
+      "taskId": "T5-a-42",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "no-verification",
+      "verification": {
+        "signal": "NO_VERIFICATION",
+        "exitCode": 0,
+        "commands": []
+      },
+      "memory": {
+        "injectedCardIds": [],
+        "verifiedCardIds": []
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "290a4a5ddc67f4f7cb3cac8e42ec618b3ae643af2d89a06f349e0e51d87f9bf9"
+      },
+      "failureTaxonomy": "overflow-skipped",
+      "artifacts": {
+        "rolloutJsonl": "results/7957442c-79ba-4e2f-b356-68380b45eded/rollout.jsonl"
+      },
+      "tags": [
+        "overflow-skipped",
+        "mock-no-real-overflow"
+      ],
+      "stopReason": "no-verification"
+    },
+    {
+      "runId": "664505ef-12ce-4dbd-9088-534f0a8e2fef",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T1-b-42",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-verify-T1"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T1-001",
+          "card-T1-002"
+        ],
+        "verifiedCardIds": [
+          "card-T1-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "f6ada244827b0b60e4ebdd01eeef06f20552e13babb635cc2df5f1140b109c25"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/664505ef-12ce-4dbd-9088-534f0a8e2fef/rollout.jsonl"
+      },
+      "tags": [],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "a31bfa60-5e85-4b3b-8fde-696f288d92f8",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T2-b-42",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-verify-T2"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T2-001",
+          "card-T2-002"
+        ],
+        "verifiedCardIds": [
+          "card-T2-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "f27d479d124b1c59487ebf0ca12aa00aab6081e41145188af043f13d04841652"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/a31bfa60-5e85-4b3b-8fde-696f288d92f8/rollout.jsonl"
+      },
+      "tags": [],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "b604ef40-ae48-4a9f-b806-afaac0766c27",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T3-b-42",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-verify-T3"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T3-001",
+          "card-T3-002"
+        ],
+        "verifiedCardIds": [
+          "card-T3-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "a1099c1c54dded8ee7d8d8f2c8c2917005970f065860868ac97c4980759011e9"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/b604ef40-ae48-4a9f-b806-afaac0766c27/rollout.jsonl"
+      },
+      "tags": [],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "cc258a1f-f6f7-47f7-b19b-d216098688f8",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T4-b-42",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-verify-T4"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T4-001",
+          "card-T4-002"
+        ],
+        "verifiedCardIds": [
+          "card-T4-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "d53029bf33901c55f6c8106c6ebefebf216e63b32e2d01638e47dfd3de525ab6"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/cc258a1f-f6f7-47f7-b19b-d216098688f8/rollout.jsonl"
+      },
+      "tags": [
+        "resumed"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 2,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "30dbf295-2518-4818-a739-aa4cb12b8261",
+      "source": "mock-smoke",
+      "ablation": "B",
+      "taskId": "T5-b-42",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-verify-T5"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T5-001",
+          "card-T5-002"
+        ],
+        "verifiedCardIds": [
+          "card-T5-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "2e4380aed888ad51c45c1638f014225252c04242ddbe2a1abd12c44f6b0170bb"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/30dbf295-2518-4818-a739-aa4cb12b8261/rollout.jsonl"
+      },
+      "tags": [],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "bf7cb267-0553-49ce-9dc6-8e17a3047e5e",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T1-c-42",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "ALL_TESTS_PASSED",
+        "exitCode": 0,
+        "commands": [
+          "mock-budget-T1"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T1-001"
+        ],
+        "verifiedCardIds": [
+          "card-T1-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "f049300a388d229363921a2dfb75e66e4ba412f86fff1d8c08b1622c335e2fa5"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/bf7cb267-0553-49ce-9dc6-8e17a3047e5e/rollout.jsonl"
+      },
+      "tags": [
+        "budget-active"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 1,
+        "written": 2,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "24ee93cc-5a8a-484b-9d5a-662dcb62e0e5",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T2-c-42",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "ALL_TESTS_PASSED",
+        "exitCode": 0,
+        "commands": [
+          "mock-budget-T2"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T2-001"
+        ],
+        "verifiedCardIds": [
+          "card-T2-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "94bbdfbcc9be824fdb0473654951a07ee17313e9a9ec7aef0d2735845d723ec3"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/24ee93cc-5a8a-484b-9d5a-662dcb62e0e5/rollout.jsonl"
+      },
+      "tags": [
+        "budget-active"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 1,
+        "written": 2,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "9cdd36df-9e8d-420d-ad8a-af38e42d8eb2",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T3-c-42",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "ALL_TESTS_PASSED",
+        "exitCode": 0,
+        "commands": [
+          "mock-budget-T3"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T3-001"
+        ],
+        "verifiedCardIds": [
+          "card-T3-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "e183ea4c034c2a2d4fbfb97cda2b24d8926c1a565a6383984b400892474b4e31"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/9cdd36df-9e8d-420d-ad8a-af38e42d8eb2/rollout.jsonl"
+      },
+      "tags": [
+        "budget-active"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 1,
+        "written": 2,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T4-c-42",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "ALL_TESTS_PASSED",
+        "exitCode": 0,
+        "commands": [
+          "mock-budget-T4"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T4-001"
+        ],
+        "verifiedCardIds": [
+          "card-T4-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "d59aa9f036b43489a7f4acba39c3fc1d97c6a8477c27002d68eb3dbf8e5e38b4"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/f2b0c6e9-d9ee-4a01-a7cd-2dfc4ab428b6/rollout.jsonl"
+      },
+      "tags": [
+        "budget-active",
+        "resumed"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 2,
+      "refined": {
+        "added": 1,
+        "merged": 1,
+        "written": 2,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9",
+      "source": "mock-smoke",
+      "ablation": "C",
+      "taskId": "T5-c-42",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "ALL_TESTS_PASSED",
+        "exitCode": 0,
+        "commands": [
+          "mock-budget-T5"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T5-001"
+        ],
+        "verifiedCardIds": [
+          "card-T5-001"
+        ]
+      },
+      "prompt": {
+        "chars": 19,
+        "estimatedTokens": 5,
+        "hash": "b9264a3c9442a1b4a62aa91ce69ef2e54ed7fd156f0a82ac7933392267e4e554"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/9e58fc2a-41dc-4d4f-8355-a6f1fb165ba9/rollout.jsonl"
+      },
+      "tags": [
+        "budget-active"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 1,
+        "written": 2,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "8aa5e375-489d-4753-a574-597d390451b7",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T1-c4-42",
+      "taskFamily": "T1",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-semantic-T1"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T1-sem-001"
+        ],
+        "verifiedCardIds": [
+          "card-T1-sem-001"
+        ]
+      },
+      "prompt": {
+        "chars": 20,
+        "estimatedTokens": 5,
+        "hash": "ccc79d1c3a2286c02b14c13014285535edad1a35881682857e9c18814927664d"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/8aa5e375-489d-4753-a574-597d390451b7/rollout.jsonl"
+      },
+      "tags": [
+        "semantic-retrieval"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "648fe0b2-8f11-4b4e-95c1-ae182ca55c9f",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T2-c4-42",
+      "taskFamily": "T2",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-semantic-T2"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T2-sem-001"
+        ],
+        "verifiedCardIds": [
+          "card-T2-sem-001"
+        ]
+      },
+      "prompt": {
+        "chars": 20,
+        "estimatedTokens": 5,
+        "hash": "055cacb6cb638cfa0fbd1fd86c09ba329ce60579f2aa2c90c56b3094b4aad9aa"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/648fe0b2-8f11-4b4e-95c1-ae182ca55c9f/rollout.jsonl"
+      },
+      "tags": [
+        "semantic-retrieval"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "d15e9144-e2c3-40dc-bc23-921388edc2fd",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T3-c4-42",
+      "taskFamily": "T3",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-semantic-T3"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T3-sem-001"
+        ],
+        "verifiedCardIds": [
+          "card-T3-sem-001"
+        ]
+      },
+      "prompt": {
+        "chars": 20,
+        "estimatedTokens": 5,
+        "hash": "30e2f6f0811bf5f397897cffe9e78a08aa7e95e164481f6901b7651c090b4ed1"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/d15e9144-e2c3-40dc-bc23-921388edc2fd/rollout.jsonl"
+      },
+      "tags": [
+        "semantic-retrieval"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "75565d78-51f2-4f3e-b423-7a69bcdd3f45",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T4-c4-42",
+      "taskFamily": "T4",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-semantic-T4"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T4-sem-001"
+        ],
+        "verifiedCardIds": [
+          "card-T4-sem-001"
+        ]
+      },
+      "prompt": {
+        "chars": 20,
+        "estimatedTokens": 5,
+        "hash": "bf5f086c1da1887a9e0f35d33e35270de272fa542b1cf116f4d39b03a8359f23"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/75565d78-51f2-4f3e-b423-7a69bcdd3f45/rollout.jsonl"
+      },
+      "tags": [
+        "semantic-retrieval",
+        "resumed"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 2,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    },
+    {
+      "runId": "5660ac40-9d66-4ae6-b721-0b53ee3083b7",
+      "source": "mock-smoke",
+      "ablation": "C4",
+      "taskId": "T5-c4-42",
+      "taskFamily": "T5",
+      "seed": 42,
+      "seedSupport": true,
+      "modelId": "mock://smoke",
+      "panshalachVersion": "0.6.5",
+      "startedAt": "2026-09-09T22:57:40.167Z",
+      "finishedAt": "2026-09-09T22:57:40.167Z",
+      "durationMs": 0,
+      "verdict": "completed",
+      "verification": {
+        "signal": "PASS",
+        "exitCode": 0,
+        "commands": [
+          "mock-semantic-T5"
+        ]
+      },
+      "memory": {
+        "injectedCardIds": [
+          "card-T5-sem-001"
+        ],
+        "verifiedCardIds": [
+          "card-T5-sem-001"
+        ]
+      },
+      "prompt": {
+        "chars": 20,
+        "estimatedTokens": 5,
+        "hash": "8f4aba8417c579f216dbfeac0f815a90427468fd24db8f4b4b1b66fb4dec4a6f"
+      },
+      "failureTaxonomy": "none",
+      "artifacts": {
+        "rolloutJsonl": "results/5660ac40-9d66-4ae6-b721-0b53ee3083b7/rollout.jsonl"
+      },
+      "tags": [
+        "semantic-retrieval"
+      ],
+      "stopReason": "completed",
+      "attemptCount": 1,
+      "refined": {
+        "added": 1,
+        "merged": 0,
+        "written": 1,
+        "capped": 0
+      }
+    }
+  ]
+}

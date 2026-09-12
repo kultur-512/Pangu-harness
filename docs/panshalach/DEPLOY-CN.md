@@ -1,6 +1,7 @@
 # 烛龙（Zhulong）部署指南（DEPLOY-CN）
 
-> 内部代号 Panshalach · 基于 openPangu 的记忆增强长程上下文智能体。
+> 内部代号 Panshalach · 基于 openPangu 的记忆增强通用智能体（产品名烛龙 Zhulong）。
+> 部署基线：**v0.8.0-rc**；`npm run build` 后 bin 指向 dist/（src 有更新时启动会出现 dist-fresh 黄字提醒）。
 > **状态口径**：§1–§4 为**本机已验证路径**（Windows + Node 22 + LM Studio 本地 openPangu 端点，见 CHANGELOG 0.6.4/0.6.5/0.7.x 记录）；§5 昇腾与 §6 麒麟/国产 OS 为**标准流程框架，待端点/整机实测验证**，文中显著标注，不作为已完成能力声明。
 
 ## 1. 环境要求
@@ -96,7 +97,7 @@ zhulong --headless --approval full run "在 hello.txt 写入一行文本 pong，
 zhulong --headless run "总结当前目录结构"
 ```
 
-注意：工具默认 mock 守卫——非 TTY 环境下一次性执行必须带 `--headless`（或 `PANSHA_HEADLESS=1`）才会真实执行工具；`PANSHA_SMOKE=1` 时强制 mock（测试/CI 用）。
+注意（0.8 语义反转）：mock 仅显式 opt-in——`PANSHA_SMOKE=1` 时工具强制 mock（零 spawn，测试/CI 用）；非 TTY 环境默认真实执行，安全性由审批三档（无 `--approval` 默认 readonly 拒写）+ pathGuard + 敏感路径 + 写前读兜底。`--headless` / `PANSHA_HEADLESS=1` 保留为兼容别名（no-op）。
 
 ## 3. 配置参考
 
@@ -139,8 +140,8 @@ export PANSHA_MODEL=openpangu:openPangu-7B
 |---|---|---|
 | `PANSHA_MODEL` | 模型选择，优先级最高（`provider:model` 前缀写法） | 覆盖配置文件 `model` 字段 |
 | `PANSHA_APPROVAL` | one-shot/headless 审批档位 `readonly/default/full` | 等价 `--approval` |
-| `PANSHA_HEADLESS` | `=1` headless 逃生口（非 TTY 真实执行） | `--headless` flag 会设置它 |
-| `PANSHA_SMOKE` | `=1` 强制工具 mock（零 spawn，测试/CI） | 优先级高于 headless |
+| `PANSHA_HEADLESS` | `=1` 兼容别名（0.8 起 no-op：非 TTY 已默认真实执行） | `--headless` flag 会设置它 |
+| `PANSHA_SMOKE` | `=1` 强制工具 mock（零 spawn，测试/CI） | 0.8 起唯一 mock 触发方式（显式 opt-in） |
 | `PANSHA_INTENT_GATE` | `=0` 关闭入口意图分类，全部按 execution 完整循环 | 逃生门 |
 | `PANSHA_USER_CONFIG_DIR` | 重定向用户级配置目录（默认 `~/.panshalach`） | 便携部署/测试隔离 |
 | `PANSHA_CTX_WINDOW` | 上下文窗口 token 数**显式覆盖**（0.7.3 起不再默认 128000 常量） | 未设置时按当前模型真实窗口：配置 `modelContexts` → `/model list` 探测缓存 → 未知回落 **32768** 保守值；压缩阈值与 loop 窗口预算均按该真值，每任务边界重取（`/model` 切换即生效） |

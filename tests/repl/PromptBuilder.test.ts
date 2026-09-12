@@ -220,9 +220,17 @@ describe('PromptBuilder.buildForTask intent 分支（F7）', () => {
     assert.ok(!prompt.includes('<negative_tool_list>'), '格式教学块不注入');
     assert.ok(!prompt.includes('纪律规则强度'), '无纪律教学文本');
 
-    // 轻量块保留：身份、tier XML 约束（P0-2 MUST ALWAYS）、当前任务
+    // R4（0.8.1）：chat 减负——tier XML/thinking_budget/锚点注记/任务状态四块跳过
+    // （tier XML 是工具纪律契约，与 chat 指令"不要调用任何工具"同框自相矛盾）。
+    assert.ok(!prompt.includes('<tier_constraint'), 'R4：tier_constraint XML 不注入');
+    assert.ok(!prompt.includes('<thinking_budget>'), 'R4：thinking_budget 不注入');
+    assert.ok(!prompt.includes('锚点'), 'R4：锚点注记不注入');
+    assert.ok(!prompt.includes('【任务状态】'), 'R4：TaskState 不注入');
+    // 0.8.1：injection summary 调试块不进模型 prompt（元讨论污染），审计走 lastBuildMeta
+    assert.ok(!prompt.includes('<injection_summary>'), '调试块不进模型 prompt');
+
+    // 轻量块保留：身份、当前任务
     assert.ok(prompt.includes('当前档位: high'), '系统身份保留');
-    assert.ok(prompt.includes('<tier_constraint tier="high">'), 'tier_constraint XML 保留');
     assert.ok(prompt.includes('【当前任务】'), '当前任务块保留');
     assert.ok(prompt.includes('你好，回答我你是谁'), '任务正文保留');
   });
@@ -243,5 +251,53 @@ describe('PromptBuilder.buildForTask intent 分支（F7）', () => {
     for (const block of ['【硬约束】', '【档位契约】', '<negative_tool_list>', '<tier_constraint tier="high">']) {
       assert.ok(prompt.includes(block), `不传 intent 必须仍注入 ${block}`);
     }
+  });
+});
+
+// ==================== R6（0.8.1）：最近上下文带答案摘要 ====================
+describe('PromptBuilder.getRecentContext 答案落盘（R6）', () => {
+  it("answered 轮的 answerText 进入最近上下文（截 200 字符，换行折叠）", async () => {
+    const sess = new Session({ tier: 'high' });
+    const longAnswer = 'BASH是一种Unix shell。' + '补充说明内容很长很长。'.repeat(40);
+    sess.addTurn({
+      id: 't1',
+      timestamp: Date.now(),
+      userInput: '什么是bash',
+      userInputType: 'task',
+      tier: 'high',
+      result: {
+        success: true,
+        summary: '已回复',
+        stopReason: 'answered',
+        outcome: 'answered',
+        answerText: longAnswer,
+      },
+    } as any);
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    const prompt = await pb.buildForTask('继续刚才的话题', 'chat');
+
+    assert.ok(prompt.includes('【最近上下文'), 'chat 仍保留最近上下文块');
+    assert.ok(prompt.includes('什么是bash'), '问题侧保留');
+    assert.ok(prompt.includes('已回复'), 'summary 保留');
+    assert.ok(prompt.includes('→ BASH是一种Unix shell。'), '答案摘要以 → 前缀进入最近上下文');
+    const prefix = longAnswer.slice(0, 200);
+    assert.ok(prompt.includes(prefix), '答案前 200 字符可见');
+    assert.ok(!prompt.includes(longAnswer.slice(0, 201)), '答案超 200 字符部分截断（防膨胀）');
+  });
+
+  it('无 answerText 的轮（completed/旧数据）摘要不变（向后兼容）', async () => {
+    const sess = new Session({ tier: 'high' });
+    sess.addTurn({
+      id: 't2',
+      timestamp: Date.now(),
+      userInput: '修复登录 bug',
+      userInputType: 'task',
+      tier: 'high',
+      result: { success: true, summary: '已通过验证', stopReason: 'completed', outcome: 'completed' },
+    } as any);
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    const prompt = await pb.buildForTask('继续', 'execution');
+    assert.ok(prompt.includes('修复登录 bug 已通过验证'), '原摘要行形状保持');
+    assert.ok(!prompt.includes(' → '), '无答案轮不引入答案段');
   });
 });

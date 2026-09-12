@@ -2,18 +2,20 @@
 
 > 华为命题：基于 openPangu 系列模型，构建具备长程上下文管理能力的记忆增强智能体。
 > 本文档对应命题交付要求：**最终系统架构 / 记忆模块设计 / 训练方案 / 推理流程 / 资源消耗 / 核心创新点**。
-> 状态：架构以现有可运行工程为基（自动化测试以 `npm test` 实际输出为准），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。
+> 状态：架构以现有可运行工程为基（自动化测试以 `npm test` 实际输出为准，当前基线 968 例），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。版本基线 **v0.8.0-rc**。
 
 ---
 
 ## 0. 摘要
 
-Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 openPangu-1B/7B/7B-VL（昇腾/本机 OpenAI 兼容端点）为推理底座，把传统 agent 的"一次性对话窗口"升级为四层记忆保持体系——
+Panshalach（外部产品名 **烛龙 Zhulong**）是一个 **记忆增强的通用智能体**：以 openPangu-1B/7B/7B-VL（昇腾/本机 OpenAI 兼容端点）为推理底座，把传统 agent 的"一次性对话窗口"升级为四层记忆保持体系——
 
 1. **会话内状态**（回合轨迹 / 验证信号，实时纠偏）；
-2. **结构化记忆卡**（跨会话提炼的教训/经验/偏好，分档注入、衰减与合并）；
-3. **上下文压缩与会话资产**（长会话可 resume/branch，压缩保留关键摘要）；
-4. **事件记忆 + 任务状态**（已落地）：语义化业务事件流（R4 `memory/events.ts`）与跨多轮任务状态机（R5 `memory/taskState.ts`），直击"中期遗忘 / 上下文断裂"；运行时接线见 11dbea3。
+2. **结构化记忆卡**（跨会话提炼的教训/经验/偏好，分档注入、验证保鲜与合并）；
+3. **上下文压缩与会话资产**（长会话可 resume/branch，压缩带血统账本，压缩时补漏提炼成功卡）；
+4. **事件记忆 + 任务状态**（已落地）：语义化业务事件流（R4 `memory/events.ts`）与跨多轮任务状态机（R5 `memory/taskState.ts`），直击"中期遗忘 / 上下文断裂"。
+
+0.8 周期完成"换地基"：上下文协议从单 prompt 字符串升级为 **messages 双通道 + stable/volatile 三段 prompt**（前缀缓存友好），交互层从 2115 行巨函数拆为 turn 四模块并补齐 Claude Code 级交互手感，执行层七项强化（并行分段/卡死硬闸/结果落盘/usage 计量/错误分类/敏感路径/角色字段）全部落地。
 
 在真实业务场景"软件工程长期维护"上，它表现为：早期需求约束在多轮演进后仍被遵守、跨文件修改不丢失关联、中断后能准确续接进度。
 
@@ -23,42 +25,57 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ 交互/服务层                                                       │
+│ 交互/服务层（0.8 拆分 + CC 级手感）                                  │
+│   sseInteractive 会话壳 → turn/ 四模块：                            │
+│     TurnContext(巨状态) · TurnController(任务/审批/中断/drain)      │
+│     TurnRenderer(事件渲染+CC视觉纯函数) · CommandRouter(命令派发)    │
+│     + SlashMenu(斜杠即时菜单状态机)                                 │
+│   交互手感：/ 即时菜单(过滤/↑↓/分组/滚动) · shift+tab 档位环专属色    │
+│     · /model 菜单化(编号直达) · /tier 思考强度滑杆(←→/Enter/Esc)    │
 │   REPL（行模式/富 TTY） · SSE 服务（/api/run） · one-shot CLI      │
 │   会话资产：rollout jsonl(resume/branch/undo/rewind) · usage      │
 ├──────────────────────────────────────────────────────────────────┤
-│ 提示工程层 (PromptBuilder)                                         │
-│   身份 → L0硬约束(≤3) → tier契约 → 铁律/负向工具清单 → 项目验证块    │
-│   → L1记忆注入 → 环境增量 → 最近上下文 → 当前任务 → 压缩            │
-│   （注入去重 / token 预算 / 档位差异化 / 参照文件过滤）               │
+│ 提示工程层 (PromptBuilder 三段拆分 · M1-PROTOCOL)                   │
+│   stable 段：身份(通用智能体) → L0硬约束(≤3) → tier契约 → 负向清单   │
+│     ——任务间字节级相同 → messages 模式置 system 首消息               │
+│     （网关前缀缓存可命中）                                          │
+│   volatile 段：L1记忆注入 → 环境增量 → 最近上下文 → 当前任务          │
+│   （注入去重 / token 预算 / 档位差异化 / 参照文件过滤 /             │
+│     injectedCardIds 逐任务注入审计）                                │
 ├──────────────────────────────────────────────────────────────────┤
 │ 记忆增强层                                                        │
-│   记忆卡 store（failure/success/preference + 类别分档 + 衰减+合并）  │
-│   会话资产/事件日志(rollout jsonl → 事件记忆[已落地 R4])            │
-│   任务状态跟踪(feature_list → 任务状态机[已落地 R5])               │
+│   记忆卡 store（failure/success/preference + 类别分档 + 四段衰减    │
+│     + 验证保鲜 markVerified + 合并 + count 封顶）                   │
+│   会话资产/事件日志(rollout jsonl → 事件记忆 R4)                    │
+│   任务状态跟踪(TaskState R5)                                       │
 │   语义检索[embed v0 已落(单测在库), L1 注入融合待接]                │
 ├──────────────────────────────────────────────────────────────────┤
 │ 执行循环层 (taskIntent → solveIssue → VerifyCritiqueLoop)          │
-│   意图分类(0.7)：chat 单次直答 / search 只读≤3步 / task 全循环      │
-│   单次 loop.run——判官/TestTimeOrchestrator 已摘除(0.7.0 归档)       │
-│   思维链阶梯 → 工具调用(三路解析) → 验证信号(PASS/FAIL)             │
-│   铁律: Read-Before-Write / Verify-Before-Claim / 可回滚           │
-│   回合三态: completed(真实验证PASS) / answered(end_turn有正文)      │
-│     / no-verification(空白空转)；另有 max-steps/连错上限/aborted    │
-│     / error(0.7.4：模型/网络/解析异常，与用户中断分离)              │
-│   AbortSignal 贯穿: solveIssue→loop→complete→fetch/executor        │
-│   budget 软限(token 按模型调用真实累计) / 每步轨迹采集              │
+│   意图分类：chat 单次直答(通用画像有问必答) / search 只读≤3步        │
+│     / task 全循环；PANSHA_INTENT_GATE=0 逃生门                     │
+│   chat 直答三级回落：streamChatMessages → chat → complete          │
+│   messages 双轨：ChatMessage 栈（system 首位/tool role 配对）       │
+│     ⇄ 文本协议降级；PANSHA_MESSAGES_MODE=off 逃生门                │
+│   单次 loop.run；回合七态: completed/answered/max-steps/           │
+│     consecutive-failures/aborted/no-verification/error            │
+│   卡死硬闸 guardrails：同参失败5次阻断/同工具8次强制终局/幂等无进展5次│
+│   AbortSignal 贯穿 / budget 按真实 usage 累计 / think 标签剥离      │
 ├──────────────────────────────────────────────────────────────────┤
 │ 工具引擎层                                                        │
 │   read_file glob grep bash write_file edit_file diff             │
-│   （LCS diff + 原子写 + RBW 护栏 + 脱敏）                          │
+│   读并发+写 barrier 分段调度（只读三件套 Promise.all）              │
+│   大输出三层防溢出：20K 截断 → scratch 落盘 → persisted-output      │
+│     预览 + read_file 按需回读                                      │
+│   （LCS diff + 原子写 + RBW 护栏 + 脱敏 + 敏感路径全档位写保护）     │
 │   审批：readonly/default/full + allowlist + MCP stdio             │
 ├──────────────────────────────────────────────────────────────────┤
 │ 模型接入层                                                        │
 │   ProviderRegistry(openai-compatible) → openPangu                │
-│   streamChat / complete / /models；原生 tool_calls 透传            │
-│   (detectedFormat:'openai-json'，SSE 增量拼装)为主路径，            │
-│   文本协议/<>严格 三路探测为兜底                                     │
+│   双通道：chat()/streamChatMessages()（messages 数组）             │
+│     ⇄ complete()/streamChat()（文本协议降级）                       │
+│   原生 tool_calls 透传 + usage 解析(真实token计量)                 │
+│   withRetry 5次指数退避 + 错误八类分类(errorClassify：              │
+│     context_overflow→强制compact重试；auth/billing 快速失败)       │
 └──────────────────────────────────────────────────────────────────┘
           ▼ 推理底座
    openPangu-1B / 7B / 7B-VL
@@ -66,11 +83,12 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ```
 
 **各层职责一句话**
-- 模型接入层：把"用什么模型、走什么格式"与上层解耦 → **openPangu 可替换，无需动记忆/循环**。
-- 工具引擎层：真实执行 + 审批 + 护栏 = agent 的"手"，也决定哪些信号能被记录为可验证事实。
-- 执行循环层：agent 的"脑 + 自我复盘"，每步产出轨迹/验证信号（长程记忆的素材）。0.7.0 起单层终止（判官/TestTimeOrchestrator 摘除）：单次 loop.run + 回合三态（completed/answered/no-verification；0.7.4 加性 error——模型故障与用户中断分离），AbortSignal 可贯穿中止。
-- 记忆增强层：agent 的"长期记忆"——把跨会话经验、压缩摘要、事件、状态外置到 prompt 预算里，不依赖模型窗口记忆。
-- 提示工程层：记忆注入的"闸门"——按档位与预算决定每轮把多少记忆呈现给模型。
+- 交互层：turn 四模块 + CC 级手感——任务提交/渲染/命令派发分离，斜杠菜单/档位环/滑杆全键盘可达。
+- 模型接入层：把"用什么模型、走什么通道"与上层解耦——messages 与文本双通道自适应（1B/7B 小模型不认 tool role 自动回落），openPangu 可替换，无需动记忆/循环。
+- 工具引擎层：真实执行 + 审批 + 护栏 = agent 的"手"；大输出落盘回读保证长任务信息不丢。
+- 执行循环层：单次 loop.run + 回合七态 + 卡死硬闸；每步产出轨迹/验证信号（长程记忆的素材）。
+- 记忆增强层：agent 的"长期记忆"——跨会话经验、压缩摘要、事件、状态外置到 prompt 预算。
+- 提示工程层：stable/volatile 三段拆分——稳定契约置顶命中前缀缓存，记忆注入按预算闸门进 volatile 段。
 
 ---
 
@@ -94,8 +112,8 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ### 2.2 记忆写入（提炼 → 保存）
 - ~~**信号源 A（循环实时）**：FailureMemory 会话内即时纠偏~~ → **已摘除**（#6，2026-09-05，archive/2026-09-05-removals/）。失败/成功信号唯一归口 = 信号源 B/C。
-- **信号源 B（回合闭环，已实现 0.7.2）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；一次通过且**验证通过（trajectory.success）**或正向反馈 → success 卡），`save()` 合并去重写盘。落定点为 `finalizeTaskMemory` 单一收口（runAgentTask result 前，覆盖 SSE/server/headless；Repl 直调三口留统一执行器收口）。（score 已移除，2026-09-05）
-- **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中**验证成功（result.success）**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。（score 已移除，2026-09-05）
+- **信号源 B（回合闭环，0.7.2 落地 · 0.8.1 治理）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；`stopReason==='completed'`（真实验证通过）或正向反馈 → success 卡），`save()` 合并去重写盘。落定点为 `finalizeTaskMemory` 单一收口（runAgentTask result 前，覆盖 SSE/server/headless）。**0.8.1 三缺陷治理**（对抗性审计驱动）：①产卡携带任务信息（通用卡曾零信息 → 对后续任务无检索价值）；②markVerified 断链接通（injectedCardIds ∩ 任务真实写集判保鲜）；③count 封顶 `min(count,3)`（防"永生卡"霸榜）。
+- **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中**验证成功**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。
 - **用户显式（已实现）**：`/memory remember [--pin]` / forget / import / export / clear / merge。
 
 ### 2.3 记忆读取与注入（loadFiltered，已实现）
@@ -123,38 +141,41 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 ```
 用户输入 / 任务队列
   │
-  ▼ 意图分类（src/cli/taskIntent.ts · 0.7；PANSHA_INTENT_GATE=0 逃生门）
-    chat（问候/纯问答）→ 单次 complete 直接回答：不进循环、不灌格式教学
-        与工具 schema → stopReason='answered'，正文呈现给用户
+  ▼ 交互层（line 模式：斜杠即时菜单 → 本地命令 / 任务提交；
+    运行中提交自动入队 drain，drain 深度护栏 8 层止损）
+  ▼ 意图分类（src/cli/taskIntent.ts；PANSHA_INTENT_GATE=0 逃生门）
+    chat（问候/问答/知识/创作）→ 单次直答（三级回落 streamChatMessages→
+        chat→complete；通用画像有问必答；think 标签网关剥离）→ answered
     search（文件宾语无动词）→ 受限只读循环：≤3 步、强制 readonly、禁写
         禁 bash；搜到报告位置与概要，搜不到询问用户具体用意
     task/execution → 完整验证循环（↓ 主路径）
-    meta（/命令、r/s 前缀）→ 不进 agent
+    meta（/命令）→ 不进 agent
   │（task/execution 主路径）
-  ▼ PromptBuilder.buildForTask
-  身份(openPangu 记忆增强) · L0 · tier约束 · 铁律/负向清单 · 项目验证块
-  L1 记忆卡注入(参照文件/关键词/tier 过滤 + 预算) · skills · 当前特性
-  最近上下文(3轮) · 当前任务 → 一条"带记忆"的初始 prompt
+  ▼ PromptBuilder.buildForTask = stable 段 + volatile 段
+    stable：身份(通用智能体)+L0+tier契约+负向清单（任务间字节级相同）
+    volatile：L1 记忆注入(参照文件/关键词/tier 过滤+预算，注入审计
+    injectedCardIds) · 项目验证块 · 最近上下文(3轮含答案摘要) · 当前任务
+    messages 模式：stable → system 首消息（前缀缓存命中），
+    volatile → 首条 user；文本模式：两段拼接单 prompt
   │
-  ▼ PanshalachChaser.solveIssue（0.7：单次 loop.run——判官与
-    TestTimeOrchestrator 已摘除 archive/2026-09-05-removals/，
-    空批保护并入 chaser；Phase 探索/锚点注入已摘除——记忆注入承担
-    "仓库我知道什么"）
-    VerifyCritiqueLoop 迭代：
+  ▼ PanshalachChaser.solveIssue（单次 loop.run）
+    VerifyCritiqueLoop 迭代（messages 双轨与文本双轨共享 steps 数据源）：
         思维链(think/plan/verify) → 工具调用(三路自适应解析)
+        → 卡死硬闸检查(guardrails before_call) → 分段调度执行
+        （只读三件套并发 + 写 barrier 串行；大输出落盘 scratch 回读）
         → 真实执行+审批 → 验证信号(PASS/FAIL)
-        （critique/FailureMemory 轨道已摘除 archive/2026-09-05-removals/；
-        多 rollout / early-stop 预算裁剪随 TestTimeOrchestrator 退场；
-        score 已整体移除——成败由验证信号判定）
-        终止（单层，无判官续跑）：PASS+end_turn → completed /
-        end_turn 有正文 → answered / 空白空转 → no-verification /
-        max-steps / 连错上限 / signal abort / 异常 → error(0.7.4)
-    budget 软限：estimatedUsedTokens 按每次模型调用累加（0.7 修复恒 0）
+        网关错误 → errorClassify 八类：overflow→强制 compact 后重试
+        （每任务 1 次）；auth/billing 快速失败；其余 withRetry 退避
+        终止（单层）：PASS+end_turn → completed / end_turn 有正文 →
+        answered / 空白空转 → no-verification / max-steps /
+        连错上限(guardrails 同工具 8 次强制终局) / abort / 异常 → error
+    budget：estimatedUsedTokens 优先真实 usage 累计（len/4 降级）
   │
-  ▼ 任务落定（回合写闭环 · 0.7.2 已落地）
-    refine(信号=stopReason==='completed' + attemptCount + 反馈) → save → invalidateProjection
-    （0.7 记忆信号收紧：纯问答/闲聊 answered 不产生 success 卡）
-    会话 addTurn + rollout append + (需要时)后台预压缩
+  ▼ 任务落定（回合写闭环 · 0.7.2 落地 · 0.8.1 治理）
+    refine(信号=stopReason==='completed' + attemptCount + 反馈) → save
+    （产卡携带任务信息；纯问答 answered 不产 success 卡）
+    markInjected 全量记账；injectedCardIds ∩ 真实写集 → markVerified 保鲜
+    会话 addTurn + rollout append（含注入审计 context 事件）
     → 下一回合 L1 注入能读到"上一轮沉淀"
 ```
 
@@ -190,16 +211,18 @@ Panshalach 是一个 **记忆增强的软件工程长程维护智能体**：以 
 
 ## 6. 核心创新点（相对常规长上下文方案）
 
-1. **记忆写入闭环 + 使用语义二态**：回合结束自动提炼写盘 + `markInjected`（注入仅记账，不保鲜）/`markVerified`（机器判定的真实使用才刷新，修"读即用永不衰减"）——记忆会随真实任务生长，且不把"被看见"误当"被使用"。
-2. **分档记忆注入预算**：六档强度(quick→pangu)把记忆加载量、衰减、探索深度、并行度做成可量化行为契约；轻档省 token、高档全量。
-3. **参照文件交集过滤（P2-D）**：不是"什么都注入"，而是按"本任务实际触碰的文件"只载入相关记忆，命中为空自动回退——精准防上下文污染。
-4. **确定性记忆维护**：四段阶梯衰减 × 类别半衰期、同主题 2-gram 合并(原卡归档可回滚)、容量上限、投影缓存快照——离线可测，不依赖 LLM 判断记忆要不要留。
-5. **上下文压缩 + 补漏提炼**：压缩不只丢历史——被移除轮次中的成功信号被确定性地补提为记忆卡(hash 去重)，压缩反而成为记忆沉淀入口。
-6. **事件日志 + 任务状态 + 会话资产**：追加式语义事件（R4）与跨轮任务状态机（R5）已落地并接线运行时，resume/branch——把"长周期持续跟踪"做成可审计、可续接的资产。
-7. **国产软硬件亲和**：模型层为 OpenAI 兼容抽象 → openPangu on 昇腾(MindIE/vLLM-ascend)/本机端点即插即用；工具协议三路自适应探测让模型格式差异不再是接入门槛。
+1. **证据门槛的记忆写入 + 二态使用语义**：记忆写入的唯一门槛是回合真实验证信号（`stopReason==='completed'`，区别于"模型自主决定何时记忆"的 Letta/MemGPT 路线与"对话后即时存储"的 MemoryBank 路线）；`markInjected`（注入仅记账，不保鲜）/`markVerified`（注入卡与任务真实写集交集判定的机器保鲜，修"读即用永不衰减"）——记忆会随真实任务生长，且不把"被看见"误当"被使用"。0.8.1 对抗性审计修复三缺陷（产卡携带任务信息/保鲜断链/count 封顶）后机制完整闭环。
+2. **逐任务注入审计**（`ContextSnapshot` + `injectedCardIds` + promptHash）：每次任务把"模型实际看见了哪些记忆"落 rollout `context` 事件——配合 R4 事件溯源全程可重放，记忆价值可查证。
+3. **压缩血统账本 + 补漏提炼**（`compactService`）：`generation/coveredTurnIds` 按覆盖账本安全合并（压缩期间新增轮不丢）、rewind 断血统拒绝 apply、被移除轮次的验证成功信号确定性补提为 success 卡——压缩成为记忆沉淀入口而非信息黑洞；overflow 错误触发强制压缩重试（errorClassify 联动）。
+4. **stable/volatile 三段 prompt + messages 双通道**（0.8 M1）：稳定契约（身份/硬约束/档位契约）任务间字节级相同 → system 首消息命中网关前缀缓存；易变内容（记忆卡/环境/任务）走 volatile 段。messages 数组与文本协议双通道自适应降级——1B/7B 小模型不认 tool role 自动回落文本标注，`PANSHA_MESSAGES_MODE=off` 逃生门。**面向国产小模型网关的上下文协议工程**（真机 MiniMax-M3/1B 实测驱动）。
+5. **执行层可靠性七件套**（0.8 M2）：卡死硬闸（同参失败/幂等无进展 before_call 阻断——治弱模型空转烧步数）、读并发+写 barrier 分段调度、大输出落盘回读三层防溢出、真实 usage 计量、错误八类分类（overflow→强制压缩重试闭环）、敏感路径全档位写保护、drain 深度护栏。
+6. **分档记忆注入预算 + 参照文件交集过滤**：六档强度把记忆加载量、衰减、探索深度做成可量化行为契约；只载入"本任务实际触碰文件"相关的卡，命中为空自动回退——精准防上下文污染。
+7. **确定性记忆维护**：四段阶梯衰减 × 类别半衰期、同主题 2-gram 合并(原卡归档可回滚)、容量上限、投影缓存快照——离线可测，不依赖 LLM 判断记忆要不要留。
+8. **事件日志 + 任务状态 + 会话资产**：追加式语义事件（R4）与跨轮任务状态机（R5）已落地并接线运行时，resume/branch——把"长周期持续跟踪"做成可审计、可续接的资产。
+9. **国产软硬件亲和**：模型层为 OpenAI 兼容抽象 → openPangu on 昇腾(MindIE/vLLM-ascend)/本机端点即插即用；三路协议探测 + 双通道降级让模型格式差异不再是接入门槛；提示词身份/工具教学按 1B-7B 小模型实测收敛（情境框架式身份、negative_tool_list 防伪调用）。
 
 ---
 
-## 7. 下一步（按 ROADMAP.md）
+## 7. 下一步（按 ROADMAP-NEXT.md）
 
-P1 openPangu 泛化接入（✅ env 三件套/tool_calls 透传已落地）→ P2 记忆写闭环（✅ 0.7.2 起 refine→save 单一落定点已接）→ P3 事件记忆+任务状态机（✅ events.ts/taskState.ts 已落地并接线；`/memory events` CLI 与语义检索融合待接）→ P4 小模型适配 → P5 昇腾/麒麟资源亲和文档 → P6 内部存储名迁移收口。真机评估数据持续回填本文档与 EVALUATION.md。
+R6 真机消融评测数据回填（A/B/C/C4 消融：`PANSHA_NO_MEMORY=1` 零注入对照）→ R7 语义检索 L1 注入融合 → 0.8 M3 时间盒项（Plan mode 确认卡/跨任务连续 messages 会话/MCP SSE）→ 不对称压缩（Turn.role 字段已就位，分区压缩本体 R8）→ P6 存储名迁移收口。真机评估数据持续回填本文档与 EVALUATION.md。
