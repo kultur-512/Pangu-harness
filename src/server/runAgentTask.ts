@@ -56,6 +56,8 @@ export interface RunResult {
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
   verifyCmd?: string[];
+  /** 0.8.2 证据链：本任务实际注入的记忆卡号（lastBuildMeta 透出；headless 宿主打印证据行用） */
+  injectedCardIds?: string[];
 }
 
 /**
@@ -299,6 +301,9 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      // 0.8.2 证据链透出：headless/one-shot 宿主（RunCommand/eval runner）可从此
+      // 读取逐任务注入账本——此前注入审计只在 rollout context 事件里，stdout 不可见。
+      injectedCardIds,
       ...(partialText ? { partialText } : {}),
       ...(answerText ? { answerText } : {}),
     };

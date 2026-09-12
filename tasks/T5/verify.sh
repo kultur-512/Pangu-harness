@@ -18,7 +18,8 @@ fi
 if grep -qE "1\s*\+\s*1\s*===\s*2|1\+1.*2" "$TEST_FILE"; then
   echo "[T5] PASS: 1+1=2 测试用例存在"
 else
-  echo "[T5] WARN: 未找到 1+1=2 测试用例"
+  echo "[T5] FAIL: 未找到 1+1=2 测试用例"
+  FAILS=$((FAILS + 1)); exit 1
 fi
 
 # 3. 编译验证

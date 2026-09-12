@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "lastUpdated": 1789256494397,
+  "tasks": {
+    "eval-T1-A-42": {
+      "taskId": "eval-T1-A-42",
+      "originalRequirement": "> 任务族：T1 约束遵循（constraint following）\r\n> Fixture 状态：U3 周末草稿（赵天昂起） / U4 由王浩宇补 verify.sh 强化\r\n> U6 真机 openPangu 端点跑分时使用，A/B/C/C4 四档消融必跑\r\n\r\n## 场景\r\n\r\n你的同事今天早上要交接一个未完成的项目，请你按照下面 **5 条约束同时**创建一个 `TODO.md`。\r\n这是真实软件工程里常见的\"既要…又要…\"约束并存场景：模型容易被工具调用噪音淹没，丢失其中 1-2 条弱约束。\r\n\r\n## 约束（必须同时满足）\r\n\r\n1. **文件名**：`TODO.md`（大小写敏感，不接受 `todo.md` / `TODO.MD` 等）\r\n2. **Checkbox 数量**：必须包含 **5 个** markdown checkbox（格式：`- [ ] xxx`）\r\n3. **空行规则**：每个 checkbox 行后面必须有 **1 个空行**（`\\n\\n`）\r\n4. **无 emoji**：不能包含任何 Unicode emoji（覆盖 🎯 🔥 ✅ ⭐ 等主流 block）\r\n5. **无 tab 缩进**：全文不能出现 `\\t` 字符（缩进仅允许 0 或 4 空格）\r\n\r\n## 期望产出\r\n\r\n- 工作目录存在 `TODO.md` 文件\r\n- 文件包含 5 个 `- [ ] xxx` 行\r\n- 每条 checkbox 后紧跟空行\r\n- 无 emoji\r\n- 无 tab 字符\r\n- 所有约束同时满足（任一违反 = verdict=verification-failed）\r\n\r\n## 验收 Rubric（与 T1 README 对齐）\r\n\r\n| 维度 | 度量 |\r\n|---|---|\r\n| 约束覆盖率 | 满足约束数 / 5 |\r\n| 约束冲突率 | 输出中互相矛盾次数（应=0） |\r\n| 工具调用噪音 | 与约束无关的工具调用次数（如 `read_file` 在 `Write` 工具已注册时仍读源） |\r\n\r\n## 评测合同\r\n\r\n- `taskFamily: T1`\r\n- `verification.commands` 至少包含 `verify.sh`\r\n- 期望 `verdict: completed` + `verification.signal: PASS`\r\n- B 档要求：`injectedCardIds.length >= 1`（line-defense）\r\n- A 档（baseline）：无记忆，必须真溢出验证（不溢出标 overflow-skipped）\r\n\r\n## 标签\r\n\r\n- `constraint-heavy`\r\n- `small-context`（prompt < 2K tokens）",
+      "decisions": [],
+      "openQuestions": [],
+      "milestones": [],
+      "verified": [
+        {
+          "ts": 1789231412071,
+          "what": "任务通过真实验证",
+          "evidenceEventIds": [
+            "evt-38ab2c59-038e-41b6-9a9c-da9905fb97c7"
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "ts": 1789230618750,
+          "risk": "任务未完成：answered"
+        },
+        {
+          "ts": 1789231558548,
+          "risk": "任务未完成：consecutive-failures"
+        }
+      ],
+      "foldedEventIds": [
+        "evt-a61e902d-11c2-4b67-a3ee-8e9ecdb76f55",
+        "evt-38ab2c59-038e-41b6-9a9c-da9905fb97c7",
+        "evt-957879fd-504a-49e7-90cf-7bbebd9649d5"
+      ],
+      "version": 4,
+      "createdAt": 1789230611934,
+      "updatedAt": 1789234848018,
+      "nextStep": "verification done"
+    },
+    "eval-T1-B-42": {
+      "taskId": "eval-T1-B-42",
+      "originalRequirement": "> 任务族：T1 约束遵循（constraint following）\r\n> Fixture 状态：U3 周末草稿（赵天昂起） / U4 由王浩宇补 verify.sh 强化\r\n> U6 真机 openPangu 端点跑分时使用，A/B/C/C4 四档消融必跑\r\n\r\n## 场景\r\n\r\n你的同事今天早上要交接一个未完成的项目，请你按照下面 **5 条约束同时**创建一个 `TODO.md`。\r\n这是真实软件工程里常见的\"既要…又要…\"约束并存场景：模型容易被工具调用噪音淹没，丢失其中 1-2 条弱约束。\r\n\r\n## 约束（必须同时满足）\r\n\r\n1. **文件名**：`TODO.md`（大小写敏感，不接受 `todo.md` / `TODO.MD` 等）\r\n2. **Checkbox 数量**：必须包含 **5 个** markdown checkbox（格式：`- [ ] xxx`）\r\n3. **空行规则**：每个 checkbox 行后面必须有 **1 个空行**（`\\n\\n`）\r\n4. **无 emoji**：不能包含任何 Unicode emoji（覆盖 🎯 🔥 ✅ ⭐ 等主流 block）\r\n5. **无 tab 缩进**：全文不能出现 `\\t` 字符（缩进仅允许 0 或 4 空格）\r\n\r\n## 期望产出\r\n\r\n- 工作目录存在 `TODO.md` 文件\r\n- 文件包含 5 个 `- [ ] xxx` 行\r\n- 每条 checkbox 后紧跟空行\r\n- 无 emoji\r\n- 无 tab 字符\r\n- 所有约束同时满足（任一违反 = verdict=verification-failed）\r\n\r\n## 验收 Rubric（与 T1 README 对齐）\r\n\r\n| 维度 | 度量 |\r\n|---|---|\r\n| 约束覆盖率 | 满足约束数 / 5 |\r\n| 约束冲突率 | 输出中互相矛盾次数（应=0） |\r\n| 工具调用噪音 | 与约束无关的工具调用次数（如 `read_file` 在 `Write` 工具已注册时仍读源） |\r\n\r\n## 评测合同\r\n\r\n- `taskFamily: T1`\r\n- `verification.commands` 至少包含 `verify.sh`\r\n- 期望 `verdict: completed` + `verification.signal: PASS`\r\n- B 档要求：`injectedCardIds.length >= 1`（line-defense）\r\n- A 档（baseline）：无记忆，必须真溢出验证（不溢出标 overflow-skipped）\r\n\r\n## 标签\r\n\r\n- `constraint-heavy`\r\n- `small-context`（prompt < 2K tokens）",
+      "decisions": [],
+      "openQuestions": [],
+      "milestones": [],
+      "verified": [],
+      "risks": [
+        {
+          "ts": 1789231594395,
+          "risk": "任务未完成：consecutive-failures"
+        },
+        {
+          "ts": 1789231748373,
+          "risk": "任务未完成：consecutive-failures"
+        },
+        {
+          "ts": 1789231960519,
+          "risk": "任务未完成：consecutive-failures"
+        }
+      ],
+      "foldedEventIds": [
+        "evt-3c5d5f35-0322-4239-b95a-a8aa36e3f208",
+        "evt-8c255a37-60f2-485d-95c1-77373604857a",
+        "evt-817bb74c-9f0c-4092-9bfc-34f4e2d3af5f"
+      ],
+      "version": 4,
+      "createdAt": 1789231563155,
+      "updatedAt": 1789256494397,
+      "nextStep": "verification done"
+    }
+  }
+}

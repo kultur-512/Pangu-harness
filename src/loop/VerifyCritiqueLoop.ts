@@ -59,6 +59,9 @@ export interface VerifyCritiqueLoopOptions {
   practicalMode?: boolean;
   /** 任务风格（推荐）：'swe' | 'terminal' | 'automation' 等，用于适配验证策略。 */
   taskStyle?: string;
+  /** 显式执行意图：intent==='task' 时为 true——驱动"只说话不动手"防呆 nudge。
+   *  不传时回落 isStrongMode/taskStyle 启发（向后兼容）。 */
+  executionIntent?: boolean;
   /** 任务风格别名，等同于 taskStyle。 */
   benchmarkType?: BenchmarkType | string;
   /** 是否高纪律模式，等同于 !practicalMode 的高纪律路径。 */
@@ -136,6 +139,11 @@ export class VerifyCritiqueLoop {
   private practicalMode: boolean;
   private benchmarkType?: BenchmarkType | string; // taskStyle 的别名（内部同步维护）
   private taskStyle?: string;
+  /** 显式执行意图（0.8.2 真机纰漏修复）：由宿主从意图分类直接传入（intent==='task'）。
+   *  缺省时回落旧启发（isStrongMode || taskStyle==='execution'）——但默认档 high 的
+   *  taskStyle 实际为 'all'，启发恒 false 导致"只说话不动手防呆 nudge"成死代码
+   *  （MiniMax-M3 真机 T1 实证：规格书式 prompt 首步纯文本答复即被 answered 放行）。 */
+  private executionIntentFlag?: boolean;
   private isStrongMode?: boolean;
   private signal?: AbortSignal;
   private profile = BenchmarkProfiles.get('swe');
@@ -192,6 +200,7 @@ export class VerifyCritiqueLoop {
     this.practicalMode = explicitPractical ?? !this.isStrongMode;
     // 任务风格：优先 taskStyle，其次 benchmarkType（别名）
     this.taskStyle = options.taskStyle ?? (options.benchmarkType as string | undefined);
+    this.executionIntentFlag = options.executionIntent;
     this.benchmarkType = options.benchmarkType ?? this.taskStyle;
     this.profile = BenchmarkProfiles.get(this.taskStyle ?? this.benchmarkType);
     // 接收 critique 频率、纪律规则注入强度、tier 名称
@@ -800,8 +809,9 @@ export class VerifyCritiqueLoop {
         // 终局（不计 success）。仅用消费型布尔旗标实现，不引入新状态机。
         const hasText = this.hasUserFacingText(rawContent);
         const truncatedResponse = !!(rawOrObj as any)?.truncated;
-        const executionIntent = !!this.isStrongMode
-          || String(this.taskStyle ?? this.benchmarkType ?? '') === 'execution';
+        const executionIntent = this.executionIntentFlag
+          ?? (!!this.isStrongMode
+            || String(this.taskStyle ?? this.benchmarkType ?? '') === 'execution');
         if (truncatedResponse) {
           this.pendingTruncationNotice = true;
           // done 保持 false——截断响应继续下一步

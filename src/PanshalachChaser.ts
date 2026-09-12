@@ -463,6 +463,8 @@ export class PanshalachChaser {
       isStrongMode: isHighRigor && !isSearchIntent,
       taskStyle,
       benchmarkType: taskStyle,
+      // 0.8.2：显式执行意图（task 意图才驱动防呆 nudge；chat 直答不进 loop、search 只读）
+      executionIntent: intent === 'execution',
       ironLawInjectionLevel: isSearchIntent ? 'none' : tierConfig.ironLawInjectionLevel,
       signal: config.signal,
       windowTokens: config.windowTokens,
