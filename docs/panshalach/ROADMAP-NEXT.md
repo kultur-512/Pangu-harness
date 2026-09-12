@@ -29,7 +29,7 @@
 | B4 | classic 路径 messages 分段未接 | `Repl.ts` | classic 直调 solveIssue 走旧文本协议（逃生门语义，非缺陷；对齐后 classic 与主线一致） |
 | B5 | MCP 工具结果验证尾标策略 | `engineAdapter.ts` | MCP 调用成功不计 PASS（防自述伪装真实验证）——分类策略待定，宁缺毋滥 |
 | B6 | 栈溢出守卫长会话自然复现验证 | 渲染层 | renderSseEvent 自递归守卫已修，待真机长会话自然复现确认 |
-| B7 | rewind 事件 replay 消费 / 双 synthetic 幂等 / listBranches O(N²) | `rolloutStore.ts` | 随评测工程处理 |
+| ~~B7~~ | ~~rewind 事件 replay 消费 / 双 synthetic 幂等 / listBranches O(N²)~~ | `rolloutStore.ts` | ✅ **0.8.1 销项**：rewind 边界在 `replayInto` 消费（回退后 resume 不再复活已回退轮次）；compact 标记幂等（同标记重放不产生重复轮）；分支解析改单次扫描索引（O(N×链深) → O(N)）。回归 `tests/repl/rolloutB7.test.ts` |
 
 ### C. 0.9+ 候选（已裁决推迟，恢复指针）
 

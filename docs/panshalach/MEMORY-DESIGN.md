@@ -18,7 +18,7 @@
 | L0 会话内实时 | 轨迹/验证信号 | 单任务内 | 已实现（FailureMemory 轨道已摘除 2026-09-05） |
 | L1 结构化记忆卡 | `.panshalach-memory.json`（failure/success/preference） | 跨会话（天~月） | 已实现 |
 | L2 压缩摘要 | `[COMPACT]` 合成轮（模型摘要 + 逐轮 brief） | 长会话 | 已实现 |
-| L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **已落地**（R4 `memory/events.ts`，0.6.5；AgentEvent 接线 11dbea3；`/memory events` 查询子命令未挂载） |
+| L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **已落地**（R4 `memory/events.ts`，0.6.5；AgentEvent 接线 11dbea3；`/memory events` 查询子命令已挂载——9/9 挂载收口） |
 | L4 任务状态 | TaskState（原始需求/决策/未决/进度） | 跨多轮任务 | **已落地**（R5 `memory/taskState.ts`，0.6.5；运行时注入接线 11dbea3） |
 | L5 语义索引 | n-gram 向量 v0 → 国产向量库/embedding | 检索 | **embed v0 已落地**（赵天昂，含单测）；L1 注入融合未接线 |
 

@@ -3,6 +3,15 @@
 > **当前状态（2026-09-12）**：v0.8.0-rc · 四分支已合入 develop（`5105ebf`）· tsc 干净 + `npm test` **1008 例全绿** + 双契约 PASS + eval 冒烟 A/B/C/C4 全过 · 评测管线就绪待真机端点 · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
+## 0.8.1（事件层 B7 销项：回退边界消费 + 压缩标记幂等 + 分支扫描降复杂度）
+
+`rolloutStore.ts` 三项工程遗留（ROADMAP-NEXT §B7，评测工程底座）：
+
+- **rewind 事件 replay 消费**：`replayInto` 新增回退边界处理（number=回合 timestamp / string=回合 id / 'last'）。此前 rewind 只写审计、resume 时跳过——回退后恢复会话会**复活已回退的轮次**（会话比真实历史长）。现按事件流顺序消费，回退后新写轮次、再压缩均与在线状态一致；目标不存在时不修改会话（审计事件保留）
+- **compact 标记幂等**：同一压缩标记重复回放（resume 重入 / 在线 apply 后再 replay）不再产生重复合成轮——按 `syntheticTurn.id` 先剔除历史副本再插入；重叠覆盖区间的多枚标记整批重放结果稳定
+- **分支解析降复杂度**：新增 `buildBranchIndex()` 单次扫描（每个 jsonl 只读一遍抽 meta.branchOf），`listBranches`/`directBranches`/`listSessionTree` 复用该索引——原实现对每个文件调 `isBranch` 且逐级向上读祖先文件，为 O(文件数 × 链深) 次整文件读；现为 O(文件数)。结果语义与旧实现一致（top-most origin 聚合 / 直接子节点 / 树结构 / 损坏行容错均不变）
+- 回归：新增 `tests/repl/rolloutB7.test.ts`（9 例：回退边界 4 / 幂等 3 / 分支索引 2）
+
 ## 合并记录（2026-09-12 · 四分支收口 develop）
 
 合并窗口（操作：翟苑皓；顺序=主线先落、增量按冲突从机械到实质消化，每步全量验证门）：

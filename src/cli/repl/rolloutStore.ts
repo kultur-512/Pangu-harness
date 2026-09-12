@@ -6,7 +6,7 @@
 //   { type: 'meta',    id, tier, workspace, model, approvalMode, allowlist }
 //   { type: 'turn',    turn: Turn }
 //   { type: 'approval', approvalMode, allowlist }
-//   { type: 'rewind',  target }                                    — 审计（replay 暂不消费）
+//   { type: 'rewind',  target }                                    — 回退边界（replay 消费：截断历史）
 //   { type: 'agent',   event: AgentEvent }                         — 业务语义事件（契约 v2）
 //   { type: 'compact', syntheticTurn, coveredTurnIds, tokens }     — 压缩标记（契约 v3，replay 消费）
 //   { type: 'context', snapshot: ContextSnapshotPayload }          — 注入审计（契约 v3）
@@ -244,7 +244,12 @@ export function listRecent(n = 10): RolloutSummary[] {
   return out.slice(0, n);
 }
 
-/** Replay a rollout file into the session (turns + approval state + compact markers). */
+/** Replay a rollout file into the session (turns + approval state + rewind boundaries + compact markers).
+ *
+ * 消费顺序语义（B7 修复）：rewind 是"历史截断点"——回放到 target 之后，target 之后的
+ * 轮次必须从会话中消失，否则 resume 出的会话比真实历史长（回退被 replay 静默抹掉）。
+ * compact 是"区间替换"——覆盖账本内的轮次替换为合成轮。
+ * 两者按事件流顺序生效，故回退后新写的轮次、再压缩，回放结果与在线状态一致。 */
 export function replayInto(session: Session, events: RolloutEvent[]): number {
   let applied = 0;
   for (const ev of events) {
@@ -254,16 +259,42 @@ export function replayInto(session: Session, events: RolloutEvent[]): number {
     } else if (ev.type === 'approval') {
       session.approvalMode = (ev.approvalMode as any) || session.approvalMode;
       session.sessionApprovalAllowlist = new Set(ev.allowlist || []);
+    } else if (ev.type === 'rewind') {
+      applyRewindBoundary(session, ev.target);
     } else if (ev.type === 'compact' && ev.syntheticTurn) {
       // 接口契约 v3：resume 端消费压缩标记——与在线 applyCompactResult 同一语义：
       // 覆盖账本内的轮次以 synthetic turn 替换，其余（含标记后新增轮）保留。
       // M2-7：旧 compact 标记无 role → 回放时按现状补 'assistant'（迁移）；新标记原样。
       if (ev.syntheticTurn.role === undefined) ev.syntheticTurn.role = 'assistant';
       const covered = new Set(ev.coveredTurnIds || []);
-      session.turns = [ev.syntheticTurn, ...session.turns.filter(t => !covered.has(t.id))];
+      // 幂等（B7）：先移除同 id 的历史副本，再插入——同一标记回放两次不产生重复轮
+      // （resume 重入 / 在线 apply 后再次 replay 的场景）。
+      const sid = ev.syntheticTurn.id;
+      const rest = session.turns.filter((t) => !covered.has(t.id) && t.id !== sid);
+      session.turns = [ev.syntheticTurn, ...rest];
     }
   }
   return applied;
+}
+
+/**
+ * rewind 边界语义：`target` 指向"回退到的回合"。
+ * - number = 该回合的 timestamp（RewindCommand 传入 target.turnTs）→ 丢弃 ts 更大的轮
+ * - string = 回合 id（或 'last'）→ 找到该轮后丢弃其后的轮；找不到则视为无副作用
+ * 找不到目标（事件指向的轮次不存在）时不修改会话——审计事件仍保留。
+ */
+function applyRewindBoundary(session: Session, target: string | number): void {
+  if (typeof target === 'number') {
+    session.turns = session.turns.filter((t) => t.timestamp <= target);
+    return;
+  }
+  if (target === 'last') {
+    const last = session.turns[session.turns.length - 1];
+    session.turns = last ? [last] : [];
+    return;
+  }
+  const idx = session.turns.findIndex((t) => t.id === target);
+  if (idx >= 0) session.turns = session.turns.slice(0, idx + 1);
 }
 
 /** Load a rollout into the session; returns turn count applied (0 if none). */
@@ -359,29 +390,61 @@ export function isBranch(sessionId: string): string | null {
   }
 }
 
+/**
+ * 分支索引：一次目录扫描，读每个 jsonl **一遍**，抽出直接父指针（meta.branchOf）。
+ * B7：此前 listBranches 对每个文件调 isBranch，而 isBranch 又逐级向上读祖先文件 →
+ * O(文件数 × 链深) 次整文件读。改为单次扫描建索引后，链解析全在内存中做。
+ * 无 meta / 无 branchOf 的文件不入索引（即 origin）。
+ */
+function buildBranchIndex(): Map<string, string> {
+  const dir = rolloutsDir();
+  const index = new Map<string, string>();
+  if (!fs.existsSync(dir)) return index;
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.jsonl')) continue;
+    const id = f.replace(/\.jsonl$/, '');
+    for (const ev of readEvents(id)) {
+      if (ev.type === 'meta') {
+        const parent = (ev as any).branchOf;
+        if (typeof parent === 'string' && parent) index.set(id, parent);
+        break; // meta 只认首个
+      }
+    }
+  }
+  return index;
+}
+
+/** 在已建索引上解析 TOP-MOST origin（cycle-guarded）；非分支返回 null。 */
+function resolveOriginFromIndex(sessionId: string, index: Map<string, string>): string | null {
+  const direct = index.get(sessionId);
+  if (!direct) return null;
+  const seen = new Set<string>([sessionId]);
+  let cur = direct;
+  while (true) {
+    if (seen.has(cur)) return cur; // cycle: stop at current pointer
+    seen.add(cur);
+    const next = index.get(cur);
+    if (!next) return cur;
+    cur = next;
+  }
+}
+
 /** All branch ids whose (top-most) origin is `sessionId`. */
 export function listBranches(sessionId: string): string[] {
-  const dir = rolloutsDir();
-  if (!fs.existsSync(dir)) return [];
+  const index = buildBranchIndex(); // 单次扫描（B7：原为 O(N²)）
   const out: string[] = [];
-  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jsonl'))) {
-    const id = f.replace(/\.jsonl$/, '');
-    const origin = isBranch(id);
-    if (origin === sessionId) out.push(id);
+  for (const id of index.keys()) {
+    if (resolveOriginFromIndex(id, index) === sessionId) out.push(id);
   }
   return out;
 }
 
 /** Branch ids whose DIRECT parent is `sessionId` (branch-of-branch aware). */
-export function directBranches(sessionId: string): string[] {
-  const dir = rolloutsDir();
-  if (!fs.existsSync(dir)) return [];
+export function directBranches(sessionId: string, index?: Map<string, string>): string[] {
+  const idx = index ?? buildBranchIndex();
   const out: string[] = [];
-  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.jsonl'))) {
-    const id = f.replace(/\.jsonl$/, '');
-    const events = readEvents(id);
-    const meta = events.find((e) => e.type === 'meta') as any;
-    if (meta?.branchOf === sessionId) out.push(id);
+  for (const [id, parent] of idx) {
+    if (parent === sessionId) out.push(id);
   }
   return out.sort();
 }
@@ -392,12 +455,13 @@ export interface SessionTreeNode {
   children: SessionTreeNode[];
 }
 export function listSessionTree(sessionId: string): SessionTreeNode {
+  const index = buildBranchIndex(); // 单次扫描，递归中复用（B7）
   const seen = new Set<string>();
   const walk = (id: string, depth: number): SessionTreeNode => {
     const node: SessionTreeNode = { id, children: [] };
     if (depth > 32 || seen.has(id)) return node; // cycle guard
     seen.add(id);
-    for (const child of directBranches(id)) {
+    for (const child of directBranches(id, index)) {
       node.children.push(walk(child, depth + 1));
     }
     return node;
