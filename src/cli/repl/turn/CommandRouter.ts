@@ -11,7 +11,7 @@ import { buildHelpView } from '../commands/HelpCommand.js';
 import { createCliApprovalBridge } from '../../../tools/approval.js';
 import type { TurnContext } from './TurnContext.js';
 import { getLastOutput, isRunning, resolveCtxWindowTokens, emitFeed, runSyncCompact } from './TurnContext.js';
-import { localizeRolloutStatus, modeBadgeVisual, modeSwitchReceipt } from './TurnRenderer.js';
+import { buildEffortSliderBlock, localizeRolloutStatus, modeBadgeVisual, modeSwitchReceipt, redrawEffortSliderLines } from './TurnRenderer.js';
 
 /** line 模式实际支持的命令（Tab 补全 + 未知命令建议的数据源；顺序 = 常用度）。 */
 export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> = [
@@ -104,6 +104,58 @@ export function cycleMode(ctx: TurnContext): string {
   const m = ctx.modeRing.cycle();
   pushRichModeBadge(ctx, m);
   return m;
+}
+
+// ==================== CC 式 /tier 交互滑杆（2026-09-12 对标 /effort） ====================
+
+/** 组装当前 effortSel 的滑杆块（着色版，供打印与重绘共用）。 */
+function effortSliderLines(ctx: TurnContext): string[] {
+  const sel = ctx.effortSel!;
+  return buildEffortSliderBlock({ tiers: sel.tiers, sublabels: sel.sublabels, index: sel.index, useColor: true });
+}
+
+/** ←→ 移动光标并原位重绘滑杆块（含副标注行），随后 readline 重画提示符行。 */
+function redrawEffortSel(ctx: TurnContext): void {
+  try { ctx.renderer.write(redrawEffortSliderLines(effortSliderLines(ctx))); } catch {}
+  try { ctx.lineRefreshLine(); } catch {}
+}
+
+/**
+ * effortSel 激活时的按键消费（在 rl._ttyWrite 内调用，与 SlashMenu 互斥）：
+ * ←/→ 移动（钳位）· Enter 确认切换（updateTier + 回执）· Esc 保留现状 ·
+ * Ctrl+C 关闭选择态后放行原 SIGINT 流程。返回 true = 已消费（readline 不处理）。
+ */
+export function handleEffortSelKey(ctx: TurnContext, key: any): boolean {
+  const sel = ctx.effortSel;
+  if (!sel?.active) return false;
+  const name = String(key?.name || '');
+  if (key?.ctrl && name === 'c') {
+    ctx.effortSel = null;
+    return false; // 放行给 SIGINT 处理链
+  }
+  if (name === 'left' || name === 'right') {
+    const delta = name === 'left' ? -1 : 1;
+    sel.index = Math.max(0, Math.min(sel.tiers.length - 1, sel.index + delta));
+    redrawEffortSel(ctx);
+    return true;
+  }
+  if (name === 'return' || name === 'enter') {
+    const tier = sel.tiers[sel.index] || '';
+    const sub = sel.sublabels[sel.index] || '';
+    ctx.effortSel = null;
+    try { ctx.session.updateTier(tier as any); } catch {}
+    emitFeed(ctx, `✓ 思考强度已切换: ${tier}${sub ? ' · ' + sub : ''}`, 'success');
+    try { ctx.lineSetPrompt(); } catch {}
+    return true;
+  }
+  if (name === 'escape') {
+    const cur = sel.tiers[sel.index] || '';
+    ctx.effortSel = null;
+    emitFeed(ctx, `（已保留 ${cur}）`, 'info');
+    try { ctx.lineSetPrompt(); } catch {}
+    return true;
+  }
+  return false;
 }
 
 function setMode(ctx: TurnContext, m: any) {
@@ -425,14 +477,38 @@ export async function handleSlashCommand(
     return true;
   }
   if (cmd === '/tier' || cmd === '/t') {
+    // CC 式思考强度滑杆（2026-09-12 对标 /effort）。无参 → 打印滑杆块并进入
+    // 交互选择态（←/→ 调节 · Enter 确认 · Esc 取消，按键消费在 sseInteractive
+    // 的 _ttyWrite 层，与 SlashMenu 互斥；仅 line 模式激活——rich 桥无人消费
+    // 按键，激活会永久挂起）。带参（名称或编号）→ 即时切换，编号与刻度同序。
+    const { TierRegistry } = await import('../../../tiers/TierConfig.js');
+    const configs = TierRegistry.getAll();
+    const TIERS = configs.map((c) => c.tier as string);
+    const SUBS = configs.map((c) => c.typicalUseCase);
     const t = arg.trim().toLowerCase();
-    const TIERS = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
-    if (t && TIERS.includes(t)) {
-      ctx.session.tier = t as any;
-      emit(`档位已切换: ${t}（下次任务生效）`, 'success');
-    } else {
-      emit(`当前档位: ${ctx.session.tier}；可用: ${TIERS.join(', ')}`, 'info');
+    if (!t) {
+      const index = Math.max(0, TIERS.indexOf(String(ctx.session.tier || '')));
+      // line 模式着色版；rich 桥 feed 不吃 ANSI → 纯文本。
+      for (const l of buildEffortSliderBlock({ tiers: TIERS, sublabels: SUBS, index, useColor: !useRich })) emit(l, 'info');
+      if (!useRich) ctx.effortSel = { active: true, tiers: TIERS, sublabels: SUBS, index };
+      return true;
     }
+    let target = t;
+    if (/^\d+$/.test(target)) {
+      const idx = parseInt(target, 10);
+      if (idx < 1 || idx > TIERS.length) {
+        emit(`编号 "${arg.trim()}" 超出范围（共 ${TIERS.length} 档）—— /tier 查看刻度。`, 'warn');
+        return true;
+      }
+      target = TIERS[idx - 1];
+    }
+    if (!TierRegistry.isTier(target)) {
+      emit(`无效档位: ${arg.trim()}（可用: ${TIERS.join(' | ')}）`, 'warn');
+      return true;
+    }
+    ctx.session.tier = target as any;
+    const sub = SUBS[TIERS.indexOf(target)] || '';
+    emit(`✓ 思考强度已切换: ${target}${sub ? ' · ' + sub : ''}（下次任务生效）`, 'success');
     return true;
   }
   if (cmd === '/status') {

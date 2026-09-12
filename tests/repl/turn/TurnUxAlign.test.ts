@@ -31,9 +31,12 @@ import {
   idleStatusSegments,
   buildModelMenuRows,
   formatModelMenuRow,
+  buildEffortSliderBlock,
+  redrawEffortSliderLines,
   ANSI_GREEN,
   ANSI_DIM,
 } from '../../../src/cli/repl/turn/TurnRenderer.js';
+import { handleEffortSelKey } from '../../../src/cli/repl/turn/CommandRouter.js';
 import {
   GERUND_ROTATE_MS,
   SPINNER_FRAMES,
@@ -401,5 +404,136 @@ describe('buildModelMenuRows / formatModelMenuRow：CC 式 /model 菜单', () =>
     const other = formatModelMenuRow(buildModelMenuRows(['ab'], 'x')[0], 5, true);
     assert.ok(other.includes('\x1b[36m'), '非当前项名称青色');
     assert.ok(!other.includes(ANSI_GREEN), '非当前项无绿色');
+  });
+});
+
+// ==================== CC 式 /tier 思考强度滑杆（2026-09-12 真机对标 /effort） ====================
+
+describe('buildEffortSliderBlock：CC 式思考强度滑杆', () => {
+  const TIERS = ['quick', 'standard', 'high', 'max', 'ex', 'pangu'];
+  const SUBS = ['热修复、临时检查', '常规小修改', '日常主力（推荐）', '重要/高风险任务', '极难任务、核心模块', '极致追求（终极长程记忆模式）'];
+
+  it('纯文本：8 行结构（标题/空/端标签/轨道/档名/副标注/空/页脚）', () => {
+    const lines = buildEffortSliderBlock({ tiers: TIERS, sublabels: SUBS, index: 2, useColor: false, width: 80 });
+    assert.equal(lines.length, 8);
+    assert.equal(lines[0], '思考强度');
+    assert.equal(lines[1], '');
+    assert.ok(lines[2].includes('更快') && lines[2].includes('更强'), '端标签两端齐全');
+    assert.ok(lines[3].includes('▲'), '轨道含 ▲ 光标');
+    assert.ok(lines[3].includes('┊'), '扩展区边界 ┊ 分隔');
+    assert.ok(lines[4].includes('quick') && lines[4].includes('pangu'), '档名行含全部六档');
+    assert.ok(lines[5].startsWith('▲ high · 日常主力（推荐）'), '副标注行 = 当前档 + typicalUseCase');
+    assert.equal(lines[7], '←/→ 调节 · Enter 确认 · Esc 取消');
+  });
+
+  it('▲ 落在当前档列中心；无副标注时只输出 `▲ <档名>`', () => {
+    const lines = buildEffortSliderBlock({ tiers: TIERS, sublabels: SUBS, index: 0, useColor: false, width: 80 });
+    assert.ok(lines[5].startsWith('▲ quick · 热修复、临时检查'));
+    const idx4 = buildEffortSliderBlock({ tiers: TIERS, index: 4, useColor: false, width: 80 });
+    assert.ok(idx4[5].startsWith('▲ ex'), '无 sublabels 时不带 · 后缀');
+  });
+
+  it('着色版：扩展档品红、其余 dim、当前档无色标记（默认白亮）', () => {
+    const lines = buildEffortSliderBlock({ tiers: TIERS, sublabels: SUBS, index: 2, useColor: true, width: 80 });
+    assert.ok(lines[4].includes('\x1b[35mex'), '扩展档 ex 品红');
+    assert.ok(lines[4].includes('\x1b[35mpangu'), '扩展档 pangu 品红');
+    assert.ok(lines[4].includes('\x1b[2mquick'), '非当前主档 dim');
+    assert.ok(!/\x1b\[2mhigh/.test(lines[4]), '当前档 high 不 dim');
+    assert.ok(lines[2].includes('\x1b[35m更强'), '更强端品红');
+  });
+
+  it('index 钳位：越界取边界，不抛', () => {
+    const over = buildEffortSliderBlock({ tiers: TIERS, index: 99, useColor: false, width: 80 });
+    assert.ok(over[5].startsWith('▲ pangu'));
+    const under = buildEffortSliderBlock({ tiers: TIERS, index: -5, useColor: false, width: 80 });
+    assert.ok(under[5].startsWith('▲ quick'));
+  });
+});
+
+describe('redrawEffortSliderLines：原位重绘 ANSI 序列', () => {
+  it('光标回块顶（N 行上移）+ 每行清行重写 + 尾行回提示符行', () => {
+    const seq = redrawEffortSliderLines(['a', 'b', 'c']);
+    assert.ok(seq.startsWith('\r\x1b[3A\r'), `上移 3 行，got: ${JSON.stringify(seq)}`);
+    assert.equal(seq.split('\x1b[2K').length - 1, 3, '三行各清一次');
+    assert.equal(seq.split('\x1b[1B').length - 1, 3, '三次下移（最后一行后回提示符行）');
+    assert.ok(seq.includes('a') && seq.includes('b') && seq.includes('c'));
+  });
+});
+
+describe('handleEffortSelKey：/tier 交互滑杆按键消费', () => {
+  it('未激活 → false（透传 readline）', () => {
+    const { ctx } = makeHarness();
+    assert.equal(handleEffortSelKey(ctx, { name: 'left' }), false);
+  });
+
+  it('←→ 移动钳位并重绘；Enter 切换 tier + 回执；Esc 保留现状', async () => {
+    const { session, ctx, renderer } = makeHarness();
+    ctx.effortSel = { active: true, tiers: ['quick', 'standard', 'high', 'max', 'ex', 'pangu'], sublabels: ['a', 'b', 'c', 'd', 'e', 'f'], index: 2 };
+    let redraws = 0;
+    ctx.renderer.write = () => { redraws++; };
+    ctx.lineRefreshLine = () => {};
+
+    assert.equal(handleEffortSelKey(ctx, { name: 'left' }), true, '← 已消费');
+    assert.equal(ctx.effortSel?.index, 1);
+    assert.ok(redraws >= 1, '← 触发重绘');
+    assert.equal(handleEffortSelKey(ctx, { name: 'left' }), true);
+    assert.equal(handleEffortSelKey(ctx, { name: 'left' }), true);
+    assert.equal(ctx.effortSel?.index, 0, '钳位到 0');
+    assert.equal(handleEffortSelKey(ctx, { name: 'right' }), true);
+    assert.equal(ctx.effortSel?.index, 1);
+
+    // 字母键不消费（透传 readline 输入行）
+    assert.equal(handleEffortSelKey(ctx, { name: 'x' }), false);
+    assert.equal(ctx.effortSel?.active, true, '未消费键不影响选择态');
+
+    // Enter → 切换 standard + 回执
+    assert.equal(handleEffortSelKey(ctx, { name: 'return' }), true);
+    assert.equal(session.tier, 'standard');
+    assert.equal(ctx.effortSel, null);
+    assert.ok(renderer.lines.some((l: string) => l.includes('✓ 思考强度已切换: standard')), '切换回执');
+
+    // Esc → 保留
+    ctx.effortSel = { active: true, tiers: ['quick', 'high'], sublabels: ['', ''], index: 1 };
+    assert.equal(handleEffortSelKey(ctx, { name: 'escape' }), true);
+    assert.equal(session.tier, 'standard', 'Esc 不改档');
+    assert.equal(ctx.effortSel, null);
+    assert.ok(renderer.lines.some((l: string) => l.includes('（已保留 high）')), '保留回执');
+  });
+
+  it('Ctrl+C 关闭选择态并放行（返回 false 交给 SIGINT 链）', () => {
+    const { ctx } = makeHarness();
+    ctx.effortSel = { active: true, tiers: ['high'], sublabels: [''], index: 0 };
+    assert.equal(handleEffortSelKey(ctx, { name: 'c', ctrl: true }), false, '放行');
+    assert.equal(ctx.effortSel, null, '选择态已关闭');
+  });
+});
+
+describe('handleSlashCommand /tier 内联分支：滑杆 + 编号直达', () => {
+  it('无参：打印 8 行滑杆块并置 effortSel（line 模式）', async () => {
+    const { ctx, renderer } = makeHarness();
+    const { createCommandEmitter } = await import('../../../src/cli/repl/turn/CommandRouter.js');
+    const emit = createCommandEmitter(ctx, false, null);
+    const { handleSlashCommand } = await import('../../../src/cli/repl/turn/CommandRouter.js');
+    const handled = await handleSlashCommand(ctx, { cmd: '/tier', arg: '', emit, useRich: false, bridge: null });
+    assert.equal(handled, true);
+    const sliderIdx = renderer.lines.findIndex((l: string) => l === '思考强度');
+    assert.ok(sliderIdx >= 0, `滑杆块已打印，got: ${JSON.stringify(renderer.lines).slice(0, 200)}`);
+    assert.ok(renderer.lines[sliderIdx + 7].includes('←/→ 调节'), '页脚在块底');
+    assert.equal(ctx.effortSel?.active, true, 'line 模式进入交互选择态');
+    assert.equal(ctx.effortSel?.tiers.length, 6);
+  });
+
+  it('编号直达：/tier 2 → standard + 回执；越界编号 warn；无效名 warn', async () => {
+    const { session, ctx, renderer } = makeHarness();
+    const { createCommandEmitter, handleSlashCommand } = await import('../../../src/cli/repl/turn/CommandRouter.js');
+    const emit = createCommandEmitter(ctx, false, null);
+    await handleSlashCommand(ctx, { cmd: '/tier', arg: '2', emit, useRich: false, bridge: null });
+    assert.equal(session.tier, 'standard');
+    assert.ok(renderer.lines.some((l: string) => l.includes('✓ 思考强度已切换: standard · 常规小修改')));
+    assert.equal(ctx.effortSel, null, '带参切换不进选择态');
+    await handleSlashCommand(ctx, { cmd: '/tier', arg: '99', emit, useRich: false, bridge: null });
+    assert.ok(renderer.lines.some((l: string) => l.includes('超出范围')));
+    await handleSlashCommand(ctx, { cmd: '/tier', arg: 'nope', emit, useRich: false, bridge: null });
+    assert.ok(renderer.lines.some((l: string) => l.includes('无效档位: nope')));
   });
 });

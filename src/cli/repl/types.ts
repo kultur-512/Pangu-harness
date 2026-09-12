@@ -127,6 +127,11 @@ export interface CommandContext {
    */
   approvalBridge?: (req: { tool: string; description: string; danger: boolean }) => Promise<string>;
   signal?: AbortSignal;
+  /**
+   * CC 式 /tier 交互滑杆选择态（TurnContext.effortSel 的宿主注入引用）。
+   * classic Repl 不注入 → /tier 只打印滑杆不进入交互选择态。
+   */
+  effortSel?: { active: boolean; tiers: string[]; sublabels: string[]; index: number } | null;
 }
 
 export interface CommandResult {

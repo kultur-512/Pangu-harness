@@ -100,6 +100,13 @@ export interface TurnContext {
    * setRunning(false) 重复下发（行为锁定测试断言 [true,false]）。
    */
   runningBadgeOn?: boolean;
+  /**
+   * CC 式 /tier 交互滑杆选择态（_ttyWrite 拦截 ←→/Enter/Esc；与 SlashMenu 互斥）。
+   * active=false 或 null = 未激活。sublabels 供重绘副标注行。
+   */
+  effortSel: { active: boolean; tiers: string[]; sublabels: string[]; index: number } | null;
+  /** line 模式 readline 原位重画（_refreshLine 包装；rich 路径恒空操作）。 */
+  lineRefreshLine: () => void;
 }
 
 export function createTurnContext(init: {
@@ -132,6 +139,8 @@ export function createTurnContext(init: {
     mcpClients: new Map(),
     mcpToolsReady: [],
     mcpInitDone: false,
+    effortSel: null,
+    lineRefreshLine: () => {},
     sharedRegistry: null,
   };
 }

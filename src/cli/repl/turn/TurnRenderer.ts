@@ -358,7 +358,6 @@ export function idleStatusSegments(opts: {
 
 // ==================== CC 式 /model 菜单呈现（2026-09-12 真机对标） ====================
 // CC 的 /model：编号行 + 名称列对齐 + 青色模型名 + 绿色当前项 + dim 描述列 + 页脚快捷键提示。
-
 export interface ModelMenuRow {
   index: number;
   name: string;
@@ -395,6 +394,114 @@ export function formatModelMenuRow(row: ModelMenuRow, nameWidth: number, useColo
     (row.current ? `${ANSI_GREEN}${name}${ANSI_RESET}` : `${ANSI_CYAN}${name}${ANSI_RESET}`) +
     (desc ? `${ANSI_DIM}${desc}${ANSI_RESET}` : '')
   );
+}
+
+// ==================== CC 式 /tier 思考强度滑杆（2026-09-12 真机对标 /effort） ====================
+// CC 的 /effort：水平滑杆（Faster←→Smarter 端标签 + ▲ 光标 + 当前档白色高亮、
+// 扩展档区品红 + ┊ 分隔 + 页脚 ←/→ adjust·Enter confirm·Esc cancel）。烛龙
+// 六档 tier（quick/standard/high/max/ex/pangu）映射同一布局，ex/pangu 为扩展区。
+
+/** 扩展区档位（品红区，┊ 分隔——对应 CC 的 ultracode 区）。 */
+export const TIER_SLIDER_EXTENSIONS: ReadonlySet<string> = new Set(['ex', 'pangu']);
+
+export const ANSI_MAGENTA = '\x1b[35m';
+
+export interface EffortSliderBlockOpts {
+  tiers: ReadonlyArray<string>;
+  /** 每档副标注（typicalUseCase），与 tiers 等长；缺省用空串。 */
+  sublabels?: ReadonlyArray<string>;
+  index: number;
+  useColor?: boolean;
+  width?: number;
+}
+
+/**
+ * CC 式思考强度滑杆块（8 行）：标题 / 空 / 端标签（更快←→更强）/ 轨道线
+ * （─ + ▲ 当前档列中心 + 扩展区前 ┊）/ 档名行（当前档默认白亮、其余 dim、
+ * 扩展档品红）/ 副标注行（`▲ <当前档> · <副标注>`）/ 空 / 页脚。
+ */
+export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
+  const tiers = (Array.isArray(opts.tiers) ? opts.tiers : []).map((t) => String(t || ''));
+  const sublabels = (Array.isArray(opts.sublabels) ? opts.sublabels : []).map((s) => String(s || ''));
+  const useColor = opts.useColor !== false;
+  const width = Math.max(40, Math.floor(Number(opts.width) || termWidthSafe()));
+  const dim = (s: string) => (useColor ? `${ANSI_DIM}${s}${ANSI_RESET}` : s);
+  const mag = (s: string) => (useColor ? `${ANSI_MAGENTA}${s}${ANSI_RESET}` : s);
+  const bright = (s: string) => s;
+
+  const idx = Math.max(0, Math.min(tiers.length - 1, Math.floor(opts.index)));
+
+  // 列布局：每档列宽 = 显示宽(档名) + 2，轨道起点整体居中。
+  const colWidths = tiers.map((t) => stringWidth(t) + 2);
+  const trackWidth = colWidths.reduce((a, b) => a + b, 0);
+  const trackStart = Math.max(0, Math.floor((width - trackWidth) / 2));
+  const colStarts: number[] = [];
+  {
+    let acc = 0;
+    for (const w of colWidths) { colStarts.push(acc); acc += w; }
+  }
+  const firstExt = tiers.findIndex((t) => TIER_SLIDER_EXTENSIONS.has(t));
+
+  // 端标签行：更快 右端对齐轨道起点，更强 左端对齐轨道终点（更强=扩展方向，品红）。
+  const wFaster = stringWidth('更快');
+  const wSmarter = stringWidth('更强');
+  const padL = Math.max(0, trackStart - wFaster);
+  const padM = Math.max(0, trackWidth - wFaster - wSmarter);
+  const endLabels = ' '.repeat(padL) + dim('更快') + ' '.repeat(padM) + mag('更强');
+
+  // 轨道线：全 ─，扩展区边界前一列 ┊，当前档列中心 ▲。
+  const trackChars: string[] = new Array(Math.max(0, trackWidth)).fill('─');
+  if (firstExt > 0) {
+    const b = colStarts[firstExt] - 1;
+    if (b >= 0 && b < trackChars.length) trackChars[b] = '┊';
+  }
+  if (tiers.length > 0) {
+    const c = colStarts[idx] + Math.floor(colWidths[idx] / 2);
+    if (c >= 0 && c < trackChars.length) trackChars[c] = '▲';
+  }
+  const track = ' '.repeat(trackStart) + trackChars.join('');
+
+  // 档名行：当前档亮白、其余 dim、扩展档品红（当前扩展档同样亮白——光标即焦点）。
+  const names = tiers
+    .map((t, i) => {
+      const cell = t + ' '.repeat(Math.max(0, colWidths[i] - stringWidth(t)));
+      const isExt = TIER_SLIDER_EXTENSIONS.has(t);
+      if (i === idx) return bright(cell);
+      return isExt ? mag(cell) : dim(cell);
+    })
+    .join('');
+  const namesLine = ' '.repeat(trackStart) + names;
+
+  // 副标注行：`▲ <当前档> · <副标注>`（副标注 dim）。
+  const cur = tiers[idx] || '';
+  const sub = sublabels[idx] || '';
+  const currentLine = sub ? `▲ ${cur} · ${dim(sub)}` : `▲ ${cur}`;
+
+  return [
+    bright('思考强度'),
+    '',
+    endLabels,
+    track,
+    namesLine,
+    currentLine,
+    '',
+    dim('←/→ 调节 · Enter 确认 · Esc 取消'),
+  ];
+}
+
+/** 滑杆块原位重绘 ANSI 序列（光标从块底下一行回块顶逐行清写后回提示符行）。 */
+export function redrawEffortSliderLines(lines: ReadonlyArray<string>): string {
+  const n = Math.max(1, lines.length);
+  let out = `\r\x1b[${n}A\r`;
+  lines.forEach((l, i) => {
+    out += `\x1b[2K${l}`;
+    out += i < n - 1 ? '\r\x1b[1B' : '\r\x1b[1B';
+  });
+  return out;
+}
+
+function termWidthSafe(): number {
+  try { return termWidth(); } catch { return 80; }
 }
 
 /** `?` 快捷帮助面板（常用 8 条 + dim 尾行指向 /help；颜色由调用方套）。 */

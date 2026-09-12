@@ -26,7 +26,7 @@ import * as rollout from './rolloutStore.js';
 import type { ModelProvider } from './types.js';
 import { createTurnContext, clearInlineLine, isRunning, updateQueueCount } from './turn/TurnContext.js';
 import { buildBanner, createClearingRenderer, modeBadgeVisual, shouldShowStartupTip, termWidth } from './turn/TurnRenderer.js';
-import { completeLineCommand, confirmPendingSuggestion, createModeRing, cycleMode, getSharedRegistry, handleLocalCommand, LINE_COMMANDS } from './turn/CommandRouter.js';
+import { completeLineCommand, confirmPendingSuggestion, createModeRing, cycleMode, getSharedRegistry, handleEffortSelKey, handleLocalCommand, LINE_COMMANDS } from './turn/CommandRouter.js';
 import { buildSlashMenuItems, createSlashMenuController } from './turn/SlashMenu.js';
 import { createTurnController } from './turn/TurnController.js';
 
@@ -252,14 +252,21 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // 其余透传 readline；菜单关闭后 ↑↓ 恢复 readline 历史导航默认行为）。
   // 包一层 rl._ttyWrite —— readline 每个按键都经它分发，在此消费可抢在
   // 历史导航/行提交之前；菜单关闭时零改动透传。
+  // /tier 交互滑杆（effortSel）激活时优先消费 ←→/Enter/Esc，与 SlashMenu 互斥。
   const origTtyWrite = (rl as any)._ttyWrite;
   if (typeof origTtyWrite === 'function') {
     (rl as any)._ttyWrite = (s: string, key: any) => {
       let consumed = false;
-      try { consumed = slashMenu.handleKey(key); } catch { consumed = false; }
+      if (ctx.effortSel?.active) {
+        try { consumed = handleEffortSelKey(ctx, key); } catch { consumed = false; }
+      } else {
+        try { consumed = slashMenu.handleKey(key); } catch { consumed = false; }
+      }
       if (!consumed) origTtyWrite.call(rl, s, key);
-      // 字符变化 → 重过滤/开合（未变化的键按下后为 no-op）
-      try { slashMenu.syncLine(String((rl as any).line ?? '')); } catch {}
+      // 字符变化 → 重过滤/开合（未变化的键按下后为 no-op；滑杆激活期间不重过滤）
+      if (!ctx.effortSel?.active) {
+        try { slashMenu.syncLine(String((rl as any).line ?? '')); } catch {}
+      }
     };
   }
 
@@ -267,6 +274,7 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     rl.setPrompt(ctx.renderer.color('▸ ', 'cyan'));
     printModeBadgeIfPending(); // runTaskViaSse finally 恢复提示符前也补徽标（若模式刚变过）
   };
+  ctx.lineRefreshLine = () => { try { (rl as any)._refreshLine?.(); } catch {} };
 
   rl.on('close', () => {
     ctx.renderer.writeLine('\n再见。');
