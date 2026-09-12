@@ -101,3 +101,4 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
       - run: node verify-panshalach-cleanup.mjs
+      - run: node scripts/eval/smoke-eval.mjs

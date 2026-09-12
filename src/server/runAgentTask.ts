@@ -332,7 +332,7 @@ export async function runAgentTask(
  *   事件类型走 pushFeed 兜底，安全）。
  * 调用方已 try/catch 包裹：任何异常不影响任务成功返回。
  */
-async function finalizeTaskMemory(
+export async function finalizeTaskMemory(
   session: Session,
   result: { bestTrajectory?: any },
   injectedCardIds: string[],

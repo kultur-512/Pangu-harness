@@ -10,13 +10,12 @@ U3 搭好的 R6 eval runner 骨架里，`runOne()` 返回的字段名是 runner 
 本次 U4 收敛完成后，run-eval 产出的每条结果都过 `validateResult()`，schema 违规即不写盘 + exit 1。
 
 ## 我需要别人确认的接口（resolved: false）
-- **TurnStopReason 双向同步**：`types.ts`（0.7 口径，含 `answered`、无 `verification-failed-continue`）与 `schema.mjs`（v3.1 口径，反之）已不一致。schema 注释 L11 写死"双向同步"，实际破了。
-  - 提议：以 `types.ts` 0.7 口径为准，schema 侧把 `verification-failed-continue` 换成 `answered`。
-  - 赵天昂 d3f8eb8 0.7.4 销项时可以顺手做，或者我下一批做。
+- 无。
 
 ## 我已经确认的接口（resolved: true）
 - [x] 赵天昂: R6 schema 字段定义（`RESULT_SCHEMA` + `validateResult` + `newResult`）——消费侧对齐无冲突。
 - [x] 翟苑皓: R1/R2 契约（`attemptCount` / `refined` 语义）——runner 侧预留字段 + 解析路径，等 harness 侧输出结构化事件后自动生效。
+- [x] TurnStopReason 双向同步（9/10）：schema.mjs 补 `error` 态（types.ts 0.7.4 新增），7 态对齐。
 
 ## 我暴露的接口（别人依赖）
 - `runOne(fixture, ablation, opts)` 返回值形状：严格对齐 `RESULT_SCHEMA`。
