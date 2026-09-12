@@ -692,7 +692,6 @@ export class PanshalachChaser {
           readBeforeWriteViolation: s.readBeforeWriteViolation,
           terminalNoCheck: s.terminalNoCheck,
           automationNoEffectCheck: s.automationNoEffectCheck,
-          replyText: s.replyText,
         })),
         isStrongTarget: isHighRigor,
         benchmarkType: taskStyle,
@@ -703,8 +702,6 @@ export class PanshalachChaser {
       traj.stopReason = loopResult.stopReason;
       // aborted 时保留本步已流出正文（宿主落 turn 用）
       if (loopResult.partialText) traj.partialText = loopResult.partialText;
-      // answered 时保留模型回复正文（供 CLI 前端展示）
-      if (loopResult.replyText) traj.replyText = loopResult.replyText;
       traj.estimatedUsedTokens = estimatedUsedTokens;
       best = traj;
     } catch (e: any) {
