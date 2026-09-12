@@ -2,6 +2,17 @@
 
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
+## 合并记录（2026-09-12 · 四分支收口 develop）
+
+合并窗口（操作：翟苑皓；顺序=主线先落、增量按冲突从机械到实质消化，每步全量验证门）：
+
+1. `zhaiyuanhao1` → develop：fast-forward（25 提交，0.8.0-rc 全量 + 文档对齐）——968 例绿
+2. `wangzuo1` 合入（b4ba061）：/memory events 查询子命令 + TaskState.record* 原语——并集 package.json 取 0.8.0-rc、CHANGELOG 0.7.5 段归位——977 例绿
+3. `wanghaoyu1` 合入（5b15fb6）：U5 Repl 三口接线 + TurnStopReason 同步 + smoke-eval CI gate——runAgentTask 冲突并集：写集提取器取 trajectoryFiles 共享模块版（旧内联实现语义已全覆盖）、finalizeTaskMemory export 吸收——977 例绿
+4. `zhaotianang1` 合入（403e6e8）：R5 task CLI 三子命令 + R6 follow-up + 集成——零冲突（wanghaoyu1 先合后 merge-base 前移）——**1008 例绿** + smoke-eval A/B/C/C4 冒烟全过
+
+合并窗口后旧分支冻结，新工作自 develop 拉 <pinyin>2。master 发布由 kultur 在 R6 数据回填后执行。
+
 ## 0.8.0-rc 追加（对话链路治理 + CC 交互对齐 + 记忆链审计修复 · 2026-09-10 ~ 09-12）
 
 M1/M2 落地后的真机驱动迭代（每项均有真机故障→根因→修复实证链）：
