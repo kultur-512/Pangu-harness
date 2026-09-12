@@ -174,7 +174,7 @@ export PANSHA_MODEL=openpangu:openPangu-7B
 
 - 密钥三种给法：`apiKey` 明文（本地端点 `EMPTY` 即可）→ `PANSHA_<PROV>_API_KEY` 环境变量（不进配置文件）→ `apiKeyCmd`（stdout 首行作密钥，适合密钥管理器）。
 - `openpangu:` 前缀是 provider 路由名，不会发给网关（0.6.4 起注册表剥离前缀，修复原样发送导致网关 400 的问题）。
-- 连通性自检：`PANSHA_MODEL=openpangu:openPangu-7B panshalach run "ping"`（ROADMAP-NEXT §6 标准三步：env 三件套 → 验证 → 真实评测）。
+- 连通性自检：`PANSHA_MODEL=openpangu:openPangu-7B panshalach run "ping"`（ROADMAP-NEXT「真实 openPangu 运行步骤」：env 三件套 → 验证 → 真实评测）。
 
 ## 5. 昇腾 310P/910 + vLLM-ascend / MindIE 部署
 

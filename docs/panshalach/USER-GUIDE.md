@@ -162,4 +162,4 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 ## 12. 内部名说明（品牌迁移中）
 对外品牌为**烛龙 Zhulong**；内部仍使用历史名保证既有会话/记忆/脚本兼容：
 `.panshalach.json` / `.panshalach-memory.json` / `~/.panshalach/` / `PANSHA_*` 环境变量 / `PanshalachChaser` 类 / `zorge` bin（保留别名）。
-收敛到统一名的迁移计划见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md) §3.2。
+收敛到统一名的迁移计划见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md) §C。

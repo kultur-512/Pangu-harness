@@ -110,32 +110,19 @@ interface TaskState {
 - **投影缓存**：多槽 LRU(≤8)，写操作 invalidate，跨衰减阶梯自动重建。
 - **.gitignore**：自动追加记忆文件名。
 
-## 7. 已知差距 → 补齐路线（逐条）
+## 7. 已闭环能力与开放差距
 
-### 7.1 回合写入闭环缺失（✅ 已修复，0.7.2）
-- **现状（已闭环）**：`finalizeTaskMemory` 单一落定点（runAgentTask result 前）——completed 时 refine→save，注入卡与轨迹写集交集触发 markVerified；覆盖 SSE/server/headless 路径。
-- **剩余**：Repl 直调 PanshalachChaser 的三口留统一执行器收口；端到端真机验证待端点。
+**已闭环**（过程细节见 CHANGELOG 对应版本段）：回合写入闭环（finalizeTaskMemory 单一落定点，覆盖 SSE/server/headless，Repl 三口经 U5 接线）；使用语义二态（markInjected 记账 / markVerified 保鲜，衰减锚 max(lastSeen,lastUsedAt)）；0.8.1 对抗性审计三修复（产卡携带任务信息 / markVerified 断链接通 / count 封顶 min(count,3)）；事件层 R4（`/memory events` 查询子命令已挂载）；任务状态机 R5（TaskState.record* 原语已补齐）。
 
-### 7.2 使用语义二态化（✅ 已落地，接口契约 v3 · 2026-09-04）
-- **已修复**：`markUsed` 落地为二态（`RefinedMemoryStore.ts`）——`markInjected(cardIds)` 纯记账（仅内存账本，不写盘、不影响衰减/count，防"注入≠使用"自激励）；`markVerified(cardIds, now?)` 为唯一保鲜通道（lastUsedAt=now + count+1 + 直写持久化），判定来源由调用方确定性提供（任务内工具写入/验证文件集 ∩ 卡.referencedFiles）。衰减锚同步修复为 `max(lastSeen, lastUsedAt)`。
-- **推迟**：`markCited`（模型显式引用检测）——需 [M1] 卡号引用协议（注入已带编号，7B 引用实验 9/24 后做）。
-- **已接线（0.7.2）**：markVerified 的生产信号源 = `injectedCardIds ∩ 任务真实写集`（finalizeTaskMemory 内判定，被触碰的注入卡自动保鲜并发 `memory.finalized` 事件）。
+**开放差距**（推进节奏见 ROADMAP-NEXT §B/C）：
 
-### 7.3 无语义检索（部分落地）
-- **已落**：`memory/embed.ts` 字符 2-gram 词袋向量 v0（赵天昂，含单测 `tests/memory/embed.test.ts`/`cosine.test.ts`）；L1 注入融合尚未接线。
-- **v1 可插拔**：接口留 provider 位，可选国产向量库 / openPangu embedding；注入层不变。
-
-### 7.4 无业务事件层（✅ 已落地，R4）
-- `memory/events.ts`（0.6.5 王佐）：AgentEvent append-only jsonl + kind/topic/session/taskId/时间窗有界查询；AgentEvent 接线见 11dbea3。剩余：`/memory events` 查询子命令未挂载。事件与卡的关系：事件是"流水账"，卡是"归纳结论"；回合提炼可从事件流再归纳。
-
-### 7.5 无跨轮任务状态机（✅ 已落地，R5）
-- `memory/taskState.ts`（0.6.5 王佐）：TaskStateStore + 事件折叠重建；运行时注入接线见 11dbea3。把"原始需求/决策/未决/进度/已验证/风险"做成长轮任务的注入锚（优先级高于普通卡），支撑评估报告"任务状态续接"维度。
-
-### 7.6 一次性摘要 → 多级滚动（P3）
-- 现压缩=一次摘要+保 6 轮；滚动多级：长期粗粒度(每 ≥N 轮对早期再摘要) + 中期结构化(卡片/事件) + 近期逐字。压缩时保留"被移除轮"的成功信号补提卡已实现，可复用。
-
-### 7.7 存储名/branding（P6）
-- `.panshalach-memory.json` / `.panshalach.json` / `~/.panshalach` / `PANSHA_*` → Panshalach 名（迁移脚本 + 读旧写新 fallback）。
+| 差距 | 现状 | 补齐路线 |
+|---|---|---|
+| 语义检索仅 2-gram 词袋 v0 | embed.ts 已落（含单测）；L1 注入融合未接线 | R7/C4：接口留 provider 位，可插拔国产向量库 / openPangu embedding |
+| 多级滚动摘要 | 现压缩 = 单次摘要 + 保 6 轮 + 补漏提炼卡 | R8：Turn.role 已就位，不对称分区压缩本体待做 |
+| markCited（模型显式引用检测） | 注入已带 [M1] 编号 | 7B 引用实验 9/24 后 |
+| 记忆审计 #4-#13 剩余项 | messages 分段 Repl/Simulate 接线、CJK 2-gram 增强、--classic finalize、prevEnvSnapshot 增量、档位契约对齐、磁盘压实 | ROADMAP-NEXT §B2 |
+| 存储名/branding（P6） | `.panshalach-memory.json` 等内部名沿用 | 待 Leader 裁决迁移目标 |
 
 ## 8. 与评估指标的映射
 

@@ -26,11 +26,9 @@
 | [DEPLOY-CN.md](DEPLOY-CN.md) | 从零到一部署：本机已验证路径 + 昇腾/麒麟框架（待实测）+ PANSHA_* 全集 | 部署指南 |
 | [USER-GUIDE.md](USER-GUIDE.md) | 安装、配置、交互手感（斜杠菜单/档位环/滑杆）、命令总表 | 用户手册 |
 | [ROADMAP-NEXT.md](ROADMAP-NEXT.md) | R0-R9 路线 + 实施合同 + 遗留表（0.8 M3 项/记忆审计剩余项） | 当前执行路线 |
-| [solution/](solution/) | 命题方案系列 10 篇（01 命题与证据边界 … 10 交付实施与后续） | 项目书素材库 |
-| [../../CHANGELOG.md](../../CHANGELOG.md) | 分版本变更详录 | 变更史 |
-| [../../REFACTOR-ASSESSMENT.md](../../REFACTOR-ASSESSMENT.md) | 代码逐模块对照命题的改造路径评估 | 重构依据 |
+| [../../CHANGELOG.md](../../CHANGELOG.md) | 分版本变更详录（各版本段即变更申报记录） | 变更史 |
 
-> 迭代过程文档（0.7.x 各版方案、GAP-MATRIX、hermes 对齐、反思/审查报告等 14 篇）已归档至 [archive/2026-09-12-process-docs/](../../archive/2026-09-12-process-docs/)——内容已被上述活文档吸收，仅供追溯设计缘由。
+> 迭代过程文档已归档至 [archive/2026-09-12-process-docs/](../../archive/2026-09-12-process-docs/)（0.7.x 各版方案、GAP-MATRIX、hermes 对齐、反思/审查报告、solution 方案系列 10 篇、REFACTOR-ASSESSMENT 历史报告、WORK-PLAN 并行计划——共 17 项）——内容已被上述活文档吸收，仅供追溯设计缘由。
 
 ## 目录（仓库根）
 
@@ -75,4 +73,4 @@ npm link           # 全局部署：生成 zhulong / panshalach bin（旧别名 
 - **执行纪律**：Read-Before-Write、Verify-Before-Claim、可回滚、审批分级、卡死硬闸、敏感路径写保护。
 - **意图分流**：chat 单次直答（不进循环、通用画像有问必答）/ search 受限只读（≤3 步、搜不到询问用户）/ task 完整验证循环。
 
-> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*`、`PanshalachChaser` 均为内部存储/兼容名，对外品牌为**烛龙 Zhulong**；P6 存储名迁移收口见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md) §3.2。
+> 内部兼容名说明：`.panshalach.json`、`.panshalach-memory.json`、`~/.panshalach/`、`PANSHA_*`、`PanshalachChaser` 均为内部存储/兼容名，对外品牌为**烛龙 Zhulong**；P6 存储名迁移收口见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md) §C。

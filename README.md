@@ -4,7 +4,7 @@
 
 > 华为命题《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 场景主线：**软件工程长期维护**（跨多轮需求演进 / 跨文件关联 / 持续状态跟踪）
-> 当前版本 **v0.8.0-rc**（0.7 终止语义重构/意图前移/记忆落定 → 0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理）· 分版详录见 [CHANGELOG.md](CHANGELOG.md)
+> 当前版本 **v0.8.0-rc** · 四分支已合入 develop（2026-09-12）· `npm test` **1008 例全绿** · 评测管线就绪待真机端点（0.7 终止语义重构/意图前移/记忆落定 → 0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理）· 分版详录见 [CHANGELOG.md](CHANGELOG.md) · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)
 
 **命名约定**（用户明确指示）
 - **外部产品名**（用户/市场看到）：**烛龙**（Zhulong）—— CLI 启动、欢迎语、模型身份串均使用此名
@@ -65,8 +65,8 @@ npx tsc --noEmit    # 类型检查
 
 ## 文档
 
-- 命题交付文档：[docs/panshalach/](docs/panshalach/README.md)（架构设计 / 记忆设计 / 效果评估 / 使用手册 / ROADMAP）
-- 重构评估报告：[REFACTOR-ASSESSMENT.md](REFACTOR-ASSESSMENT.md)（代码逐模块对照命题的改造路径）
+- 命题交付文档：[docs/panshalach/](docs/panshalach/README.md)（架构设计 / 记忆设计 / 效果评估 / 使用手册 / 路线与未完成项）
+- 变更史（各版本段即变更申报记录）：[CHANGELOG.md](CHANGELOG.md)
 
 ## FAQ
 
