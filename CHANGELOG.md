@@ -1,5 +1,25 @@
 # Changelog
 
+> 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
+
+## 0.8.0-rc 追加（对话链路治理 + CC 交互对齐 + 记忆链审计修复 · 2026-09-10 ~ 09-12）
+
+M1/M2 落地后的真机驱动迭代（每项均有真机故障→根因→修复实证链）：
+
+- **对话链路迭代**：chat 正文三端渲染修复 + 流式直答（streamChatMessages 增量透传）+ 意图收敛 + 答案落盘（b010b09）；chat 直答三级回落（streamChatMessages→chat→complete）
+- **smoke mock 门摘除**：mock 仅 PANSHA_SMOKE=1 显式 opt-in，非交互默认真实执行（d91999f）
+- **网关适配**：registry 透传 chat/streamChatMessages（M1 缺口）+ 网关 <think>/<thinking> 推理剥离（流式状态机跨 chunk 缓冲，chat 与 consumeChunks 双路）
+- **意图分类修复**：显式写/续接请求优先于疑问与扩展名启发（"继续完成 memo.txt 任务"不再误判 search 只读）；isMeta 移除 run 前缀（"run npm install 会发生什么"不再被劫持执行）
+- **栈溢出根因修复**：renderSseEvent default 分支自递归守卫（真机 Maximum call stack size exceeded 堆栈定位）+ drain 深度护栏 8 层
+- **记忆链三缺陷治理**（0.8.1 对抗性审计）：产卡携带任务信息（通用卡零信息）/ markVerified 断链接通（injectedCardIds ∩ 真实写集）/ count 封顶 min(count,3) 防永生卡（b8b65b4）
+- **UI/UX 三改进**：U1 spinner 帧动画 / U2 流式正文行缓冲 / U4 空闲状态行（模型·档位·模式·ctx%）
+- **headless 多轮**：RunCommand turn 落盘 + one-shot --resume 支持（含 --resume last token 消费修复）
+- **审批鲁棒性**：非 TTY（管道/CI）审批桥自动拒绝——不再挂 60s 等不可达 stdin
+- **CC 级交互四件套**（真机对标 Claude Code 2.x）：①输入 / 即时斜杠菜单（过滤/↑↓ 导航/分组/滚动视口，07a3662）②档位环每档专属色徽标（plan 蓝/auto-accept 青/full 品红，回执/启动徽标/空闲状态行三处接线，1e8a77b）③/model 菜单化（编号直达/当前项绿色/列对齐）④/tier 思考强度水平滑杆（更快←→更强刻度 + ▲ 光标 + ←→ 调节 Enter 确认 Esc 取消 + ex/pangu 品红扩展区，5ea4a00）
+- **身份画像通用化**：通用全能智能体（工程/对话/知识/创作皆为所长）——chat 直答指令不再以工程助手自居设限（真机实证：1B 模型把工程人设执行成拒绝历史话题）；档位语义限定为工程执行参数防复读；补"不编造事实数据年代"约束
+
+Tests: tsc 干净；全量 968（967 pass + 1 skip + 0 fail）；verify-m2-e2e + check-protected-files 双契约 PASS
+
 ## 0.8.0-rc（M1 地基 + M2 执行层七项全量落地）
 
 依据 GAP-MATRIX-0.8 交叉对比与 PLAN-0.8-FOUNDATION（换地基、保语义）：
