@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   verdictToEvalVerdict,
   defaultSeedMemory,
+  parseVerification,
 } from '../../scripts/eval/run-eval.mjs';
 import { validateResult } from '../../scripts/eval/results/schema.mjs';
 
@@ -54,6 +55,28 @@ describe('verdictToEvalVerdict (R6 合同)', () => {
   });
 });
 
+describe('parseVerification (R6 证据边界)', () => {
+  it('不会从 prompt 回显中的 ALL_TESTS_PASSED 误判通过', () => {
+    const stdout = [
+      '开始执行: 评测合同要求 ALL_TESTS_PASSED',
+      '[Step 1] 只输出计划，没有调用工具',
+      'NO_TOOL_CALLS',
+    ].join('\n');
+    const result = parseVerification(stdout, '', 0);
+    assert.notEqual(result.signal, 'ALL_TESTS_PASSED');
+  });
+
+  it('只从 step/工具输出区识别 ALL_TESTS_PASSED', () => {
+    const stdout = [
+      '开始执行: 评测合同要求 ALL_TESTS_PASSED',
+      '[Step 1] <bash><command>npm test</command></bash>',
+      'BASH_SUCCESS',
+      'ALL_TESTS_PASSED',
+    ].join('\n');
+    const result = parseVerification(stdout, '', 0);
+    assert.equal(result.signal, 'ALL_TESTS_PASSED');
+  });
+});
 describe('defaultSeedMemory (R6 follow-up #1)', () => {
   it('结构合法:meta + cards[] 含 2 张合成卡', () => {
     const seed = defaultSeedMemory(1700000000000);

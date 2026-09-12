@@ -408,8 +408,13 @@ async function writeSeedMemory(memFileAbs, ablation, opts, now) {
  * 从 harness 输出中解析验证信号。
  * 优先级：ALL_TESTS_PASSED > EXIT_CODE:0 > didRealVerification > none
  */
-function parseVerification(stdout, stderr, exitCode) {
+export function parseVerification(stdout, stderr, exitCode) {
   const combined = stdout + '\n' + stderr;
+  // CLI 会先回显完整 prompt（其中可能包含评测合同里的
+  // `ALL_TESTS_PASSED`），再输出 `[Step N]` 及工具结果。验证信号和命令
+  // 只能从 step/工具输出区读取，绝不能从 prompt 回显区推断。
+  const firstStep = combined.search(/\[Step\s+\d+\]/i);
+  const evidence = firstStep >= 0 ? combined.slice(firstStep) : '';
   const commands = [];
 
   const cmdPatterns = [
@@ -419,22 +424,22 @@ function parseVerification(stdout, stderr, exitCode) {
   ];
   for (const pat of cmdPatterns) {
     let m;
-    while ((m = pat.exec(combined)) !== null) {
+    while ((m = pat.exec(evidence)) !== null) {
       const cmd = m[1].trim();
       if (!commands.includes(cmd)) commands.push(cmd);
     }
   }
 
-  if (/ALL_TESTS_PASSED/i.test(combined)) {
+  if (/ALL_TESTS_PASSED/i.test(evidence)) {
     return { signal: 'ALL_TESTS_PASSED', exitCode: 0, commands };
   }
   if (exitCode === 0 && commands.length > 0) {
     return { signal: 'EXIT_CODE:0', exitCode: 0, commands };
   }
-  if (exitCode === 0 && /EXIT_CODE.*0/i.test(combined)) {
+  if (exitCode === 0 && /EXIT_CODE.*0/i.test(evidence)) {
     return { signal: 'EXIT_CODE:0', exitCode: 0, commands };
   }
-  if (/didRealVerification/i.test(combined) || /验证(通过|成功|完成)/.test(combined)) {
+  if (/didRealVerification/i.test(evidence) || /验证(通过|成功|完成)/.test(evidence)) {
     return { signal: 'didRealVerification', exitCode: exitCode === 0 ? 0 : null, commands };
   }
   if (exitCode === 0) {
