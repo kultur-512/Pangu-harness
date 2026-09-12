@@ -15,8 +15,8 @@ run-eval.mjs 的 prompt 源 = `issue.md`（指针加载，正文整体作为 pro
 |---|---|---|
 | `README.md` | ✅ 已落 | T3 任务族契约（长文档场景、Rubric、评测合同） |
 | `issue.md` | ✅ 已落 | 中文长程维护场景的 Q1/Q2/Q3 摘要 issue（**prompt 源**） |
-| `verify.sh` | ✅ 已落 | 4 条基础检查：3 个标题 + 全文/Q1/Q3 字节上限（PASS 6/6） |
-| `document.md` | ⏳ 待 U4 | 10K-50K tokens 长文档 |
+| `verify.sh` | ✅ 已落 | 4 条基础检查 + 10 条 keyword 召回（PASS 13/13） |
+| `document.md` | ✅ 已落 | 70.2KB 长文档（≈20-30K tokens；脚本化生成见「Fixture 校准」段） |
 | `fixture.md` | ✅ 本文件 | 实体化指针（取代早期"U4 王浩宇实体化"占位） |
 
 ## 任务骨架（issue.md 同步）
@@ -47,6 +47,23 @@ verify.sh 用 awk `length` 字节数近似：1 中文字符 ≈ 3 字节（UTF-8
    check "T3-r1 recall keyword X" 'grep -q "<keyword>" "$1"' "$F"
    check "T3-r2 recall keyword Y" 'grep -q "<keyword>" "$1"' "$F"
    ```
+
+## Fixture 校准（赵天昂 R6 follow-up，2026-09-12）
+
+为满足 [EVAL-FEASIBILITY §1.5](../../panshalach/EVAL-FEASIBILITY.md)（A 档必须真溢出）约束，`document.md` 已校准至 **60-80KB** 区间（当前 70.2KB ≈ 20-30K tokens）。
+
+**校准脚本**：`scripts/eval/calibrate-t3-fixture.mjs`
+
+| 用法 | 行为 |
+|---|---|
+| `node scripts/eval/calibrate-t3-fixture.mjs` | 默认 32K 窗口 → 70.2KB |
+| `node scripts/eval/calibrate-t3-fixture.mjs --window 8192` | 8K 窗口 → 17.5KB（1B 端点适配） |
+| `node scripts/eval/calibrate-t3-fixture.mjs --target-bytes 40000` | 自定义字节 |
+| `node scripts/eval/calibrate-t3-fixture.mjs --dry` | 只打印字节数，不写盘 |
+
+**强制 keyword 自校验**（缺一即 FAIL）：K1 主题 + P1-P4 人物（李沐/陈天奇/周明/刘知远）+ C1-C4 贡献（参数服务器架构/TVM/多语言预训练/知识增强预训练）+ K5 结论。
+
+**口径**：扩内容保持同主题长文档结构（keyword 召回检查的分节不变，只加深干货密度）；脚本化生成（按窗口参数），禁止手调。
 
 ## U4 强化方向（wanghaoyu 草案模式并入）
 

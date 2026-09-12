@@ -53,6 +53,9 @@ docs/panshalach/evals/cache/
 scripts/eval/results/*
 !scripts/eval/results/schema.mjs
 
+# === T3 fixture 校准脚本备份（calibrate-t3-fixture.mjs 跑一遍会自动覆盖）===
+tasks/T3/document.md.bak
+
 
 
 # === 命题方案书（本地研读稿，四态证据标签草案；采纳的合同已蒸馏进 ROADMAP-NEXT，不入 git）===

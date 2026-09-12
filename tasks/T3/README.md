@@ -15,8 +15,18 @@
 ## Fixture（实体化进行中，80d3f08）
 - `issue.md` — issue 正文（Q1/Q2/Q3 摘要任务，**runner 的 prompt 源**）
 - `fixture.md` — 实体化指针
-- `verify.sh` — 4 条基础检查：3 个标题 + 全文/Q1/Q3 字节上限（PASS 6/6）
-- `document.md` — ⏳ 待 U4 王浩宇：10K-50K tokens 长文档
+- `verify.sh` — 4 条基础检查 + 10 条 keyword 召回（PASS 13/13）
+- `document.md` — 70.2KB 长文档（≈20-30K tokens；脚本化生成，见下方「Fixture 校准」）
+
+## Fixture 校准（赵天昂 R6 follow-up）
+
+为满足 EVAL-FEASIBILITY §1.5（A 档必须真溢出）约束，`document.md` 已校准至 **60-80KB** 区间（当前 70.2KB ≈ 20-30K tokens）。
+
+校准脚本：`scripts/eval/calibrate-t3-fixture.mjs`
+- 默认参数：`--window 32768` → 70.2KB
+- 自定义：`node scripts/eval/calibrate-t3-fixture.mjs --window 8192`（8K 窗口适配）
+- 强制 keyword 自校验：K1 + P1-P4 + C1-C4 + K5 共 10 个，缺一即 FAIL
+- 重跑会备份原 `document.md` 到 `document.md.bak`（已入 .gitignore）
 
 ## 验收 Rubric
 | 维度 | 评分 |
