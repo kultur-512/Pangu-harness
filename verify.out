@@ -1,8 +1,0 @@
-[1] filename: OK
-[2] checkboxes (5): OK
-[3] blank rule: OK
-[4] emoji: OK
-[5] tab: OK
-ALL_PASS
-verify.sh: line 55: syntax error near unexpected token `newline'
-verify.sh: line 55: `</invoke>'
