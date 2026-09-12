@@ -704,9 +704,10 @@ function spawnWithTimeout(command, args, opts = {}) {
  *  - 其余失败 → fail
  */
 function verdictToEvalVerdict(r) {
+  // 优先检查 verdict：completed 不受 tags 降级（tags 仅诊断用）
+  if (r.verdict === 'completed') return 'pass';
   if (r.tags?.includes('overflow-skipped')) return 'not_applicable';
   if (r.tags?.includes('line-defense-failed')) return 'invalid';
-  if (r.verdict === 'completed') return 'pass';
   return 'fail';
 }
 
