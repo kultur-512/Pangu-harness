@@ -15,7 +15,7 @@
 
 | # | 项 | Owner | 说明 |
 |---|---|---|---|
-| A1 | **R6 真机评测数据** | 赵天昂+王浩宇 | 端点就绪后 `scripts/eval/run-eval.mjs` 跑 A/B/C/C4（A 档必须真溢出；B 档零注入=防线失败不计有效样本）→ `fill-evaluation.mjs` 回填 [EVALUATION.md](EVALUATION.md) §4。**当前唯一无备用方案的关键项**——最迟 9/17 开跑。基准选型与扩展（LongMemEval 锚点/窗口探测）见 [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md) |
+| A1 | **R6 真机评测数据** | 赵天昂+王浩宇 | 端点就绪后 `scripts/eval/run-eval.mjs` 跑 A/B/C/C4（A 档必须真溢出；B 档零注入=防线失败不计有效样本）→ `fill-evaluation.mjs` 回填 [EVALUATION.md](EVALUATION.md) §4。**当前唯一无备用方案的关键项**——最迟 9/17 开跑。基准选型与扩展（LongMemEval 锚点/窗口探测）见 [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md)；**前置：T3 fixture 按 32K 窗口校准溢出规模（§1.5），否则 A 档整档无效** |
 | A2 | **提交物定稿（R9）** | Leader+全员 | SUBMISSION 终稿（评测段按 A1 数据回填）、DEPLOY-CN 昇腾/麒麟实测口径、ARCHITECTURE §5 资源实测表（U7 待测数据） |
 | A3 | **master 发布** | kultur | develop 冻结 + A1 回填后，走 CI gate（agent-branch-guard）合入并打 tag；国创赛后台提报 |
 
