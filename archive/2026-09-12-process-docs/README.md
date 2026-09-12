@@ -18,3 +18,11 @@
 | PROJECT-BRIEF.md | 汇报底稿 | 被 SUBMISSION.md 与根 README 取代 |
 | NEXT-STEPS-zhaiyuanhao.md | Leader 下一步计划 | 已完成大半，遗留并入 ROADMAP-NEXT |
 | ROADMAP.md | 早期 P0-P7 里程碑 | 被 ROADMAP-NEXT.md 取代（P6 存储名迁移遗留 → ROADMAP-NEXT §3.2） |
+
+## 2026-09-12 二次归档（合并收口后"只留成果与未完成项"整合）
+
+| 归档文档 | 原用途 | 现状去向 |
+|---|---|---|
+| solution/（10 篇） | 命题方案系列草稿（0.6.x/0.7.x 时代撰写） | 已被 ARCHITECTURE/SUBMISSION 取代；创新点口径以 SUBMISSION.md §3 为准 |
+| REFACTOR-ASSESSMENT.md | 0.6.x 时点重构评估 + §4 变更申报累计 | 历史报告；变更申报职责并入 CHANGELOG（各版本段即申报记录） |
+| WORK-PLAN-2DAY-UNITS.md | 9/7-9/24 U1-U9 并行计划 | 已执行完毕（合并收口为终点）；当前路线见 ROADMAP-NEXT.md |

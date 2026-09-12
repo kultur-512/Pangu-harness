@@ -1,7 +1,7 @@
 # AGENT-CONTRIBUTION.md — 多人控制 Agent 协作规范（Panshalach / 烛龙）
 
 > 目的：让多个 agent 协同工作时**不互相踩、不重复劳动、不绕开评审、不破坏既有测试与文档**。本规范是仓库内的"硬约束 + 软约定"。人（产品主）保留对所有规则的最终解释权与豁免权。
-> 分工矩阵见 `WORK-PLAN-2DAY-UNITS.md`；技术路线见 `docs/panshalach/ROADMAP-NEXT.md`。
+> 技术路线与未完成项见 `docs/panshalach/ROADMAP-NEXT.md`；变更申报写 `CHANGELOG.md` 对应版本段。
 
 ---
 
@@ -22,7 +22,7 @@
 
 每个 agent 开工前必须：
 
-1. 在 `tasks/<task-id>.md` 或 `WORK-PLAN-2DAY-UNITS.md` 对应单位里声明自己要做的子任务，写清：
+1. 在 `tasks/` 对应任务卡里声明自己要做的子任务，写清：
    - **范围**（要改的文件 / 模块）
    - **不在范围**（明确说"不动 X 文件"）
    - **验收标准**（跑通哪些测试、产出哪段文档）
@@ -40,7 +40,7 @@
 |---|---|---|
 | `package.json` 的 `dependencies` | 不得新增任何运行时依赖 | 仓库核心零运行时依赖是产品约束 |
 | `.panshalach.json.example` 的 `openpangu` provider 名 | 不得改名 | 真实 openPangu 验证路径靠它 |
-| `src/PanshalachChaser.ts` 的 `solveIssue` 返回值签名 | 不得变更（除非先更新 `REFACTOR-ASSESSMENT.md` §4 并由评审 R 同意） | P3 闭环挂接点 |
+| `src/PanshalachChaser.ts` 的 `solveIssue` 返回值签名 | 不得变更（除非先在 `CHANGELOG.md` 申报并由评审 R 同意） | P3 闭环挂接点 |
 | `docs/panshalach/EVALUATION.md` §4 数据表 | 不得手填 | 必须由 `scripts/eval/fill-evaluation.mjs` 从 `scripts/eval/results/*.json` 拉取 |
 | 旧品牌残留 | 不得新增任何旧品牌类名/别名/shorthand | 清理已完成（commit 17851f9），保持为零 |
 | `.claude-settings.json` 的 allow 列表 | 不得新增 Bash 通配（除非是 allow 列表里已有的子集） | 防"借题扩展权限" |
@@ -109,7 +109,7 @@
 - [ ] 测试 `npm test` 全绿
 - [ ] `verify-panshalach-cleanup.mjs` PASS
 - [ ] 文件改动落在 §2 声明的"范围"内；越界文件有解释
-- [ ] 公共 API / 持久化路径 / 命名空间变更已写入 `REFACTOR-ASSESSMENT.md` 或 `docs/panshalach/ROADMAP-NEXT.md`
+- [ ] 公共 API / 持久化路径 / 命名空间变更已写入 `CHANGELOG.md` 或 `docs/panshalach/ROADMAP-NEXT.md`
 - [ ] 数据类变更（`EVALUATION.md §4` / `package.json version`）已在 `CHANGELOG.md` 记录
 - [ ] 评审 agent R 在 PR 写"Reviewed-by: R (yyyy-mm-dd)"
 
@@ -177,7 +177,7 @@ CHECKS
 - [x] tests      : PASS  (<npm test 实际数>)
 - [x] cleanup    : PASS  (verify-panshalach-cleanup)
 - [x] scope      : OK    (无越界)
-- [x] docs       : OK    (CHANGELOG/REFACTOR-ASSESSMENT 已更新)
+- [x] docs       : OK    (CHANGELOG/ROADMAP-NEXT 已更新)
 - [x] api compat : OK    (向后兼容)
 
 SUMMARY
@@ -315,11 +315,11 @@ git push origin develop
 
 | 文件 | 作用 |
 |---|---|
-| `WORK-PLAN-2DAY-UNITS.md` | U1-U9 分工矩阵（单一计划源） |
+| `docs/panshalach/ROADMAP-NEXT.md` | 路线与未完成项（单一计划源） |
 | `tasks/agents/<pinyin>.md` | 4 主力注册卡 |
 | `docs/agent/` | 协作记忆（日志 + handover） |
 | `.claude-settings.json` | Bash 命令自动放行白名单（产品主管） |
-| `REFACTOR-ASSESSMENT.md` | 现状缺口 → 改造路径（命题层） |
+| `CHANGELOG.md` | 分版本成果与变更申报记录 |
 | `docs/panshalach/ROADMAP-NEXT.md` | P0-P5 详细路线 |
 | `verify-panshalach-cleanup.mjs` | 静态一致性 gate |
 | `.agents/locks/` | 写锁目录（运行时产生） |

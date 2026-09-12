@@ -1,5 +1,6 @@
 # Changelog
 
+> **当前状态（2026-09-12）**：v0.8.0-rc · 四分支已合入 develop（`5105ebf`）· tsc 干净 + `npm test` **1008 例全绿** + 双契约 PASS + eval 冒烟 A/B/C/C4 全过 · 评测管线就绪待真机端点 · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
 ## 合并记录（2026-09-12 · 四分支收口 develop）
@@ -377,7 +378,7 @@ Tests: tsc 干净；全量 847（846+1skip+0 fail，+98 例）；双契约脚本
 - 可见层文案更名：欢迎语/提示符/模型身份串（你是 Panshalach…）/SSE server 文案/memory 管理器标题/pangu 档位描述/`/init` 文档指针
 
 ### 文档重建
-- 新增 [REFACTOR-ASSESSMENT.md](REFACTOR-ASSESSMENT.md)：现有代码逐模块对照 openPangu 命题的重构评估与 P1–P6 改造路径
+- 新增 REFACTOR-ASSESSMENT.md（已归档至 archive/2026-09-12-process-docs/）：现有代码逐模块对照 openPangu 命题的重构评估与 P1–P6 改造路径
 - 新增 docs/panshalach/ 命题文档集：README / ARCHITECTURE（提交物 1 雏形）/ MEMORY-DESIGN / EVALUATION（提交物 2 骨架，待真实 openPangu 数据）/ USER-GUIDE / ROADMAP
 - **物理清理**旧 Panshalach/早期模型试点/30-rounds 文档（docs/ 下全部规划/复盘/归档）与过时流程元数据（docs/agents、.agents）
 - `.panshalach.json.example` 改为 openPangu provider 示例

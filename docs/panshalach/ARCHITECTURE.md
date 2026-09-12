@@ -111,10 +111,9 @@ Panshalach（外部产品名 **烛龙 Zhulong**）是一个 **记忆增强的通
 容量：单类 ≤10、总 ≤200；默认落盘 `<workspace>/.panshalach-memory.json`（内部名，见 ROADMAP P6 迁移）。注入时经 8 槽投影缓存（任务内快照冻结、写入失效重建）。
 
 ### 2.2 记忆写入（提炼 → 保存）
-- ~~**信号源 A（循环实时）**：FailureMemory 会话内即时纠偏~~ → **已摘除**（#6，2026-09-05，archive/2026-09-05-removals/）。失败/成功信号唯一归口 = 信号源 B/C。
-- **信号源 B（回合闭环，0.7.2 落地 · 0.8.1 治理）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；`stopReason==='completed'`（真实验证通过）或正向反馈 → success 卡），`save()` 合并去重写盘。落定点为 `finalizeTaskMemory` 单一收口（runAgentTask result 前，覆盖 SSE/server/headless）。**0.8.1 三缺陷治理**（对抗性审计驱动）：①产卡携带任务信息（通用卡曾零信息 → 对后续任务无检索价值）；②markVerified 断链接通（injectedCardIds ∩ 任务真实写集判保鲜）；③count 封顶 `min(count,3)`（防"永生卡"霸榜）。
-- **信号源 C（压缩补漏，已实现）**：`compactService` 把被移除轮次中**验证成功**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。
-- **用户显式（已实现）**：`/memory remember [--pin]` / forget / import / export / clear / merge。
+- **信号源 B（回合闭环）**：任务落定后把 `bestTrajectory` + `attemptCount` + 用户反馈交给 `RefinedMemoryStore.refine()`（失败信号抽教训卡；`stopReason==='completed'`（真实验证通过）或正向反馈 → success 卡），`save()` 合并去重写盘。落定点为 `finalizeTaskMemory` 单一收口（runAgentTask result 前，覆盖 SSE/server/headless，Repl 三口经 U5 接线）。**0.8.1 三缺陷治理**（对抗性审计驱动）：①产卡携带任务信息（通用卡曾零信息 → 对后续任务无检索价值）；②markVerified 断链接通（injectedCardIds ∩ 任务真实写集判保鲜）；③count 封顶 `min(count,3)`（防"永生卡"霸榜）。
+- **信号源 C（压缩补漏）**：`compactService` 把被移除轮次中**验证成功**的信号确定性补提为 success 卡，evidence 取该轮任务摘要（hash 去重，防双重计数）。
+- **用户显式**：`/memory remember [--pin]` / forget / import / export / clear / merge。
 
 ### 2.3 记忆读取与注入（loadFiltered，已实现）
 1. 归一化旧卡（无 kind 默认 failure，无 memoryCategory 默认 general）。
@@ -124,15 +123,13 @@ Panshalach（外部产品名 **烛龙 Zhulong**）是一个 **记忆增强的通
 5. 相关性：任务关键词命中 summary +1（cap 3）；排序 = 0.7×权重 + 0.3×相关性，再按 count。
 6. 数量：档位 3/6/8/10；preference 保留 1 席位。L1 之外 standard/high 可探索期自动拉取 ≤5 张、预算 ≤700 token（ghost 提示余量去 `/memory` 看）。
 
-### 2.4 已知差距与补齐路线（详见 MEMORY-DESIGN.md）
-| 缺口 | 补齐（里程碑） |
+### 2.4 已知差距与补齐路线（开放项，详见 ROADMAP-NEXT §B/C 与 MEMORY-DESIGN.md §7）
+| 缺口 | 状态 |
 |---|---|
-| ~~无回合写入闭环（refine 无生产调用点）~~ | ✅ 已修复（0.7.2：finalizeTaskMemory 单一落定点；markInjected/markVerified 已落地，见 bf5f4a7；Repl 直调三口待统一执行器收口） |
-| ~~无语义检索（仅 keyword 子串）~~ | 部分：embed.ts 字符 2-gram 词袋余弦 v0 已落地（赵天昂，含单测）；L1 注入融合未接线（→ 国产向量库/openPangu embedding 可插拔） |
-| ~~无业务事件层（rollout jsonl 是回合级）~~ | ✅ 已落地（R4 `memory/events.ts`，0.6.5；AgentEvent 接线 11dbea3；`/memory events` 查询子命令未挂载） |
-| ~~无跨轮任务状态机~~ | ✅ 已落地（R5 `memory/taskState.ts`，0.6.5；运行时注入接线 11dbea3） |
-| 一次性摘要（非多级滚动） | P3：粗粒度长期 + 结构化中期 + 逐字近期 |
-| ~~loadFiltered 不刷新 lastUsedAt 且无 markUsed~~ | ✅ 已修复（接口契约 v3）：二态 markInjected（记账）/markVerified（保鲜）+ 衰减锚 max(lastSeen,lastUsedAt) + archived 过滤 |
+| 语义检索仅 2-gram 词袋 v0（embed.ts 已落，含单测） | L1 注入融合未接线（→ 国产向量库/openPangu embedding 可插拔，R7/C4） |
+| 压缩为单次摘要（非多级滚动） | R8：Turn.role 字段已就位，不对称分区压缩本体待做 |
+| messages 分段未接 classic 直调路径 | 文本协议降级语义（非缺陷）；接线后 classic 与主线一致 |
+| 记忆审计 #4-#13 剩余项 | 见 ROADMAP-NEXT §B2 |
 
 ---
 
