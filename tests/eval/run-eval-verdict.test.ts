@@ -90,6 +90,12 @@ describe('defaultSeedMemory (R6 follow-up #1)', () => {
     for (const c of seed.cards) {
       assert.ok(typeof c.id === 'string' && c.id.length > 0, 'id 非空');
       assert.ok(['success', 'lesson', 'constraint'].includes(c.kind), `kind 合法: ${c.kind}`);
+      // memoryCategory 必须是合法枚举——非法值（如 'process'）会被 L1 注入的
+      // 档位可见性过滤掉，B/C/C4 档直接误报 line-defense-failed。
+      assert.ok(
+        ['architecture', 'failure', 'implementation', 'insight', 'general'].includes(c.memoryCategory),
+        `memoryCategory 合法枚举: ${c.memoryCategory}`
+      );
       assert.ok(typeof c.summary === 'string' && c.summary.length > 0, 'summary 非空');
       assert.equal(typeof c.weight, 'number');
       assert.equal(typeof c.decayWeight, 'number');

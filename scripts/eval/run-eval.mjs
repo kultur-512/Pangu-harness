@@ -372,7 +372,9 @@ function defaultSeedMemory(now) {
         id: 'seed-lesson-001',
         kind: 'lesson',
         category: 'OTHER',
-        memoryCategory: 'process',
+        // MemoryCategory 合法枚举：architecture/failure/implementation/insight/general。
+        // 'process' 不是合法值——high 档 isVisible 会把它过滤掉（L1 注入不可见）。
+        memoryCategory: 'insight',
         summary: '【seed】B/C/C4 档需真实预填业务记忆方有比较意义',
         weight: 1.0,
         taskStyle: 'all',

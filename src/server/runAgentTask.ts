@@ -56,6 +56,12 @@ export interface RunResult {
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
   verifyCmd?: string[];
+  /**
+   * R6 评测观测：本次任务 PromptBuilder 实际注入的记忆卡 id 列表
+   * （lastBuildMeta.injectedCardIds）。eval runner 据此判 line-defense；
+   * headless 宿主把它与 memory.finalized 事件合成审计行打到 stdout。
+   */
+  injectedCardIds?: string[];
 }
 
 /**
@@ -299,6 +305,8 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      // R6 评测观测：注入卡账本随任务结果带出（宿主据此落审计行）
+      injectedCardIds,
       ...(partialText ? { partialText } : {}),
       ...(answerText ? { answerText } : {}),
     };
@@ -371,7 +379,15 @@ export async function finalizeTaskMemory(
         .map((c) => c.id);
   if (verifiedIds.length > 0) store.markVerified(verifiedIds, Date.now(), { excludeCreatedAfter: startedAt });
 
-  onEvent({ type: 'memory.finalized', cards: cards.length, verified: verifiedIds.length });
+  // R6 评测观测：verifiedCardIds + refined 明细随事件带出（run-eval 的 parseMemory
+  // 从宿主审计行读取；cards/verified 计数字段保留，SSE/rich 前端消费不变）。
+  onEvent({
+    type: 'memory.finalized',
+    cards: cards.length,
+    verified: verifiedIds.length,
+    verifiedCardIds: verifiedIds,
+    refined: { added: cards.length, merged: 0, written: cards.length, capped: 0 },
+  });
 }
 
 // 写集提取器（extractWrittenFilePaths / extractShellWriteTargets / normalizeRelPath）

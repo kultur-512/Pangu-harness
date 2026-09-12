@@ -56,6 +56,9 @@ const command: Command = {
     }
 
     const start = Date.now();
+    // R6 评测观测：捕获 memory.finalized 事件（completed 时 finalizeTaskMemory 发出，
+    // 带 verifiedCardIds/refined 明细），任务结束后与 result.injectedCardIds 合成审计行。
+    let memFinalized: any = null;
     try {
       // U2/U3: route through runAgentTask so the one-shot / classic path also
       // gets TaskState integration (requirement event, verified/failure event,
@@ -83,6 +86,9 @@ const command: Command = {
             }
             if (event.type === 'critique') {
               ctx.renderer.writeLine(ctx.renderer.color('Critique: ' + event.critique, 'yellow'));
+            }
+            if (event.type === 'memory.finalized') {
+              memFinalized = event;
             }
 
             // Forward to ink bridge for rich UI
@@ -127,6 +133,20 @@ const command: Command = {
         ctx.renderer.error(`完成 (${duration}ms) · ${summary}${errLine ? ' · ' + errLine : ''}`);
       } else {
         ctx.renderer.success(`完成 (${duration}ms) · ${summary}`);
+      }
+
+      // R6 评测观测：headless/非交互下输出结构化 memory 审计行（run-eval 的
+      // parseMemory 从此读取 injectedCardIds/verifiedCardIds/refined——此前 memory
+      // 事件只在进程内流转，eval 全部误报零注入）。交互模式不打印（噪声）。
+      if (!process.stdout.isTTY || process.env.PANSHA_HEADLESS === '1') {
+        try {
+          const audit = {
+            injectedCardIds: Array.isArray(result.injectedCardIds) ? result.injectedCardIds : [],
+            verifiedCardIds: Array.isArray(memFinalized?.verifiedCardIds) ? memFinalized.verifiedCardIds : [],
+            refined: memFinalized?.refined ?? { added: 0, merged: 0, written: 0, capped: 0 },
+          };
+          process.stdout.write('memory.finalized: ' + JSON.stringify(audit) + '\n');
+        } catch { /* 审计行 best-effort */ }
       }
 
       // answered 时把模型正文呈现给用户
