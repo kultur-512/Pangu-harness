@@ -76,6 +76,7 @@ function parseArgs() {
     dry: false,
     model: 'openPangu-7B',
     seedSupport: false,
+    seedMemory: /** @type {string|null} */ (null),
     help: false,
   };
 
@@ -88,6 +89,8 @@ function parseArgs() {
       case '--dry': opts.dry = true; break;
       case '--model': opts.model = args[++i]; break;
       case '--seed': opts.seedSupport = true; break;
+      // R6 follow-up #1: --seed-memory <json>  预填业务记忆到 B/C/C4 档 per-run 文件
+      case '--seed-memory': opts.seedMemory = args[++i]; break;
       case '--help': opts.help = true; break;
       default: break;
     }
@@ -316,15 +319,89 @@ function ablationEnv(ablation) {
  * 确保评测任务的 TaskState 写入独立文件（.panshalach-task-state.eval.json），
  * 不与用户日常任务的 .panshalach-task-state.json 串扰。
  *
+ * R6 follow-up #1：再追加 PANSHA_MEMORY_FILE 指向 per-run 文件，
+ * RefinedMemoryStore 只读该文件，不读默认 .panshalach-memory.json →
+ * 彻底隔断跨 run 记忆泄露。
+ *
  * @param {object} ablation
  * @param {string} evalTaskId - 格式 eval-<taskFamily>-<ablation>-<seed>
+ * @param {string} memFileRel - per-run 记忆文件名（相对 cwd）
  * @returns {Record<string, string>}
  */
-function evalAblationEnv(ablation, evalTaskId) {
+function evalAblationEnv(ablation, evalTaskId, memFileRel) {
   const env = ablationEnv(ablation);
   env.PANSHA_TASK_ID = evalTaskId;
   env.PANSHA_TASK_STATE_FILE = '.panshalach-task-state.eval.json';
+  if (memFileRel) env.PANSHA_MEMORY_FILE = memFileRel;
   return env;
+}
+
+/**
+ * R6 follow-up #1：默认 seed 记忆内容（B/C/C4 用，保证能注入并区分档）。
+ * 当 --seed-memory 未指定时，B/C/C4 默认预写 2 张合成 success/lesson 卡，
+ * 验证记忆注入链路通畅；缺 seed 的真实跑分应在 --seed-memory 传业务记忆。
+ *
+ * 合成卡内容对齐 RefinedMemoryCard schema（v3 记忆卡）：
+ * - kind: success | lesson | constraint
+ * - category: 跨实例
+ * - summary: 简短中文
+ * - weight/decayWeight: 1.0（最新）
+ * - taskStyle/applicableTiers: 与档位无关（"all"）
+ * - count/lastSeen/firstSeen/lastUsedAt: 同 now
+ */
+function defaultSeedMemory(now) {
+  return {
+    meta: { version: '1.0.0', lastUpdated: now, totalCards: 2 },
+    cards: [
+      {
+        id: 'seed-success-001',
+        kind: 'success',
+        category: 'OTHER',
+        memoryCategory: 'implementation',
+        summary: '【seed】真实跑分前必传 --seed-memory <path> 覆盖本合成卡',
+        weight: 1.0,
+        taskStyle: 'all',
+        count: 1,
+        lastSeen: now,
+        firstSeen: now,
+        applicableTiers: [],
+        decayWeight: 1.0,
+        lastUsedAt: now,
+      },
+      {
+        id: 'seed-lesson-001',
+        kind: 'lesson',
+        category: 'OTHER',
+        memoryCategory: 'process',
+        summary: '【seed】B/C/C4 档需真实预填业务记忆方有比较意义',
+        weight: 1.0,
+        taskStyle: 'all',
+        count: 1,
+        lastSeen: now,
+        firstSeen: now,
+        applicableTiers: [],
+        decayWeight: 1.0,
+        lastUsedAt: now,
+      },
+    ],
+  };
+}
+
+// export 给 tests 单独验证 defaultSeedMemory 结构合法
+export { defaultSeedMemory };
+
+async function writeSeedMemory(memFileAbs, ablation, opts, now) {
+  let seed;
+  if (opts.seedMemory) {
+    seed = JSON.parse(await readFile(opts.seedMemory, 'utf8'));
+  } else if (ablation.injectMemory && !ablation.overflowWindow) {
+    // B/C/C4 档:无 --seed-memory 时写默认合成 seed
+    seed = defaultSeedMemory(now);
+  } else {
+    // A 档:不写 seed（预期 0 注入）
+    return;
+  }
+  await writeFile(memFileAbs, JSON.stringify(seed, null, 2), 'utf8');
 }
 
 /**
@@ -484,6 +561,23 @@ async function runOne(fixture, ablation, opts) {
   // 用于 TaskState 隔离（写入 .panshalach-task-state.eval.json），不与用户任务串扰。
   const evalTaskId = `eval-${taskFamily}-${ablation.key}-${fixture.seed ?? 42}`;
 
+  // R6 follow-up #1：per-run 记忆文件隔离。
+  // - 文件名带 runId 前8位 → 跨 run 不撞名
+  // - cwd 仍 = fixture.workspace 或 ROOT（保留 fixture 任务语料）
+  // - PANSHA_MEMORY_FILE 注入 → RefinedMemoryStore 只读这个文件，不漏默认 .panshalach-memory.json
+  // - B/C/C4 档预写 seed；A 档不写（预期 0 注入,靠 PANSHA_NO_MEMORY=1 保证）
+  // - run 后 finally 删除该文件 → 下次 run 不污染
+  const memFileRel = `.panshalach-memory.eval-${runId.slice(0, 8)}.json`;
+  const cwd = fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT;
+  const memFileAbs = join(cwd, memFileRel);
+  let memSeeded = false;
+  let memCleaned = false;
+  async function cleanupRunMemory() {
+    if (memCleaned) return;
+    memCleaned = true;
+    try { await (await import('node:fs/promises')).rm(memFileAbs, { force: true }); } catch {}
+  }
+
   /** @type {import('./results/schema.mjs').EvalResult} */
   const result = {
     runId,
@@ -551,12 +645,23 @@ async function runOne(fixture, ablation, opts) {
 
   console.log(`  [eval] spawn: npx ${cliArgs.slice(0, -1).join(' ')} run @<prompt>`);
   console.log(`  [eval] ablation: inject=${ablation.injectMemory} overflow=${ablation.overflowWindow} semantic=${ablation.semanticSearch}`);
+  console.log(`  [eval] memFile: ${memFileRel} (cwd=${relative(ROOT, cwd) || '.'})`);
+
+  // R6 follow-up #1: pre-seed 业务记忆到 per-run 文件
+  // - B/C/C4 档（有 seed 或默认合成）→ 期望注入非空
+  // - A 档不写 → 期望 0 注入
+  try {
+    await writeSeedMemory(memFileAbs, ablation, opts, startedAt.getTime());
+    memSeeded = true;
+  } catch (e) {
+    console.warn(`  [eval] seedMemory 写入失败: ${e.message}`);
+  }
 
   try {
     const { stdout, stderr, exitCode, error } = await spawnWithTimeout(
       isWin ? 'npx.cmd' : 'npx', cliArgs, {
-        env: evalAblationEnv(ablation, evalTaskId),
-        cwd: fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT,
+        env: evalAblationEnv(ablation, evalTaskId, memFileRel),
+        cwd,
         timeoutMs: opts.timeoutMs || DEFAULT_TIMEOUT_MS,
       }
     );
@@ -583,17 +688,20 @@ async function runOne(fixture, ablation, opts) {
       if (memory.refined) result.refined = memory.refined;
 
       // 判定 verdict（按 RESULT_SCHEMA 语义：completed / max-steps / aborted / no-verification）
-      // 另外用 tags 标注 R6 专用分类（not_applicable / invalid），不进 verdict 枚举
+      // R6 runner 方言：line-defense-failed / overflow-skipped 直接落 verdict 到 EVAL_VERDICTS
+      // (invalid / not_applicable),不再仅靠 tags——下游消费方按 verdict 直接分类
       // 防线失败只对 memory-on 档（B/C/C4）有意义：被要求注入却 0 注入 = 防线失守；
       // A 档（baseline no-memory）0 注入是预期行为，不算失败。
       if (ablation.injectMemory === true && memory.injectedCardIds.length === 0) {
-        result.tags.push('line-defense-failed');  // 记忆开启档零注入 = 防线失败
-        result.verdict = 'no-verification';
+        result.tags.push('line-defense-failed');
+        result.verdict = 'invalid';            // EVAL_VERDICTS：不计为有效样本
         result.stopReason = 'no-verification';
+        result.failureTaxonomy = { primary: 'memory-not-cited' };
       } else if (ablation.overflowWindow && !/(overflow|truncat|窗口|截断)/i.test(stdout)) {
-        result.tags.push('overflow-skipped');  // A 档未溢出
-        result.verdict = 'no-verification';
+        result.tags.push('overflow-skipped');
+        result.verdict = 'not_applicable';    // EVAL_VERDICTS：A 档未溢出
         result.stopReason = 'no-verification';
+        result.failureTaxonomy = { primary: 'no-verification', secondary: 'prompt-too-short' };
       } else if (verification.signal === 'PASS' || verification.signal === 'ALL_TESTS_PASSED') {
         result.verdict = 'completed';
         result.stopReason = 'completed';
@@ -635,6 +743,9 @@ async function runOne(fixture, ablation, opts) {
     result.failureTaxonomy = { primary: 'infra-error', secondary: 'unknown' };
     result.lastError = err?.message || String(err);
     console.error(`  [eval] 致命错误: ${err.message}`);
+  } finally {
+    // R6 follow-up #1: per-run 记忆文件清理（任何路径都执行,防半文件遗留污染下一 run）
+    await cleanupRunMemory();
   }
 
   return result;
@@ -690,15 +801,18 @@ function spawnWithTimeout(command, args, opts = {}) {
 // ── 汇总统计 ──
 
 /**
- * 把单 rollout 的 TurnStopReason + tags 翻译成 R6 评测结论（EVAL_VERDICTS）。
- *  - completed → pass
- *  - tags 含 overflow-skipped → not_applicable（A 档未溢出）
- *  - tags 含 line-defense-failed → invalid（B 档零注入，防线失败）
- *  - 其余失败 → fail
+ * 把单 rollout 的 verdict 直接落地为 R6 评测结论（EVAL_VERDICTS）。
+ * runOne 已在源处把 line-defense-failed/overflow-skipped 落为 invalid/not_applicable;
+ * 这里只把 TURN_STOP_REASONS 形态映射为 pass/fail。
+ *  - verdict='completed' → pass
+ *  - verdict='invalid' / 'not_applicable' → 透传
+ *  - 其余 → fail
+ *
+ * export 给 tests/eval/run-eval-verdict.test.ts 单独验证（R6 域合同）。
  */
-function verdictToEvalVerdict(r) {
-  if (r.tags?.includes('overflow-skipped')) return 'not_applicable';
-  if (r.tags?.includes('line-defense-failed')) return 'invalid';
+export function verdictToEvalVerdict(r) {
+  if (r.verdict === 'invalid') return 'invalid';
+  if (r.verdict === 'not_applicable') return 'not_applicable';
   if (r.verdict === 'completed') return 'pass';
   return 'fail';
 }
@@ -759,14 +873,16 @@ async function main() {
     console.log(`用法: node scripts/eval/run-eval.mjs [选项]
 
 选项:
-  --tier <A|B|C|C4>    消融档位过滤（默认全部 A/B/C/C4；每个任务跑所选档）
-  --task <T1|T2|...>   指定任务（默认全部）
-  --source <source>    数据来源: real-openpangu | mock-smoke（默认 real-openpangu）
-  --mock               等同 --source mock-smoke
-  --dry                只打印计划，不执行、不写盘
-  --model <model>      模型标识（默认 openPangu-7B）
-  --seed               标记支持 seed 可复现
-  --help               显示帮助`);
+  --tier <A|B|C|C4>      消融档位过滤（默认全部 A/B/C/C4；每个任务跑所选档）
+  --task <T1|T2|...>     指定任务（默认全部）
+  --source <source>      数据来源: real-openpangu | mock-smoke（默认 real-openpangu）
+  --mock                 等同 --source mock-smoke
+  --dry                  只打印计划，不执行、不写盘
+  --model <model>        模型标识（默认 openPangu-7B）
+  --seed                 标记支持 seed 可复现
+  --seed-memory <json>   R6: B/C/C4 档预填业务记忆；未传则写默认合成 seed
+                         （A 档不写 seed，依赖 PANSHA_NO_MEMORY=1 保证 0 注入）
+  --help                 显示帮助`);
     process.exit(0);
   }
 
@@ -868,7 +984,19 @@ async function main() {
   process.exit(hasFailures ? 1 : 0);
 }
 
-main().catch(e => {
-  console.error('[eval] 致命错误:', e);
-  process.exit(2);
-});
+// 仅当作为入口直接执行时跑 main();被 import 时(测试场景)跳过。
+// 守卫 import.meta.url 等于当前 argv[1] 路径(对齐 Node ESM CLI 入口检测惯例)。
+const isDirectRun = (() => {
+  try {
+    const arg1 = process.argv[1];
+    if (!arg1) return false;
+    const url = new URL(import.meta.url).pathname.replace(/\\/g, '/');
+    return url.endsWith(arg1.replace(/\\/g, '/')) || arg1.replace(/\\/g, '/').endsWith(url.split('/').pop() ?? '');
+  } catch { return false; }
+})();
+if (isDirectRun) {
+  main().catch(e => {
+    console.error('[eval] 致命错误:', e);
+    process.exit(2);
+  });
+}
