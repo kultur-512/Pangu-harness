@@ -180,3 +180,73 @@ describe('R5 TaskState：foldEvent 单元', () => {
     assert.equal(f.risks[0].risk, '风险丙');
   });
 });
+
+// ==================== 9/14 接口对齐：TaskState.record* 原语 ====================
+// 语义：显式记录（真实业务节点/CLI 用户声明调用），不猜轨迹。
+// 纪律：全部走 update() → 沿用乐观锁 + originalRequirement 锚定。
+
+describe('R5 TaskState：record* 显式记录原语', () => {
+  afterEach(cleanupAll);
+
+  it('recordDecision / recordRisk / recordOpenQuestion 追加且 version 递增', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new TaskStateStore(ws);
+    store.create('t1', '实现导出功能');
+
+    const d = store.recordDecision('t1', '用 CSV 作为导出格式', '依赖少', ['src/export.ts']);
+    assert.equal(d.decisions.length, 1);
+    assert.equal(d.decisions[0].what, '用 CSV 作为导出格式');
+    assert.equal(d.decisions[0].why, '依赖少');
+    assert.deepEqual(d.decisions[0].refs, ['src/export.ts']);
+    assert.equal(d.version, 2, '每次 record 走 update → version+1');
+
+    const r = store.recordRisk('t1', '大文件可能 OOM', '分块写入');
+    assert.equal(r.risks.length, 1);
+    assert.equal(r.risks[0].risk, '大文件可能 OOM');
+    assert.equal(r.risks[0].mitigation, '分块写入');
+
+    const q = store.recordOpenQuestion('t1', '是否需要流式导出？');
+    assert.equal(q.openQuestions.length, 1);
+    assert.equal(q.openQuestions[0].status, 'open');
+    assert.equal(q.version, 4);
+  });
+
+  it('recordMilestone / recordVerified / setNextStep / setCurrentGoal', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new TaskStateStore(ws);
+    store.create('t1', '需求原文');
+
+    const m = store.recordMilestone('t1', '骨架落地', false);
+    assert.equal(m.milestones[0].title, '骨架落地');
+    assert.equal(m.milestones[0].done, false);
+
+    const v = store.recordVerified('t1', '导出单测通过', 'npm test', 'node --test', ['evt-1']);
+    assert.equal(v.verified[0].what, '导出单测通过');
+    assert.deepEqual(v.verified[0].evidenceEventIds, ['evt-1']);
+
+    const n = store.setNextStep('t1', '补边界用例');
+    assert.equal(n.nextStep, '补边界用例');
+    const cleared = store.setNextStep('t1', '   ');
+    assert.equal(cleared.nextStep, undefined, '空串清空 nextStep（不留过期误导）');
+
+    const g = store.setCurrentGoal('t1', '本迭代先做导出');
+    assert.equal(g.currentGoal, '本迭代先做导出');
+    assert.equal(g.originalRequirement, '需求原文', '锚不漂移');
+  });
+
+  it('record* 对不存在任务抛错；持久化可重读', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new TaskStateStore(ws);
+    assert.throws(() => store.recordDecision('nope', 'x'), /not found/);
+
+    store.create('t1', '需求');
+    store.recordDecision('t1', '决定A');
+    store.recordRisk('t1', '风险B');
+    // 新实例重读验证落盘
+    const store2 = new TaskStateStore(ws);
+    const t = store2.get('t1')!;
+    assert.equal(t.decisions.length, 1);
+    assert.equal(t.risks.length, 1);
+    assert.equal(t.version, 3);
+  });
+});

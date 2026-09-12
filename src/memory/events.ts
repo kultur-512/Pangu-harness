@@ -99,6 +99,15 @@ export class MemoryEventStore {
     return [...byTask.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
   }
 
+  /**
+   * 列出本会话出现过的 topic（按出现次数倒序）。
+   * 9/14 接口对齐清单别名（`MemoryEvent.append/query/listTopics`）——语义同 topicStats，
+   * 仅返回 topic 名串，供 `/memory events` 与上层展示使用。
+   */
+  listTopics(): string[] {
+    return this.topicStats().map((t) => t.topic);
+  }
+
   /** 按 topic 分组统计（含 lastTs，供时间过滤与审计）。 */
   topicStats(): TopicStat[] {
     const map = new Map<string, TopicStat>();
