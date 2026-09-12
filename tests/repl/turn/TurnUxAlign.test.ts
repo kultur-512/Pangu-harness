@@ -28,6 +28,11 @@ import {
   renderSseEvent,
   spinnerRunningLine,
   spinnerToolLine,
+  idleStatusSegments,
+  buildModelMenuRows,
+  formatModelMenuRow,
+  ANSI_GREEN,
+  ANSI_DIM,
 } from '../../../src/cli/repl/turn/TurnRenderer.js';
 import {
   GERUND_ROTATE_MS,
@@ -339,5 +344,62 @@ describe('U4 buildIdleStatusLine', () => {
     assert.equal(ctx.queue.taskCount, 1, '排队项保留');
     const statusLines = renderer.lines.filter((l: string) => /ctx ~\d+%$/.test(l));
     assert.equal(statusLines.length, 1, `aborted 分支同样打一行状态行，got: ${JSON.stringify(statusLines)}`);
+  });
+});
+
+// ==================== CC 式档位视觉 + /model 菜单（2026-09-12 真机对标） ====================
+
+describe('idleStatusSegments：状态行分段（模式段独立上色）', () => {
+  const opts = { model: 'openpangu:m3', tier: 'high', mode: 'plan', ctxUsedChars: 6554, ctxWindowTokens: 32768 } as const;
+
+  it('head + mode + tail === buildIdleStatusLine（旧纯文本口径不变）', () => {
+    const seg = idleStatusSegments(opts);
+    assert.equal(seg.head + seg.mode + seg.tail, buildIdleStatusLine(opts));
+    assert.equal(seg.head, 'm3 · high · ');
+    assert.equal(seg.mode, 'plan');
+    assert.equal(seg.tail, ' · ctx ~5%');
+  });
+
+  it('modeColor 来自 modeBadgeVisual（plan→blue）', () => {
+    assert.equal(idleStatusSegments(opts).modeColor, 'blue');
+    assert.equal(idleStatusSegments({ ...opts, mode: 'auto-accept' }).modeColor, 'cyan');
+    assert.equal(idleStatusSegments({ ...opts, mode: 'default' }).modeColor, 'gray');
+  });
+});
+
+describe('buildModelMenuRows / formatModelMenuRow：CC 式 /model 菜单', () => {
+  it('编号从 1 起、当前项标记（剥 provider 前缀 + 大小写不敏感匹配）', () => {
+    const rows = buildModelMenuRows(['openpangu:GLM-5', 'scnet:qwen3-32b', 'MiniMax-M3'], 'openpangu:glm-5');
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows.map((r) => r.index), [1, 2, 3]);
+    assert.equal(rows[0].current, true, 'GLM-5 ≡ 当前 glm-5（大小写不敏感）');
+    assert.equal(rows[0].desc, '当前生效');
+    assert.equal(rows[1].current, false);
+    assert.equal(rows[1].desc, '');
+    assert.equal(rows[0].name, 'GLM-5');
+  });
+
+  it('空清单 / 空当前模型不抛、无当前项', () => {
+    assert.deepEqual(buildModelMenuRows([], 'glm-5'), []);
+    const rows = buildModelMenuRows(['a', 'b'], '');
+    assert.equal(rows.every((r) => !r.current), true);
+  });
+
+  it('formatModelMenuRow 纯文本：`> N. 名称  描述` 当前行前缀；无描述行不留尾随填充', () => {
+    const rows = buildModelMenuRows(['glm-5', 'ab', 'MiniMax-M3'], 'glm-5');
+    const w = Math.max(...rows.map((r) => r.name.length));
+    assert.equal(formatModelMenuRow(rows[0], w, false), `>  1. glm-5${' '.repeat(w - 5)}  当前生效`);
+    assert.equal(formatModelMenuRow(rows[1], w, false), '   2. ab');
+    assert.equal(formatModelMenuRow(rows[2], w, false), '   3. MiniMax-M3');
+  });
+
+  it('着色版：当前行绿色名称、其余青色；编号与描述 dim（含 ANSI 段）', () => {
+    const rows = buildModelMenuRows(['glm-5'], 'glm-5');
+    const colored = formatModelMenuRow(rows[0], 5, true);
+    assert.ok(colored.includes(ANSI_GREEN + 'glm-5'), '当前项名称绿色');
+    assert.ok(colored.includes(ANSI_DIM), '编号 dim');
+    const other = formatModelMenuRow(buildModelMenuRows(['ab'], 'x')[0], 5, true);
+    assert.ok(other.includes('\x1b[36m'), '非当前项名称青色');
+    assert.ok(!other.includes(ANSI_GREEN), '非当前项无绿色');
   });
 });

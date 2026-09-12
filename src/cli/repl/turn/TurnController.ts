@@ -22,8 +22,8 @@ import {
 import {
   ANSI_DIM,
   ANSI_RESET,
-  buildIdleStatusLine,
   endMessageStream,
+  idleStatusSegments,
   mapSseToBridge,
   renderInlineMarkdown,
   renderSseEvent,
@@ -456,13 +456,19 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       // 只在真正回到空闲或 aborted 保留队列时打）。
       if (ctx.queue.taskCount === 0 || ctx.lastAborted) {
         try {
-          ctx.renderer.writeLine(ctx.renderer.color(buildIdleStatusLine({
+          // 模式段套该档专属色（CC 底部状态行语法：彩色段 = 档位），其余保持 dim。
+          const seg = idleStatusSegments({
             model: ctx.session.model,
             tier: String(ctx.session.tier),
             mode: ctx.modeRing.current,
             ctxUsedChars: ctx.ctxUsedChars,
             ctxWindowTokens: ctx.ctxWindowTokens,
-          }), 'gray'));
+          });
+          ctx.renderer.writeLine(
+            ctx.renderer.color(seg.head, 'gray') +
+            ctx.renderer.color(seg.mode, seg.modeColor) +
+            ctx.renderer.color(seg.tail, 'gray')
+          );
         } catch {}
       }
     }

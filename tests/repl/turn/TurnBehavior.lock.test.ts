@@ -489,7 +489,8 @@ describe('M1 行为锁定：命令路由', () => {
     await controller.runTask('/mode plan');
     assert.equal(session.planMode, true, '/mode plan 必须落在 plan（set 而非 cycle）');
     assert.equal(session.approvalMode, 'readonly');
-    assert.ok(renderer.lines.some((l) => l.includes('已切换: plan') && l.includes('只读计划模式')));
+    // CC 式回执（2026-09-12 对标）：`⏸ plan mode on · 后果`
+    assert.ok(renderer.lines.some((l) => l.includes('plan mode on') && l.includes('只读计划模式')));
   });
 
   it('/mode 无参：cycle 推进一格（default → auto-accept）', async () => {

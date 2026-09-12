@@ -11,7 +11,7 @@ import { buildHelpView } from '../commands/HelpCommand.js';
 import { createCliApprovalBridge } from '../../../tools/approval.js';
 import type { TurnContext } from './TurnContext.js';
 import { getLastOutput, isRunning, resolveCtxWindowTokens, emitFeed, runSyncCompact } from './TurnContext.js';
-import { localizeRolloutStatus, modeSwitchReceipt } from './TurnRenderer.js';
+import { localizeRolloutStatus, modeBadgeVisual, modeSwitchReceipt } from './TurnRenderer.js';
 
 /** line 模式实际支持的命令（Tab 补全 + 未知命令建议的数据源；顺序 = 常用度）。 */
 export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> = [
@@ -89,7 +89,8 @@ export function createModeRing(ctx: TurnContext): ModeRing {
     }
     try { rollout.appendApprovalChange(ctx.session); } catch {}
     ctx.modeBadgePending = true;
-    emitFeed(ctx, modeSwitchReceipt(m), 'info');
+    // CC 式回执：`⏵⏵ auto-accept on · 后果`，整行套该档专属色（plan 蓝/accept 青/full 品红）。
+    emitFeed(ctx, modeSwitchReceipt(m), 'info', modeBadgeVisual(m).color);
   });
 }
 

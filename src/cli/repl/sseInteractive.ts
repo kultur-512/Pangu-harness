@@ -25,7 +25,7 @@ import { Session } from './Session.js';
 import * as rollout from './rolloutStore.js';
 import type { ModelProvider } from './types.js';
 import { createTurnContext, clearInlineLine, isRunning, updateQueueCount } from './turn/TurnContext.js';
-import { buildBanner, createClearingRenderer, modeBadgeLine, shouldShowStartupTip, termWidth } from './turn/TurnRenderer.js';
+import { buildBanner, createClearingRenderer, modeBadgeVisual, shouldShowStartupTip, termWidth } from './turn/TurnRenderer.js';
 import { completeLineCommand, confirmPendingSuggestion, createModeRing, cycleMode, getSharedRegistry, handleLocalCommand, LINE_COMMANDS } from './turn/CommandRouter.js';
 import { buildSlashMenuItems, createSlashMenuController } from './turn/SlashMenu.js';
 import { createTurnController } from './turn/TurnController.js';
@@ -200,10 +200,14 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   }
 
   // 空闲提示符上方的模式徽标行 — 只在启动与模式变化后输出一次。
+  // CC 式视觉：每档专属符号 + 专属色（plan 蓝 / auto-accept 青 / full 品红 / default 灰）。
   function printModeBadgeIfPending() {
     if (!ctx.modeBadgePending) return;
     ctx.modeBadgePending = false;
-    try { ctx.renderer.writeLine(ctx.renderer.color(modeBadgeLine(ctx.modeRing.current), 'gray')); } catch { ctx.modeBadgePending = true; }
+    try {
+      const v = modeBadgeVisual(ctx.modeRing.current);
+      ctx.renderer.writeLine(ctx.renderer.color(v.line, v.color));
+    } catch { ctx.modeBadgePending = true; }
   }
 
   /** 空闲态出提示符（徽标行置前；统一入口，防漏防刷）。 */

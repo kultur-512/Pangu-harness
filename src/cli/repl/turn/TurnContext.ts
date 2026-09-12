@@ -198,11 +198,11 @@ export function updateQueueCount(ctx: TurnContext) {
   }
 }
 
-export function emitFeed(ctx: TurnContext, text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
+export function emitFeed(ctx: TurnContext, text: string, level: 'info' | 'warn' | 'error' | 'success' = 'info', colorOverride?: 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | 'cyan' | 'white' | 'gray' | 'bold') {
   if (typeof (ctx.bridgeRef as any).current?.pushFeed === 'function') {
     try { ctx.bridgeRef.current.pushFeed({ type: 'text', text, level }); } catch {}
   } else {
-    ctx.renderer.writeLine(ctx.renderer.color(text, level === 'warn' ? 'yellow' : level === 'error' ? 'red' : 'gray'));
+    ctx.renderer.writeLine(ctx.renderer.color(text, colorOverride ?? (level === 'warn' ? 'yellow' : level === 'error' ? 'red' : 'gray')));
   }
 }
 

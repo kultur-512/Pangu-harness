@@ -330,10 +330,71 @@ export function buildIdleStatusLine(opts: {
   ctxUsedChars: number;
   ctxWindowTokens: number;
 }): string {
+  const seg = idleStatusSegments(opts);
+  return seg.head + seg.mode + seg.tail;
+}
+
+/**
+ * 状态行分段（供交互层对模式段单独上色——CC 底部状态行里档位是唯一的彩色段）：
+ * `head + mode + tail === buildIdleStatusLine(...)`，modeColor 来自 modeBadgeVisual。
+ */
+export function idleStatusSegments(opts: {
+  model: string;
+  tier: string;
+  mode: string;
+  ctxUsedChars: number;
+  ctxWindowTokens: number;
+}): { head: string; mode: string; tail: string; modeColor: 'gray' | 'blue' | 'cyan' | 'magenta' } {
   const short = stripModelProviderPrefix(opts.model);
   const ratio = (Number(opts.ctxUsedChars) || 0) / 4 / Math.max(1, Number(opts.ctxWindowTokens) || 1);
   const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
-  return `${short} · ${opts.tier} · ${opts.mode} · ctx ~${pct}%`;
+  return {
+    head: `${short} · ${opts.tier} · `,
+    mode: String(opts.mode || ''),
+    tail: ` · ctx ~${pct}%`,
+    modeColor: modeBadgeVisual(String(opts.mode || '')).color,
+  };
+}
+
+// ==================== CC 式 /model 菜单呈现（2026-09-12 真机对标） ====================
+// CC 的 /model：编号行 + 名称列对齐 + 青色模型名 + 绿色当前项 + dim 描述列 + 页脚快捷键提示。
+
+export interface ModelMenuRow {
+  index: number;
+  name: string;
+  desc: string;
+  current: boolean;
+}
+
+/** 本地模型清单 → 菜单行（当前项按剥前缀 + 大小写不敏感匹配；desc = 当前标记）。 */
+export function buildModelMenuRows(models: ReadonlyArray<string>, current: string): ModelMenuRow[] {
+  const cur = stripModelProviderPrefix(String(current || '')).toLowerCase();
+  return (Array.isArray(models) ? models : []).map((raw, i) => {
+    const name = stripModelProviderPrefix(String(raw || ''));
+    const isCurrent = !!cur && name.toLowerCase() === cur;
+    return { index: i + 1, name, desc: isCurrent ? '当前生效' : '', current: isCurrent };
+  });
+}
+
+export const ANSI_GREEN = '\x1b[32m';
+
+/**
+ * 菜单行格式化：`> N. <名称>  <描述>`（列宽按显示宽度；useColor=false 供测试断言
+ * 纯文本）。当前行 `>` 前缀 + 绿色名称，其余青色名称 + dim 描述。
+ */
+export function formatModelMenuRow(row: ModelMenuRow, nameWidth: number, useColor: boolean): string {
+  const w = Math.max(1, Math.floor(nameWidth));
+  const num = `${String(row.index).padStart(2, ' ')}. `;
+  const prefix = row.current ? '> ' : '  ';
+  // 只有带描述的行才填充对齐（无描述行不留尾随空格）。
+  const name = row.desc ? padByWidth(row.name, w) : row.name;
+  const desc = row.desc ? `  ${row.desc}` : '';
+  if (!useColor) return `${prefix}${num}${name}${desc}`;
+  return (
+    `${prefix}${ANSI_DIM}${num}${ANSI_RESET}` +
+    (row.current ? `${ANSI_GREEN}${name}${ANSI_RESET}` : `${ANSI_CYAN}${name}${ANSI_RESET}`) +
+    (desc ? `${ANSI_DIM}${desc}${ANSI_RESET}` : '')
+  );
 }
 
 /** `?` 快捷帮助面板（常用 8 条 + dim 尾行指向 /help；颜色由调用方套）。 */
@@ -361,6 +422,31 @@ export function modeBadgeLine(mode: string): string {
   return `${glyph} ${m} · shift+tab 切换`;
 }
 
+// ==================== CC 式档位视觉（2026-09-12 真机对标） ====================
+// CC 底部状态行语法：`<彩色符号> <档位> on (shift+tab to cycle)`，每档专属色：
+// plan 蓝 / accept edits 青 / manual 蓝 M 徽章 / default 不显示。烛龙环含 default
+// 与 full 两档（CC 无对应），default 用灰、full 用品红延长同一语法。
+
+export interface ModeBadgeVisual {
+  glyph: string;
+  label: string;
+  color: 'gray' | 'blue' | 'cyan' | 'magenta';
+  line: string;
+}
+
+/** 每档专属符号 + 状态短语 + 颜色（颜色由调用方经 renderer.color 套，保持纯函数）。 */
+export function modeBadgeVisual(mode: string): ModeBadgeVisual {
+  const m = String(mode || '');
+  const map: Record<string, Omit<ModeBadgeVisual, 'line'>> = {
+    plan: { glyph: '⏸', label: 'plan mode', color: 'blue' },
+    'auto-accept': { glyph: '⏵⏵', label: 'auto-accept', color: 'cyan' },
+    full: { glyph: '⏵⏵⏵', label: 'full auto', color: 'magenta' },
+    default: { glyph: '⏵', label: 'default mode', color: 'gray' },
+  };
+  const v = map[m] ?? map.default;
+  return { ...v, line: `${v.glyph} ${v.label} on · shift+tab 切换` };
+}
+
 /** /mode 切换回执的一句后果说明。 */
 export const MODE_CONSEQUENCE: Record<string, string> = {
   plan: '只读计划模式，写操作与 bash 会被拒绝',
@@ -369,9 +455,11 @@ export const MODE_CONSEQUENCE: Record<string, string> = {
   full: '全部放行（危险操作仍标红）',
 };
 
-/** 切换回执整行。 */
+/** 切换回执整行：CC 语法 `符号 档位 on` + 烛龙保留的后果说明。 */
 export function modeSwitchReceipt(mode: string): string {
-  return `已切换: ${mode} · ${MODE_CONSEQUENCE[String(mode)] || ''}`.replace(/ · $/, '');
+  const v = modeBadgeVisual(mode);
+  const consequence = MODE_CONSEQUENCE[String(mode)] || '';
+  return `${v.glyph} ${v.label} on · ${consequence}`.replace(/ ·$/, '');
 }
 
 /** phase 值本地化（渲染层映射，不改事件值；未知值原样透传）。 */
