@@ -788,11 +788,16 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
     case 'error':
       r.error(data.message || JSON.stringify(data));
       break;
-    default:
-      if (data && typeof data === 'object' && data.type) {
-        renderSseEvent(ctx, data.type, data, r);
+    default: {
+      // 自递归守卫（真机 18 步会话实测栈溢出）：data.type === event 时
+      // 用相同参数重入会无限递归。未知事件直接截断 dump，不重入。
+      const nextType = data && typeof data === 'object' ? data.type : undefined;
+      if (nextType && nextType !== event) {
+        renderSseEvent(ctx, String(nextType), data, r);
       } else {
-        r.writeLine(JSON.stringify(data));
+        const dump = JSON.stringify(data ?? null) ?? 'null';
+        r.writeLine(dump.length > 200 ? dump.slice(0, 200) + '…' : dump);
       }
+    }
   }
 }
