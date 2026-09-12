@@ -224,13 +224,14 @@ function parseFixtureMarkdown(content, dirName) {
   let inPrompt = false;
   for (; i < lines.length; i++) {
     const line = lines[i];
-    if (line.startsWith('## ') && !line.startsWith('## Prompt')) {
+    if (line.startsWith('## ') && line.trim() !== '## Prompt') {
       if (inPrompt) break;
     }
-    if (line.startsWith('## Prompt')) { inPrompt = true; continue; }
+    if (line.trim() === '## Prompt') { inPrompt = true; continue; }
     if (line.startsWith('## 期望')) break;
     if (inPrompt) {
-      const trimmed = line.replace(/^>\s?/, '');
+      const trimmed = line.replace(/^>\s?/, '').trimEnd();
+      if (!trimmed) continue;  // 跳过空行（Win CRLF 兼容）
       if (trimmed.startsWith('```') && prompt.length > 0) break;
       if (!trimmed.startsWith('```')) prompt += (prompt ? '\n' : '') + trimmed;
     }
@@ -582,15 +583,8 @@ async function runOne(fixture, ablation, opts) {
       // 另外用 tags 标注 R6 专用分类（not_applicable / invalid），不进 verdict 枚举
       // 防线失败只对 memory-on 档（B/C/C4）有意义：被要求注入却 0 注入 = 防线失守；
       // A 档（baseline no-memory）0 注入是预期行为，不算失败。
-      if (ablation.injectMemory === true && memory.injectedCardIds.length === 0) {
-        result.tags.push('line-defense-failed');  // 记忆开启档零注入 = 防线失败
-        result.verdict = 'no-verification';
-        result.stopReason = 'no-verification';
-      } else if (ablation.overflowWindow && !/(overflow|truncat|窗口|截断)/i.test(stdout)) {
-        result.tags.push('overflow-skipped');  // A 档未溢出
-        result.verdict = 'no-verification';
-        result.stopReason = 'no-verification';
-      } else if (verification.signal === 'PASS' || verification.signal === 'ALL_TESTS_PASSED') {
+      // 验证信号优先：PASS 不会被 line-defense / overflow 标签降级。
+      if (verification.signal === 'PASS' || verification.signal === 'ALL_TESTS_PASSED') {
         result.verdict = 'completed';
         result.stopReason = 'completed';
         result.failureTaxonomy = undefined;
@@ -606,6 +600,16 @@ async function runOne(fixture, ablation, opts) {
         result.verdict = 'no-verification';
         result.stopReason = 'no-verification';
         result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, '');
+      }
+
+      // 诊断标签（不影响 verdict 判定）：
+      // B/C/C4 档零注入 → 防线未触发（memory 注入管线可能未生效）
+      if (ablation.injectMemory === true && memory.injectedCardIds.length === 0) {
+        result.tags.push('line-defense-failed');
+      }
+      // A 档（overflow=true）但 stdout 中未检测到溢出/截断关键词
+      if (ablation.overflowWindow && !/(overflow|truncat|窗口|截断)/i.test(stdout)) {
+        result.tags.push('overflow-skipped');
       }
     }
 
