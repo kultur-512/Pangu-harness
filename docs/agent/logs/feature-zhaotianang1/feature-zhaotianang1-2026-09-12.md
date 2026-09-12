@@ -133,3 +133,38 @@ push origin/zhaotianang1(remote 348e108..4cc4e50)
 - [ ] 群里同步 commit 4cc4e50 + 等 Leader 决定合入窗口(develop 拉新分支 or hotfix follow-up to zhaotianang1)
 - [ ] 端点就绪后真机跑分(翟苑皓/kultur 协调)
 - [ ] 1B 8K 端点场景下用 `calibrate-t3-fixture.mjs --window 8192` 一次重生成
+
+---
+
+## D4 晚 — 王佐 R4/R5 收口反馈对齐
+
+### 收到王佐群消息
+
+王佐 R4/R5 剩余项已收口(wangzuo1, commit 4978b86, 版本 0.7.5):
+- `/memory events` 查询子命令挂载(缺省 session 取最近 rollout,评测场景需显式传 `--session`)
+- `TaskState.record*` 家族补齐(recordDecision/recordRisk/recordOpenQuestion/recordMilestone/recordVerified/setNextStep/setCurrentGoal)
+- `MemoryEventStore.listTopics()` 别名已对齐 9/14 清单
+
+### 对齐审计
+
+王佐原话:`对你的 /task CLI 直接可用: /task decide → recordDecision; ... 走 update 家族(record* 就是它的封装),不走 applyEvents`。
+
+我的实现当时是 `store.update(taskId, (cur) => ({ decisions: [...] }))` 直接构造——
+功能等价(都不调 applyEvents/version+1/optimistic lock),但**没走 record* 封装**,
+与 `taskState.ts:249`「语义原语由真实业务节点显式调用」定位对齐度低。
+
+### 修正(cab3bca)
+
+`src/cli/repl/commands/TaskCommand.ts:155-165` 改用 `store.recordDecision(taskId, what, why)`:
+- 10 行净减少(+3/-12)
+- 17/17 TaskCommand 测试全绿(applyEvents 守卫测试仍通过)
+- npm test 全量 1008 / 1007 pass / 1 skip / 0 fail(基线保持)
+- 3.1 结论「decide 走 update,不走 applyEvents」不变
+
+### Commit 链(D4 晚追加)
+
+```
+cab3bca refactor(R5): /task decide 改用 store.recordDecision 语义原语
+b800a1c docs(agent): 9/12 工作日志 — T3 fixture 32K 窗口校准收口
+4cc4e50 feat(eval): T3 fixture 32K 窗口校准 + scripts/eval/calibrate-t3-fixture.mjs 脚本化生成
+```
