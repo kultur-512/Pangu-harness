@@ -114,7 +114,8 @@ function setMode(ctx: TurnContext, m: any) {
 
 // 与 classic（Repl.ts）完全同序的 26 命令注册表 —
 // /help 的分组渲染、/resume 的委托执行都以它为数据源，三处输出一致。
-async function getSharedRegistry(ctx: TurnContext): Promise<any> {
+// 导出：斜杠即时菜单（SlashMenu）复用它取 description/category 元数据。
+export async function getSharedRegistry(ctx: TurnContext): Promise<any> {
   if (ctx.sharedRegistry) return ctx.sharedRegistry;
   const { CommandRegistry } = await import('../CommandRegistry.js');
   const reg = new CommandRegistry();

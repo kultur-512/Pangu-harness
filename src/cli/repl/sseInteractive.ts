@@ -26,7 +26,8 @@ import * as rollout from './rolloutStore.js';
 import type { ModelProvider } from './types.js';
 import { createTurnContext, clearInlineLine, isRunning, updateQueueCount } from './turn/TurnContext.js';
 import { buildBanner, createClearingRenderer, modeBadgeLine, shouldShowStartupTip, termWidth } from './turn/TurnRenderer.js';
-import { completeLineCommand, confirmPendingSuggestion, createModeRing, cycleMode, handleLocalCommand } from './turn/CommandRouter.js';
+import { completeLineCommand, confirmPendingSuggestion, createModeRing, cycleMode, getSharedRegistry, handleLocalCommand, LINE_COMMANDS } from './turn/CommandRouter.js';
+import { buildSlashMenuItems, createSlashMenuController } from './turn/SlashMenu.js';
 import { createTurnController } from './turn/TurnController.js';
 
 export interface SseInteractiveOptions {
@@ -184,6 +185,20 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   // after consuming the SSE stream in the line-mode fallback.
   ctx.lineRl = rl;
 
+  // 斜杠命令派发（菜单 Enter 与 rl 'line' 的 `/` 分支共用等价路径）：
+  // 本地命令注册（/exit /clear /edit …）优先 → 其余斜杠行走统一派发器；
+  // 多为早退分支、不经过 runTaskViaSse 的 finally — 统一恢复提示符。
+  async function dispatchSlashCommand(trimmed: string): Promise<void> {
+    if (isApprovalActive()) return;
+    const isLocal = await handleLocalCommand(ctx, trimmed);
+    if (isLocal) {
+      linePromptIdle();
+      return;
+    }
+    await controller.runTask(trimmed);
+    if (!isRunning(ctx)) linePromptIdle();
+  }
+
   // 空闲提示符上方的模式徽标行 — 只在启动与模式变化后输出一次。
   function printModeBadgeIfPending() {
     if (!ctx.modeBadgePending) return;
@@ -195,6 +210,53 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
   function linePromptIdle() {
     printModeBadgeIfPending();
     try { rl.prompt(); } catch {}
+  }
+
+  // CC 式斜杠即时菜单：idle 态输入 `/` 弹出（实时过滤 + ↑↓ 导航 + 分组 +
+  // 滚动视口）；任务运行中/审批挂起不激活（focus 边界）。
+  const slashMenu = createSlashMenuController({
+    getItems: async () => {
+      const reg = await getSharedRegistry(ctx);
+      const meta = (reg.list() as any[]).map((c) => ({
+        name: c.name, aliases: c.aliases ?? [], description: c.description ?? '', category: c.category ?? 'other',
+      }));
+      // /verbose 只在派发器内联处理（registry 无元数据）——这里补齐
+      meta.push({ name: 'verbose', aliases: [], description: '思考显示 全文/单行 切换', category: 'system' });
+      return buildSlashMenuItems(LINE_COMMANDS, meta);
+    },
+    isBlocked: () => isApprovalActive() || isRunning(ctx),
+    currentLine: () => {
+      try { return String((rl as any).line ?? ''); } catch { return ''; }
+    },
+    width: () => termWidth(),
+    write: (s: string) => { try { process.stdout.write(s); } catch {} },
+    refreshLine: () => { try { (rl as any)._refreshLine?.(); } catch {} },
+    execute: (cmd: string) => {
+      // 菜单优先：待定建议流程让位（菜单 Enter 不触发建议确认）
+      ctx.pendingSuggestion = null;
+      // 清空当前输入行，选中命令直接执行（不重新输入）
+      try {
+        (rl as any).line = '';
+        (rl as any).cursor = 0;
+        if (typeof (rl as any)._refreshLine === 'function') (rl as any)._refreshLine();
+      } catch {}
+      return dispatchSlashCommand(cmd);
+    },
+  });
+
+  // keypress 拦截（只在菜单激活且 key ∈ {up,down,return/enter,escape} 时消费，
+  // 其余透传 readline；菜单关闭后 ↑↓ 恢复 readline 历史导航默认行为）。
+  // 包一层 rl._ttyWrite —— readline 每个按键都经它分发，在此消费可抢在
+  // 历史导航/行提交之前；菜单关闭时零改动透传。
+  const origTtyWrite = (rl as any)._ttyWrite;
+  if (typeof origTtyWrite === 'function') {
+    (rl as any)._ttyWrite = (s: string, key: any) => {
+      let consumed = false;
+      try { consumed = slashMenu.handleKey(key); } catch { consumed = false; }
+      if (!consumed) origTtyWrite.call(rl, s, key);
+      // 字符变化 → 重过滤/开合（未变化的键按下后为 no-op）
+      try { slashMenu.syncLine(String((rl as any).line ?? '')); } catch {}
+    };
   }
 
   ctx.lineSetPrompt = () => {
@@ -341,8 +403,8 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     if (trimmed.startsWith('/')) {
       // 派发器本地命令（/mode /model /usage /tier …）多为早退分支、不经过
       // runTaskViaSse 的 finally — 这里统一恢复提示符。
-      await controller.runTask(trimmed);
-      if (!isRunning(ctx)) linePromptIdle();
+      // （与斜杠菜单 Enter 共用 dispatchSlashCommand 等价路径。）
+      await dispatchSlashCommand(trimmed);
       return;
     }
 
