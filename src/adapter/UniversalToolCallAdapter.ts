@@ -126,10 +126,20 @@ export class UniversalToolCallAdapter {
       const o = search.indexOf(ROOT_OPEN);
       if (o === -1) break;
       const c = search.indexOf(ROOT_CLOSE, o);
-      if (c === -1) break;
-
-      const block = search.slice(o, c + ROOT_CLOSE.length);
-      search = search.slice(c + ROOT_CLOSE.length);
+      // 0.8.2 容错切分（真机 1B 实录）：弱模型常漏写 `</>`（块 1 只写
+      // </read_file> 就直接开块 2 的 `<>`）——indexOf(ROOT_CLOSE) 会把两个
+      // 工具块粘成一个，第二个调用被整块吞掉（多工具步只执行第一个的根因）。
+      // 块内若再出现 ROOT_OPEN，则以它为界强制闭合前块。
+      const o2 = search.indexOf(ROOT_OPEN, o + ROOT_OPEN.length);
+      let block: string;
+      if (o2 !== -1 && (c === -1 || o2 < c)) {
+        block = search.slice(o, o2);
+        search = search.slice(o2);
+      } else {
+        if (c === -1) break;
+        block = search.slice(o, c + ROOT_CLOSE.length);
+        search = search.slice(c + ROOT_CLOSE.length);
+      }
 
       const inner = block.slice(ROOT_OPEN.length, -ROOT_CLOSE.length).trim();
       if (!inner) continue;
