@@ -7,7 +7,7 @@ import { resolve, join } from 'node:path';
 const ROOT = resolve(process.cwd());
 const DIR = join(ROOT, 'scripts', 'eval', 'longmemeval-claudecode');
 
-const normalize = (s) => String(s || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
+const normalize = (s) => String(s || '').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 const grade = (gold, response) => {
   if (!gold) return null;
   const g = normalize(gold);
