@@ -167,7 +167,7 @@ async function main() {
     const row = {
       question_id: q.question_id,
       question_type: q.question_type,
-      gold: q.answer,
+      gold: q.gold ?? q.answer,
       label: opts.label,
       model: opts.model,
       facts,

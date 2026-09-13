@@ -67,10 +67,12 @@ function extractAnswer(stdout) {
     .join('\n').trim();
 }
 
-function loadAnswers(file) {
+function loadAnswers(file, goldByQid) {
   const out = new Map();
   for (const l of readFileSync(join(DIR, file), 'utf8').split(/\r?\n/).filter(Boolean)) {
     const r = JSON.parse(l);
+    // gold 以 questions.jsonl 为唯一正源（早期 runner 行内 gold 字段曾缺失）
+    if (r.gold == null && goldByQid) r.gold = goldByQid.get(r.question_id) ?? null;
     const ans = extractAnswer(r.stdout);
     out.set(r.question_id, { ...r, ans, ms: r.ms ?? 0 });
   }
@@ -103,12 +105,13 @@ function main() {
     process.exit(2);
   }
   const questions = readFileSync(join(DIR, 'questions.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean).map(JSON.parse);
-  const all = files.map((f) => ({ file: f, rows: loadAnswers(f) }));
+  const goldByQid = new Map(questions.map((q) => [q.question_id, q.gold]));
+  const all = files.map((f) => ({ file: f, rows: loadAnswers(f, goldByQid) }));
   const pivots = all.map(({ file, rows }) => ({ file, rows, p: pivot(rows, questions) }));
 
   // Markdown 报告
   let md = `# LME 90题 对照\n\n> 生成: ${new Date().toISOString()}\n\n`;
-  md += '| 题型 | ' + pivots.map(({ file }) => file.replace(/^answers-|\.jsonl$/g, '').join(' | ')) + ' |\n';
+  md += '| 题型 | ' + pivots.map(({ file }) => file.replace(/^answers-|\.jsonl$/g, '')).join(' | ') + ' |\n';
   md += '|' + '---|'.repeat(pivots.length + 1) + '\n';
   for (const t of pivots[0].p.types) {
     md += `| **${t}** |`;
