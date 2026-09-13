@@ -686,7 +686,7 @@ ${issueDescription}`
         budgetNotes.push('usage 估算（网关未返回 usage 字段，按字符长度 /4 估算）');
       }
       if (loopResult.contextOverflowCompacted) {
-        budgetNotes.push('context_overflow 触发强制压缩并重试本步');
+        budgetNotes.push('context_overflow 触发溢出截断并重试本步');
       }
       stepsExecuted = loopResult.steps.length;
 

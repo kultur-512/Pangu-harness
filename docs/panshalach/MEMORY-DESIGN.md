@@ -17,7 +17,7 @@
 |---|---|---|---|
 | L0 会话内实时 | 轨迹/验证信号 | 单任务内 | 已实现（FailureMemory 轨道已摘除 2026-09-05） |
 | L1 结构化记忆卡 | `.panshalach-memory.json`（failure/success/preference） | 跨会话（天~月） | 已实现 |
-| L2 压缩摘要 | `[COMPACT]` 合成轮（模型摘要 + 逐轮 brief） | 长会话 | 已实现 |
+| L2 压缩摘要 | `[COMPACT]` 合成轮（模型摘要 + 逐轮 brief）；摘要正文经 PromptBuilder【历史压缩摘要】块注入 prompt | 长会话 | 已实现（注意与任务内"溢出截断"是两级机制：截断是确定性保首尾步 + 折叠标记、无摘要，压缩是摘要合成轮——0.8.2 起文案严格区分） |
 | L3 事件记忆 | 语义事件流（decision/constraint/…） | 跨会话审计 | **已落地**（R4 `memory/events.ts`，0.6.5；AgentEvent 接线 11dbea3；`/memory events` 查询子命令未挂载） |
 | L4 任务状态 | TaskState（原始需求/决策/未决/进度） | 跨多轮任务 | **已落地**（R5 `memory/taskState.ts`，0.6.5；运行时注入接线 11dbea3） |
 | L5 语义索引 | n-gram 向量 v0 → 国产向量库/embedding | 检索 | **embed v0 已落地**（赵天昂，含单测）；L1 注入融合未接线 |
@@ -65,7 +65,7 @@ interface TaskState {
 |---|---|---|---|
 | 循环实时信号 | 每步违规/失败 | ~~FailureMemory~~ 已摘除——收敛到回合提炼（信号源 B） | 已摘除（2026-09-05） |
 | **回合提炼** | 任务落定（拿到 bestTrajectory + 验证成败 + attemptCount + 反馈） | refine→卡→save | **已实现（0.7.2）**：`finalizeTaskMemory` 单一落定点（runAgentTask result 前），覆盖 SSE/server/headless；Repl 直调三口留统一执行器收口 |
-| 压缩补漏 | compact 移除轮次中验证成功（result.success） | success 卡（evidence=任务摘要，hash 去重） | 已实现 |
+| 压缩补漏 | compact 移除轮次中验证成功（stopReason==='completed'，answered 不产卡） | success 卡（evidence=任务摘要，hash 去重） | 已实现（0.8.2 路径统一：compute 携带信号、apply 写盘成功后统一提炼——手动/后台自动同路径） |
 | 用户 | /memory remember [--pin] / forget / import | preference/删除/批量 | 已实现 |
 | 合并 | /memory merge 或后台 | 2-gram 同主题合并（原卡 archived） | 已实现 |
 | 事件/状态 | P2/P3 各落定点 | events/TaskState | 已落地（R4/R5，0.6.5；运行时接线 11dbea3） |
