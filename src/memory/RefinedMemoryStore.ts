@@ -2,7 +2,7 @@
 // 功能：提炼 / 加载 / 过滤 / 容量控制 / 衰减 / .gitignore 默认加入
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
 import type { MemoryCategory } from './RefinedMemoryCard.js';
@@ -109,9 +109,11 @@ export class RefinedMemoryStore {
     this.workspaceRoot = workspaceRoot;
     // 优先级:显式 customFilename > PANSHA_MEMORY_FILE env > 默认文件名
     // (对齐 TaskStateStore 的 PANSHA_TASK_STATE_FILE 模式——R6 评测用 env 注入隔离文件)
+    // env 为绝对路径时直接采用（join 会把它拼成 `<ws>/P:\...` 垃圾路径 →
+    // existsSync false → 静默 0 卡——真机 smoke 实证，评测脚本全用绝对路径）。
     const fromEnv = typeof process !== 'undefined' ? process.env?.PANSHA_MEMORY_FILE?.trim() : undefined;
     const resolved = customFilename ?? fromEnv ?? MEMORY_LIMITS.DEFAULT_FILENAME;
-    this.filePath = join(workspaceRoot, resolved);
+    this.filePath = isAbsolute(resolved) ? resolved : join(workspaceRoot, resolved);
   }
 
   /**

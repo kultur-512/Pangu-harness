@@ -435,6 +435,7 @@ ${issueDescription}`
         estimatedUsedTokens: chatMeasured,
         usageRatio: chatMeasured > 0 ? Math.min(1, chatMeasured / budgetTokens) : 0,
         usageMeasured: chatMeasured > 0,
+        ...(chatMeasured > 0 && chatUsage.prompt > 0 ? { lastPromptTokens: chatUsage.prompt } : {}),
         triggeredSoftLimit: false,
         triggeredDegradation: false,
         rolloutsExecuted: 1,
