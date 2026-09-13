@@ -77,6 +77,11 @@ const grade = (gold, response) => {
   const g = normalize(gold);
   const r = normalize(response);
   if (!g) return null;
+  if (g.length <= 2) {
+    // 短 gold（纯数字/单词）：子串匹配会被列表编号/正文数字误命中
+    // （1B 真机实证：gold="3" 被回答的列表编号 "3." 判对）→ 词边界匹配
+    return new RegExp(`\b${g}\b`).test(r) ? 1 : 0;
+  }
   return r.includes(g) ? 1 : 0;
 };
 
