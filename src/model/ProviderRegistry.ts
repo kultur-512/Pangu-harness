@@ -165,14 +165,14 @@ export class ProviderRegistry {
     const rawClient: OpenAICompatClient | null = this._createRawCompatClient(prov, providerName);
     if (!rawClient) return null;
 
-    let effectiveModel = modelName;
+    // 包D 修复：显式 modelName 与 config.model 两条路径统一剥离 provider 前缀
+    // （审查 15a：仅剥已配置 provider 名前缀，防误剥含冒号的模型目录名）
+    const knownProviders = new Set(Object.keys(this.config.providers || {}).map((n) => n.toLowerCase()));
+    let effectiveModel = stripProviderPrefix(modelName, knownProviders);
     if (!effectiveModel) {
-      effectiveModel = this.config.model;
       // 修复（2026-09-05 实测）：config.model 可能是 "provider:model" 路由串——
       // 原样发给网关会 400（LM Studio 实测）。此处剥离 provider 前缀。
-      if (effectiveModel && effectiveModel.includes(':')) {
-        effectiveModel = effectiveModel.slice(effectiveModel.indexOf(':') + 1) || undefined;
-      }
+      effectiveModel = stripProviderPrefix(this.config.model, knownProviders);
       if (!effectiveModel && Array.isArray(prov.models) && prov.models.length > 0) {
         effectiveModel = prov.models[0];
       }
@@ -289,4 +289,23 @@ function pickNumber(obj: any, keys: string[]): number | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * 包D 修复：provider 前缀剥离单点。"provider:model" 路由串 → "model"。
+ * 此前剥离只在 createClientSync 的 !effectiveModel（config.model）分支做，
+ * 显式 modelName 路径不剥——'openpangu:openPangu-7B' 整串发网关会 400。
+ * 所有出口统一走这里（与 ModelProvider 的 ':' 路由语法一致，取第一个冒号后段）。
+ */
+function stripProviderPrefix(model: string | undefined, providerNames?: Set<string>): string | undefined {
+  if (!model || typeof model !== 'string') return undefined;
+  const idx = model.indexOf(':');
+  if (idx === -1) return model;
+  // 仅当前缀命中已配置 provider 名才剥离——Ollama/LM Studio 风格目录名
+  // （如 "qwen2.5:7b"）自带冒号但前缀不是 provider，必须原样透传。
+  if (providerNames && providerNames.size > 0) {
+    const prefix = model.slice(0, idx).trim().toLowerCase();
+    if (!providerNames.has(prefix)) return model;
+  }
+  return model.slice(idx + 1) || undefined;
 }

@@ -203,4 +203,32 @@ describe('openai-compatible tool_calls passthrough (mocked)', () => {
     assert.deepEqual(out[0].params, [{ name: 'args', value: '{not-json' }]);
     assert.deepEqual(out[1].params, []);
   });
+
+  // ── 包D 修复：有 choices 但无 content/text/tool_calls 时，不把原始响应
+  // JSON 当模型话语灌上下文——返回带明确标记的空回复占位 ──
+  it('合法空 choices 响应 → 占位标记而非原始 JSON（包D修复）', async () => {
+    let calls = 0;
+    mockFetch(async () => {
+      calls++;
+      return {
+        ok: true,
+        json: {
+          id: 'chatcmpl-SECRETID',
+          object: 'chat.completion',
+          choices: [{ index: 0, message: { role: 'assistant', content: null }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 0 },
+        },
+      };
+    });
+    const client = createOpenAICompatClient({ baseUrl: 'https://ex.com/v1', apiKey: 'k' });
+    const out = await client.complete('hi');
+    assert.equal(
+      out,
+      '[模型返回空回复 finish_reason=stop]',
+      `got: ${JSON.stringify(out)}`
+    );
+    assert.ok(!String(out).includes('chatcmpl-SECRETID'), '原始响应字段不得当模型话语返回');
+    assert.ok(!String(out).includes('"id"'), '不得 stringified 原始 JSON');
+    assert.equal(calls, 1, '可识别形状（有 choices）不触发 EMPTY_RESPONSE 重试');
+  });
 });

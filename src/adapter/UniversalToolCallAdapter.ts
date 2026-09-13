@@ -135,13 +135,29 @@ export class UniversalToolCallAdapter {
       if (o2 !== -1 && (c === -1 || o2 < c)) {
         block = search.slice(o, o2);
         search = search.slice(o2);
-      } else {
-        if (c === -1) break;
+        warnings.push('ROOT_OPEN_FORCED_CLOSE');
+      } else if (c !== -1) {
         block = search.slice(o, c + ROOT_CLOSE.length);
         search = search.slice(c + ROOT_CLOSE.length);
+      } else {
+        // 尾块残缺（`<>` 已开、全文再无任何闭合）——此前直接 break 把最后
+        // 一块整块丢掉；仅当剩余部分像工具块（含 <ToolName> 字样）才
+        // best-effort 收块，纯散文里的孤立 `<>` 仍保持丢弃。
+        const rest = search.slice(o);
+        if (!/<[A-Za-z_][A-Za-z0-9_-]*>/.test(rest.slice(ROOT_OPEN.length))) break;
+        block = rest;
+        search = '';
+        warnings.push('UNCLOSED_TAIL_BLOCK');
       }
 
-      const inner = block.slice(ROOT_OPEN.length, -ROOT_CLOSE.length).trim();
+      // 包D 修复：容错切分/尾块残缺分支的 block 不以 `</>` 结尾——此前对
+      // 两个分支共用 slice(ROOT_OPEN.length, -ROOT_CLOSE.length)，把容错块
+      // 末尾 3 个真实字符咬掉（最后一个参数如 <content>x</content> 被咬成
+      // <content>x</cont → 参数静默丢失）。只有块真以 `</>` 收尾才砍尾部。
+      const inner = (block.endsWith(ROOT_CLOSE)
+        ? block.slice(ROOT_OPEN.length, block.length - ROOT_CLOSE.length)
+        : block.slice(ROOT_OPEN.length)
+      ).trim();
       if (!inner) continue;
 
       let toolMatch = /^<([A-Za-z_][A-Za-z0-9_-]*)>/.exec(inner);
@@ -166,9 +182,27 @@ export class UniversalToolCallAdapter {
 
       const params: ToolCallParam[] = [];
       const re = /<([A-Za-z_][A-Za-z0-9_-]*)>([\s\S]*?)<\/\1>/g;
+      const closedRanges: Array<[number, number]> = [];
       let m: RegExpExecArray | null;
       while ((m = re.exec(body)) !== null) {
+        closedRanges.push([m.index, m.index + m[0].length]);
         params.push({ name: m[1], value: this.unescape(m[2]).trim() });
+      }
+
+      // 包D 修复（残缺闭合标签 best-effort）：弱模型连参数闭合标签都写残
+      // （`<content>x</cont`）时，上面的正则要求完整闭合会静默丢参——对
+      // 已开未闭的标签把值 best-effort 取到 body 末尾（剥掉尾部残缺的闭合
+      // 前缀），并跳过已被完整配对消费的区间，避免重复提取。
+      const openRe = /<([A-Za-z_][A-Za-z0-9_-]*)>/g;
+      let om: RegExpExecArray | null;
+      while ((om = openRe.exec(body)) !== null) {
+        if (om[1] === toolName) continue; // 工具自身的开标签不是参数
+        if (closedRanges.some(([s, e]) => om!.index >= s && om!.index < e)) continue;
+        const valStart = om.index + om[0].length;
+        const val = this.unescape(
+          body.slice(valStart).replace(/<\/(?:[A-Za-z_][A-Za-z0-9_-]*)?$/, '').trim()
+        ).trim();
+        if (val) params.push({ name: om[1], value: val });
       }
 
       if (params.length === 0 && body.length > 0) {

@@ -73,4 +73,43 @@ describe('openai-compatible withRetry（改动包 B）', () => {
     assert.equal(await client.complete('hi'), 'recovered');
     assert.equal(calls, 3);
   });
+
+  // ── 包D 修复：Retry-After ≤30s 按服务端等待；>30s 该错误最多一次性补试
+  // （此前钳到 30s 后照常最多 5 连发——服务端明确说"一小时后再来"还连锤 6 次）──
+
+  it('Retry-After:3600（>30s）→ 总请求数 == 2 而非 6（包D修复）', async () => {
+    let calls = 0;
+    (globalThis as any).fetch = async () => {
+      calls++;
+      return {
+        ok: false, status: 503, statusText: 'Service Unavailable',
+        headers: { get: (k: string) => (k.toLowerCase() === 'retry-after' ? '3600' : null) },
+        async text() { return 'overloaded, come back later'; },
+      } as any;
+    };
+    const client = createOpenAICompatClient({ baseUrl: 'https://ex.com/v1', apiKey: 'k' });
+    await assert.rejects(
+      () => client.complete('hi'),
+      (err: any) => err.status === 503
+    );
+    assert.equal(calls, 2, `>30s 的 Retry-After 只允许 1 次原始 + 1 次一次性补试，got ${calls}`);
+  });
+
+  it('Retry-After ≤30s 仍按服务端值等待并走常规重试（语义保持）', async () => {
+    let calls = 0;
+    (globalThis as any).fetch = async () => {
+      calls++;
+      if (calls <= 2) {
+        return {
+          ok: false, status: 429, statusText: 'Too Many Requests',
+          headers: { get: (k: string) => (k.toLowerCase() === 'retry-after' ? '1' : null) },
+          async text() { return 'slow down'; },
+        } as any;
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) } as any;
+    };
+    const client = createOpenAICompatClient({ baseUrl: 'https://ex.com/v1', apiKey: 'k' });
+    assert.equal(await client.complete('hi'), 'ok');
+    assert.equal(calls, 3, '≤30s 按服务端等待 + 常规 MAX_RETRIES 循环');
+  });
 });

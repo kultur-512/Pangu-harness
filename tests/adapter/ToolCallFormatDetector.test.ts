@@ -67,13 +67,19 @@ describe('ToolCallFormatDetector (P0-1)', () => {
 
     const res = ToolCallFormatDetector.probeAndParse(content);
 
-    // Should not blindly trust it as high-confidence OpenAI format
-    if (res.format === 'openai-json') {
-      assert.ok(res.confidence < 0.7, 'malformed OpenAI-like JSON should have low confidence');
-    } else {
-      // Acceptable to fall back to unknown or other
-      assert.ok(['unknown', 'xml-strict', 'loose-plain'].includes(res.format));
-    }
+    // 包D 修复（原为 if/else 恒真弱断言）：现在对已知输入断言确切结果——
+    // fake_tool_calls 不构成 OpenAI tool_calls 形状 → 全部尝试失败 →
+    // 自动兜底也抠不出调用 → 最终 unknown / 置信度 0 / 零调用 / fallbackUsed=true，
+    // 绝不产出 Evil 调用。
+    assert.equal(res.format, 'unknown');
+    assert.equal(res.confidence, 0);
+    assert.equal(res.toolCalls.length, 0);
+    assert.ok(res.toolCalls.every(tc => tc.toolName !== 'Evil'), '恶意假 JSON 不得产出调用');
+    assert.equal(res.fallbackUsed, true, '必须走过自动兜底链');
+    assert.ok(
+      res.attempts.some(a => a.format === 'openai-json' && a.success === false),
+      'openai-json 尝试必须被记录为失败（no tool_calls shape）'
+    );
   });
 
   it('falls back correctly on mixed input (JSON parse fails but XML succeeds)', () => {
@@ -121,16 +127,18 @@ Then valid XML:
 
     const res = ToolCallFormatDetector.probeAndParse(fake);
 
-    // 关键断言：fallbackUsed 应该为 true，或者至少最终没有把这个假 JSON 当作高置信度成功
-    if (res.format === 'openai-json') {
-      // 如果仍然被判定为 openai-json，置信度必须 < 0.5（但按当前实现，这种情况通常不会选它）
-      assert.ok(res.confidence < 0.5, 'malicious JSON should not get high confidence');
-    }
-
-    // 允许 fallback 后仍为 unknown（没有有效调用），但必须记录 fallbackUsed
-    // 主要目标是确保没有把恶意 JSON 当作高置信度成功
-    assert.ok(res.confidence < 0.7 || res.fallbackUsed === true || res.format !== 'openai-json',
-      'should not treat malicious JSON as high-confidence success');
+    // 包D 修复（原为 if 恒真 + 三选一恒真弱断言）：对已知输入断言确切结果——
+    // loose 兜底同样抠不出调用 → 最终 unknown / 零调用 / 置信度 0（Rule B 归零），
+    // 但 fallbackUsed 必须为 true 且 attempts 记录了 auto-fallback。
+    assert.equal(res.format, 'unknown');
+    assert.equal(res.toolCalls.length, 0);
+    assert.ok(res.toolCalls.every(tc => tc.toolName !== 'Evil'), '恶意假 JSON 不得产出调用');
+    assert.equal(res.confidence, 0, '零调用 → Rule B 强制置信度归 0');
+    assert.equal(res.fallbackUsed, true);
+    assert.ok(
+      res.attempts.some(a => a.format === 'loose-plain' && a.reason === 'auto-fallback'),
+      '必须记录 loose-plain auto-fallback 尝试'
+    );
   });
 
   it('automatically falls back for pure text with no tool calls', () => {
@@ -138,19 +146,12 @@ Then valid XML:
 
     const res = ToolCallFormatDetector.probeAndParse(pureText);
 
-    // 纯文本场景下，OpenAI/严格 XML 基本都会失败，最终会走 loose 兜底
-    // 结果可能是 unknown 或 loose-plain（取决于 UniversalAdapter 是否能从文本中抠出类似调用）
-    // 无论哪种，关键是 fallbackUsed 应该为 true，或者至少没有高置信度误报
-    if (res.format !== 'unknown') {
-      // 如果被识别成某种格式，置信度不应该太高
-      assert.ok(res.confidence <= 0.6, 'pure text should not produce high confidence');
-    }
-
-    // 宽松断言：要么是 unknown，要么 fallbackUsed 标记了自动降级
-    assert.ok(
-      res.format === 'unknown' || res.fallbackUsed === true || res.confidence < 0.7,
-      'pure text should trigger fallback logic or stay low-confidence'
-    );
+    // 包D 修复（原为 if/else + 三选一恒真弱断言）：纯文本无任何调用形态——
+    // 三条尝试全失败、兜底也无所获 → 精确结果 unknown / 0 / fallbackUsed=true。
+    assert.equal(res.format, 'unknown');
+    assert.equal(res.confidence, 0);
+    assert.equal(res.toolCalls.length, 0);
+    assert.equal(res.fallbackUsed, true);
   });
 
   it('fallbackUsed flag is present and false when a high-confidence path succeeds', () => {
