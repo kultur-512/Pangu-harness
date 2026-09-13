@@ -145,7 +145,8 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
         const res = ctx.bgCompact.result();
         ctx.bgCompact = null;
         if (res && res.ok) {
-          const applied = cs.applyCompactResult(ctx.session, res);
+          // B4：传入窗口——kept 收缩到 ≤60% 窗口（巨轮场景压缩后仍可能逼近窗口）
+          const applied = cs.applyCompactResult(ctx.session, res, ctx.ctxWindowTokens);
           ctx.ctxUsedChars = cs.estimateSessionTokens(ctx.session) * 4;
           const msg = `${applied.message}`;
           // 拒绝/失败以 warn 呈现（盘故障不该与普通回执同级）

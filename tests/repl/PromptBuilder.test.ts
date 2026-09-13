@@ -160,12 +160,36 @@ describe('P1-E PromptBuilder deduplication (v2)', () => {
     const pb = new PromptBuilder(sess, cfg);
     const prompt = await pb.buildForTask('do the thing');
 
-    const note = '历史较长，已做内部压缩';
+    // B3：无合成轮时给诚实提示（不再声称"已做内部压缩"）
+    const note = '历史较长';
     const matches = (prompt.match(new RegExp(note, 'g')) || []).length;
     assert.equal(matches, 1, 'compaction note must appear exactly once');
+    assert.ok(prompt.includes('/compact 生成压缩摘要'), '诚实提示指向 /compact');
+    assert.ok(!prompt.includes('已做内部压缩'), '不再对模型谎称已压缩');
 
     // tier_constraint must still be present (never deduped)
     assert.ok(prompt.includes('<tier_constraint tier="high">'), 'tier_constraint must always be injected');
+  });
+
+  it('B3: [COMPACT] 合成轮存在 → 注入【历史压缩摘要】正文（压缩收益进 prompt）', async () => {
+    const sess = new Session({ tier: 'high' });
+    sess.addTurn({
+      id: 'compact-1',
+      timestamp: Date.now(),
+      userInput: '[COMPACT] 已压缩 12 轮历史',
+      userInputType: 'command',
+      tier: 'high',
+      durationMs: 1,
+      result: { success: true, summary: '用户要求修复 alpha 登录 bug（原文：修复 alpha 模块的登录 bug 并跑通测试）；已验证通过。' },
+    });
+    for (let i = 0; i < 3; i++) {
+      sess.addTurn({ id: 't' + i, timestamp: Date.now(), userInput: '后续任务 ' + i, userInputType: 'task', tier: 'high', durationMs: 1 });
+    }
+    const cfg = TierRegistry.get('high');
+    const pb = new PromptBuilder(sess, cfg);
+    const prompt = await pb.buildForTask('继续下一项');
+    assert.ok(prompt.includes('【历史压缩摘要】'), '摘要块必须注入');
+    assert.ok(prompt.includes('修复 alpha 模块的登录 bug'), '摘要正文必须可见（getRecentContext(3) 取不到合成轮）');
   });
 
   it('tryInject same key twice skips second and reports duplicatesSkipped', async () => {

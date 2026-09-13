@@ -489,9 +489,19 @@ export class PromptBuilder {
     // === Current task — dedup (in case of weird re-entrancy) ===
     this.tryInject('current-task', [`\n【当前任务】\n${issue}`], lines);
 
-    // === Optional: crude compaction note — dedup ===
-    if (this.session.turns.length > 12) {
-      this.tryInject('compaction-note', '\n（历史较长，已做内部压缩，保留关键决策与用户原文要点）', lines);
+    // === 历史压缩摘要（B3：接真——压缩收益从此真正进入 prompt）===
+    // 合成轮 userInput 以 [COMPACT] 开头、result.summary 为摘要正文；压缩后
+    // 合成轮固定在 turns 前端，getRecentContext(3) 永远取不到——在此显式注入。
+    // 无合成轮且历史较长时给诚实提示（旧行为是无压缩却声称"已做内部压缩"）。
+    {
+      const synthetic = this.session.turns.find((t) => String(t.userInput || '').startsWith('[COMPACT]'));
+      if (synthetic && synthetic.result?.summary) {
+        const summary = String(synthetic.result.summary);
+        const capped = summary.length > 1500 ? summary.slice(0, 1500) + '…[摘要已截断]' : summary;
+        this.tryInject('compaction-note', [`\n【历史压缩摘要】`, capped], lines);
+      } else if (this.session.turns.length > 12) {
+        this.tryInject('compaction-note', `\n（历史较长：${this.session.turns.length} 轮，更早轮次未注入。如需把早期关键背景带进上下文，可用 /compact 生成压缩摘要。）`, lines);
+      }
     }
 
     // === 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===

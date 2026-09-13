@@ -17,6 +17,7 @@ import type { Turn } from './types.js';
 import { getStrategy, turnBrief } from './compactStrategies.js';
 import { appendCompactMarker } from './rolloutStore.js';
 import { estTokens } from './tokenEstimate.js';
+import { RefinedMemoryStore } from '../../memory/RefinedMemoryStore.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -61,6 +62,13 @@ export interface CompactResult {
   summarySource?: 'model' | 'fallback' | '';
   /** 完整 synthetic turn（compact 标记事件内嵌它，使 replay 无需模型即可重建） */
   syntheticTurn?: Turn;
+  /**
+   * B1：补漏提炼信号随快照携带（被移除轮中 stopReason==='completed' 的
+   * userInput 摘要）。compute 只计算不执行；applyCompactResult 在 marker
+   * 写盘成功后统一执行——修两个缺陷：后台自动压缩路径此前完全不做提炼；
+   * 手动路径在 marker 写盘失败时卡已落盘（重试会 count 虚增）。
+   */
+  successSignals?: Array<{ summary: string; evidence: string; taskStyle: string }>;
 }
 
 /**
@@ -103,118 +111,49 @@ function buildSummaryPrompt(removed: Turn[]): string {
   return getStrategy('default').buildPrompt(removed);
 }
 
+/** B2：fallback 摘要总长封顶——嵌套压缩不治理时摘要代代膨胀，可自身超窗。 */
+const FALLBACK_SUMMARY_MAX_CHARS = 24000;
+/** 被移除的上一代 [COMPACT] 合成轮，其旧摘要全文内联的上限（滚雪球治理）。 */
+const NESTED_SUMMARY_MAX_CHARS = 400;
+
 function fallbackSummary(removed: Turn[]): string {
   // Deterministic offline summary (also used when the model call fails):
   // preserves every removed turn's brief so "关键信息保留" stays verifiable.
-  return `[COMPACT 历史摘要 · ${removed.length} 轮]\n` + removed.map((t) => `- ${turnBrief(t)}`).join('\n');
+  const lines = removed.map((t) => {
+    let brief = turnBrief(t);
+    // 嵌套压缩治理：[COMPACT] 合成轮的 result.summary 是上一代摘要全文，
+    // turnBrief 的 r 字段无上限——不截断则每代压缩把全部历史摘要再内联一遍。
+    if (String(t.userInput || '').startsWith('[COMPACT]') && String(t.result?.summary || '').length > NESTED_SUMMARY_MAX_CHARS) {
+      brief = turnBrief({
+        ...t,
+        result: { ...(t.result || {}), summary: String(t.result?.summary || '').slice(0, NESTED_SUMMARY_MAX_CHARS) + '…[上一代摘要已截断]' },
+      } as Turn);
+    }
+    return `- ${brief}`;
+  });
+  let out = `[COMPACT 历史摘要 · ${removed.length} 轮]\n` + lines.join('\n');
+  if (out.length > FALLBACK_SUMMARY_MAX_CHARS) {
+    out = out.slice(0, FALLBACK_SUMMARY_MAX_CHARS) + '\n…[摘要超长已截断]';
+  }
+  return out;
 }
 
 /**
  * Compact session.turns: summarize all but the last KEEP_RECENT turns into a
  * single synthetic turn. Model failure falls back to the deterministic brief
  * list (compaction must never lose information or block the user).
+ *
+ * B1 路径统一：手动 /compact 与后台自动压缩共用 compute（纯计算）+ apply
+ * （唯一 mutation 路径，含 C2 写盘纪律与提炼执行）——旧行为里两条路径各自
+ * 实现，后台路径漏提炼、手动路径提炼先于写盘（失败即 count 虚增）。
  */
 export async function compactSession(
   session: Session,
   client: { complete(prompt: string, opts?: any): Promise<any> } | null | undefined
 ): Promise<CompactResult> {
-  const beforeTokens = estimateSessionTokens(session);
-
-  if (session.turns.length <= KEEP_RECENT + 1) {
-    return {
-      ok: false,
-      removed: 0,
-      kept: session.turns.length,
-      summary: '',
-      beforeTokens,
-      afterTokens: beforeTokens,
-      message: `轮次不足（${session.turns.length} ≤ ${KEEP_RECENT + 1}），无需压缩`,
-    };
-  }
-
-  const removed = session.turns.slice(0, session.turns.length - KEEP_RECENT);
-  const kept = session.turns.slice(-KEEP_RECENT);
-  // N2：generation 必须在替换前定格（压缩前总数），否则与 computeCompactResult 语义冲突
-  const generation: CompactGeneration = {
-    turnCount: session.turns.length,
-    lastTurnId: kept[kept.length - 1]?.id ?? '',
-  };
-  const coveredIds = removed.map(t => t.id);
-
-  // compact 补漏提炼 — 被移除轮次若【真实验证通过】才提炼 success 卡；
-  // 0.7：用 stopReason 而非 success（answered 计入 success 但非工程验证通过，
-  // 纯问答/闲聊不产 success 卡）。evidence 用该轮 userInput 摘要。
-  try {
-    const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
-    const store = new RefinedMemoryStore(session.workspace);
-    const signals = removed
-      .filter((t) => (t.result as any)?.stopReason === 'completed')
-      .map((t) => {
-        const brief = (t.userInput || '').replace(/\s+/g, ' ').trim().slice(0, 80) || '（无输入摘要）';
-        return { summary: `已验证可行的做法：${brief}`, evidence: brief, taskStyle: 'all', now: Date.now() };
-      });
-    if (signals.length > 0) store.refineCompactSignals(signals);
-  } catch {
-    // memory is best-effort during compaction
-  }
-
-  let summary = '';
-  let summarySource: 'model' | 'fallback' = 'fallback';
-  if (client && typeof client.complete === 'function') {
-    try {
-      const out = await client.complete(getStrategy(resolveStrategyId(session)).buildPrompt(removed, { instruction: undefined }));
-      summary = typeof out === 'string' ? out.trim() : String(out?.content ?? '').trim();
-      if (summary) summarySource = 'model';
-    } catch {}
-  }
-  if (!summary) summary = fallbackSummary(removed);
-
-  const synthetic: Turn = {
-    id: 'compact-' + Date.now().toString(36),
-    timestamp: Date.now(),
-    userInput: `[COMPACT] 已压缩 ${removed.length} 轮历史`,
-    userInputType: 'command',
-    tier: session.tier,
-    result: { success: true, summary },
-  };
-
-  // C2（ROADMAP-NEXT §3.2）：marker 先写盘成功、后改内存 —— rollout 是 turn 的
-  // 唯一权威源，旧顺序（先改内存后写盘）在写失败时会产生双源分歧（resume 回放
-  // 旧轮次）。afterTokens 用一次性快照视图估算，不触碰活体 session。
-  const estView = { turns: [synthetic, ...kept] } as Session;
-  const afterTokens = estimateSessionTokens(estView);
-  const markerWritten = appendCompactMarker(session.id, synthetic, coveredIds, beforeTokens, afterTokens);
-  if (!markerWritten) {
-    // 写盘失败 → 拒绝压缩：内存与 rollout 必须同进同退，否则 resume 端双源分歧。
-    return {
-      ok: false,
-      removed: removed.length,
-      kept: kept.length,
-      summary,
-      beforeTokens,
-      afterTokens,
-      generation,
-      coveredTurnIds: coveredIds,
-      summarySource,
-      message: '✗ 压缩中止：rollout 压缩标记写盘失败（resume 权威源不可写）。会话未修改，防双源分歧；请检查磁盘/权限后重试。',
-    };
-  }
-
-  session.turns = [synthetic, ...kept];
-
-  return {
-    ok: true,
-    removed: removed.length,
-    kept: kept.length,
-    summary,
-    beforeTokens,
-    afterTokens,
-    generation,
-    coveredTurnIds: coveredIds,
-    summarySource,
-    syntheticTurn: synthetic,
-    message: `已压缩 ${removed.length} 轮 → 保留 ${kept.length} 轮 + 摘要（${summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）；估算上下文 ${beforeTokens} → ${afterTokens} tokens`,
-  };
+  const res = await computeCompactResult(session, client ?? null);
+  if (!res.ok) return res;
+  return applyCompactResult(session, res);
 }
 
 /** Auto-compact trigger (CC-style): called before starting a new task. */
@@ -300,6 +239,7 @@ async function computeCompactResult(
   };
   const removed = session.turns.slice(0, session.turns.length - KEEP_RECENT).map((t) => ({ ...t }));
   const kept = session.turns.slice(-KEEP_RECENT).map((t) => ({ ...t }));
+  const successSignals = buildSuccessSignals(removed);
 
   let summary = '';
   let summarySource: 'model' | 'fallback' = 'fallback';
@@ -336,8 +276,23 @@ async function computeCompactResult(
     coveredTurnIds: removed.map(t => t.id),
     summarySource,
     syntheticTurn,
+    successSignals,
     message: `后台压缩就绪：${removed.length} 轮 → 摘要（${summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）；估算 ${beforeTokens} → ${afterTokens} tokens`,
   };
+}
+
+/**
+ * B1：补漏信号源——被移除轮中【真实验证通过】（stopReason==='completed'，
+ * answered 计 success 但非工程验证通过，不产卡）的输入摘要。compute 阶段
+ * 只计算；applyCompactResult 在 marker 写盘成功后统一执行。
+ */
+function buildSuccessSignals(removed: Turn[]): Array<{ summary: string; evidence: string; taskStyle: string }> {
+  return removed
+    .filter((t) => (t.result as any)?.stopReason === 'completed')
+    .map((t) => {
+      const brief = (t.userInput || '').replace(/\s+/g, ' ').trim().slice(0, 80) || '（无输入摘要）';
+      return { summary: `已验证可行的做法：${brief}`, evidence: brief, taskStyle: 'all' };
+    });
 }
 
 /**
@@ -393,7 +348,7 @@ export function startBackgroundCompact(
  *   其余全部保留（旧 kept ∪ 快照后新增轮）；
  * - 摘要正文/来源/代际随 CompactResult 携带，并写入 rollout compact 标记。
  */
-export function applyCompactResult(session: Session, res: CompactResult): CompactResult {
+export function applyCompactResult(session: Session, res: CompactResult, windowTokens?: number): CompactResult {
   if (!res || !res.ok || res.removed === 0) {
     return res ?? { ok: false, removed: 0, kept: session.turns.length, summary: '', beforeTokens: 0, afterTokens: 0, message: '无可用后台压缩结果' };
   }
@@ -416,6 +371,7 @@ export function applyCompactResult(session: Session, res: CompactResult): Compac
     : session.turns.slice(-KEEP_RECENT); // 无账本的旧结果：退回旧行为（兼容）
 
   const before = session.turns.length;
+  const ledgerDropped = before - remaining.length; // 账本口径的移除数（收缩前定格，B4 收缩不计入代际漂移）
   const synthetic: Turn = res.syntheticTurn ?? {
     id: 'compact-' + Date.now().toString(36),
     timestamp: Date.now(),
@@ -424,6 +380,20 @@ export function applyCompactResult(session: Session, res: CompactResult): Compac
     tier: session.tier,
     result: { success: true, summary: res.summary },
   };
+
+  // B4：kept 字节感知收缩——KEEP_RECENT 按条数保留，巨轮（大文件读写结果
+  // 落在 result.summary/answerText）可让压缩后仍逼近窗口。提供 windowTokens
+  // 时从最旧 kept 继续收缩（下限 2 轮），直到估算 ≤60% 窗口。
+  let shrunk = 0;
+  if (windowTokens && windowTokens > 0 && remaining.length > 2) {
+    const capTokens = windowTokens * 0.6;
+    while (remaining.length > 2
+      && estimateSessionTokens({ turns: [synthetic, ...remaining] } as Session) > capTokens) {
+      remaining.shift();
+      shrunk++;
+    }
+  }
+
   // C2：与 compactSession 同一纪律 —— marker 先写盘成功再改内存（防双源分歧）。
   // afterTokens 用一次性快照视图估算（不触碰活体 session）。
   const estView = { turns: [synthetic, ...remaining] } as Session;
@@ -441,16 +411,27 @@ export function applyCompactResult(session: Session, res: CompactResult): Compac
 
   session.turns = [synthetic, ...remaining];
 
-  // 代际漂移检测：快照后新增了轮（before > generation.turnCount）或实际移除数
-  // 与账本不符（rewind 等场景）→ 提示已按覆盖账本安全合并
-  const dropped = before - remaining.length;
+  // B1：补漏提炼在 marker 写盘成功后统一执行（手动/后台同路径）——
+  // 旧行为手动路径先提炼后写盘，写盘失败时卡已落盘、重试 count 虚增；
+  // 后台自动路径则完全漏提炼。refineCompactSignals 全同步；memory
+  // best-effort，失败不阻断压缩。
+  if (res.successSignals && res.successSignals.length > 0) {
+    try {
+      const store = new RefinedMemoryStore(session.workspace);
+      store.refineCompactSignals(res.successSignals.map((s) => ({ ...s, now: Date.now() })));
+    } catch {}
+  }
+
+  // 代际漂移检测：快照后新增了轮（before > generation.turnCount）或账本口径
+  // 实际移除数与快照不符（rewind 等场景）→ 提示已按覆盖账本安全合并
   const staleGen = !!res.generation
-    && (before > res.generation.turnCount || dropped !== res.removed);
+    && (before > res.generation.turnCount || ledgerDropped !== res.removed);
   return {
     ...res,
     kept: remaining.length,
     afterTokens,
-    message: `✓ 已自动压缩 ${res.removed} 轮历史（后台，${res.summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）`
+    message: `✓ 已压缩 ${res.removed} 轮历史（${res.summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）；估算上下文 ${res.beforeTokens} → ${afterTokens} tokens`
+      + (shrunk > 0 ? `；kept 超预算已再收缩 ${shrunk} 轮（下限 2）` : '')
       + (staleGen ? '；快照后发生变更，已按覆盖账本安全合并' : ''),
   };
 }
