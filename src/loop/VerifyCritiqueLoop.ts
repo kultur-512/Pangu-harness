@@ -12,7 +12,6 @@
 
 import { StructuredReasoner, StructuredReasoningOutput } from '../reasoning/StructuredReasoner.js';
 import { ToolCallGuardrailController, type ToolCallGuardrailOptions } from './guardrails.js';
-import { StrictStructuredToolAdapter } from '../adapter/StrictStructuredToolAdapter.js';
 import { UniversalToolCallAdapter, ToolCallFormat } from '../adapter/UniversalToolCallAdapter.js';
 import { ToolCall, inferToolCategory } from '../types/toolCall.js';
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
@@ -20,7 +19,7 @@ import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawI
 import { classifyApiError } from '../model/errorClassify.js';
 import type { StaticAnalysisResult } from '../review/Reviewer.js';
 import type { ChatMessage, TurnStopReason } from '../cli/repl/types.js';
-import { estTokens } from '../cli/repl/tokenEstimate.js';
+import { estTokens, safeSlice } from '../cli/repl/tokenEstimate.js';
 
 /**
  * Critique 构造上下文
@@ -28,6 +27,33 @@ import { estTokens } from '../cli/repl/tokenEstimate.js';
  */
 export interface CritiqueContext {
   staticAnalysisBlocks?: string[];
+}
+
+/** C1 收缩循环迭代上限（P0：CJK 巨结果曾致 for(;;) 永不收敛）。 */
+const MESSAGES_BUDGET_MAX_ITERATIONS = 64;
+/** 二级收缩的最小保留长度下限（码点数）：低于此不截（防退化切片）。 */
+const TOOL_SHRINK_MIN_KEEP_CODEPOINTS = 64;
+
+/**
+ * 按 estTokens 反推截断尺寸：返回 content 的最大前缀/后缀（码点对齐，经
+ * safeSlice），使 estTokens(产物) ≤ budgetTokens。estTokens 对长度单调 →
+ * 在码元索引上二分。纯 CJK 与 ASCII 统一按同一 token 口径收敛（P0 修复核心）。
+ */
+function sliceToTokenBudget(content: string, budgetTokens: number, fromHead: boolean): string {
+  if (budgetTokens <= 0) return '';
+  if (estTokens(content) <= budgetTokens) return content;
+  let lo = 0;
+  let hi = content.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const candidate = mid === 0
+      ? ''
+      : (fromHead ? safeSlice(content, 0, mid) : safeSlice(content, -mid));
+    if (estTokens(candidate) <= budgetTokens) lo = mid;
+    else hi = mid - 1;
+  }
+  if (lo <= 0) return '';
+  return fromHead ? safeSlice(content, 0, lo) : safeSlice(content, -lo);
 }
 
 export type VerificationSignal = 'PASS' | 'FAIL' | 'PARTIAL' | 'ERROR' | 'NO_TOOL_CALLS';
@@ -322,10 +348,14 @@ export class VerifyCritiqueLoop {
    * 两级策略：组级 trimMessages（丢最旧交换组）→ 仍超则对栈内最大 tool
    * 消息做二级内容截断（防"trim 后组数已到底、巨结果仍在"的残余超窗）。
    * 巨型首条 user（种子）不可裁——到它为止，交溢出应急。
+   * 【P0 修复】迭代上限 + 进展检查：旧 for(;;) 在纯 CJK 巨工具结果上永不收敛
+   * （截断尺寸按 ASCII 换算，CJK 按 1.5 token/字符重估恒超 cap）——180K 次
+   * 迭代不终止。64 次上限 + "本次收缩未使最大 tool 消息 token 数下降即退出"
+   * 双保险保证有限终止。
    */
   private enforceMessagesBudget(capTokens: number): boolean {
     let acted = false;
-    for (;;) {
+    for (let iter = 0; iter < MESSAGES_BUDGET_MAX_ITERATIONS; iter++) {
       if (this.messagesTokens() <= capTokens) return acted;
       const before = this.messages.length;
       this.trimMessages();
@@ -333,9 +363,19 @@ export class VerifyCritiqueLoop {
       if (this.shrinkLargestToolMessage()) { acted = true; continue; }
       return acted;
     }
+    return acted;
   }
 
-  /** C1 二级裁剪：栈内 estTokens 最大的 tool 消息 >20% 窗口预算 → 头 60% + 尾 25%。 */
+  /**
+   * C1 二级裁剪：栈内 estTokens 最大的 tool 消息 >20% 窗口预算 → 头 + 尾，
+   * 中段换显式标记。
+   * 【P0 修复】截断尺寸按 estTokens 反推（token 预算 → 二分求最大前缀/后缀）：
+   * 旧实现按 ASCII 4 chars/token 换算 head/tail 字符数，纯 CJK 巨结果按
+   * 1.5 token/字符重估后 ≈5.1×capTokens 恒超 → 收缩永不收敛。现在 head+tail
+   * token 预算合计 = capTokens*0.85（比例维持旧 60/25 分成），任何语种下
+   * 单次收缩必然大幅降低该消息 token 数。
+   * 返回 true 当且仅当本次收缩使该消息 token 数【严格下降】（进展检查）。
+   */
   private shrinkLargestToolMessage(): boolean {
     if (!this.windowTokens || this.windowTokens <= 0) return false;
     const capTokens = this.windowTokens * 0.7 * 0.2;
@@ -348,13 +388,20 @@ export class VerifyCritiqueLoop {
     });
     if (bi === -1 || bt <= capTokens) return false;
     const content = String(this.messages[bi].content ?? '');
-    const headChars = Math.floor(capTokens * 4 * 0.6);
-    const tailChars = Math.floor(capTokens * 4 * 0.25);
+    // 最小保留长度下限：极短消息不值得截（防退化切片/无意义抖动）
+    if ([...content].length <= TOOL_SHRINK_MIN_KEEP_CODEPOINTS) return false;
+    const tokenBudget = capTokens * 0.85;
+    const headTokens = tokenBudget * (0.6 / 0.85);
+    const tailTokens = tokenBudget * (0.25 / 0.85);
+    const head = sliceToTokenBudget(content, headTokens, true);
+    const tail = sliceToTokenBudget(content, tailTokens, false);
+    const next = head
+      + '\n[...工具输出过长已截断（窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件...]'
+      + tail;
+    if (estTokens(next) >= bt) return false; // 无进展即退出（防截断标记开销形成死点）
     this.messages[bi] = {
       ...this.messages[bi],
-      content: content.slice(0, headChars)
-        + '\n[...工具输出过长已截断（窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件...]'
-        + (tailChars > 0 ? content.slice(-tailChars) : ''),
+      content: next,
     };
     return true;
   }
@@ -404,26 +451,41 @@ export class VerifyCritiqueLoop {
 
   /**
    * 0.8 P2：工具结果回灌 messages 栈（chat 通道）。结果按 '\n---\n' 分段数
-   * 与调用数匹配时逐 call 切分；否则整段回灌每个 tool 消息（配对完整优先）。
-   * C1（0.8.2 审查）：per-message 封顶——read_file 上限 20K 字符/次，两个大
-   * 结果 ≈ 2×13K tokens 即破 32K 窗口；工具消息超 20% 窗口预算时保留头 60% +
-   * 尾 25%，中段换显式标记（对齐文本路径 capStepPart 语义）。
+   * 与调用数匹配时逐 call 切分；不匹配时【P2 修复】前 N-1 条放有界预览
+   * （首 800 字符 + 说明标记），完整结果只落最后一条（仍受单条封顶）——
+   * 旧实现把整段 resultText 复制进每条 tool 消息，多调用大结果膨胀 N×20% 窗口。
+   * C1（0.8.2 审查）：per-message 封顶——read_file 上限 20% 窗口预算，
+   * 超限保留头 60% + 尾 25%，中段换显式标记（对齐文本路径 capStepPart 语义）。
+   * 所有截断经 safeSlice（码点对齐，不产孤立代理项）。
    */
   private pushToolMessages(toolCalls: ToolCall[], wireCalls: unknown[] | null, resultText: string): void {
-    const segments = String(resultText ?? '').split('\n---\n');
+    const text = String(resultText ?? '');
+    const segments = text.split('\n---\n');
     const perCall = segments.length === toolCalls.length ? segments : null;
     const budgetChars = this.windowTokens && this.windowTokens > 0
       ? this.windowTokens * 4 * 0.2
       : 0;
+    // 分段数与调用数不匹配（含引擎附加提示段等）：无法可靠按调用归位。
+    const mismatch = !perCall && toolCalls.length > 1;
+    const MISMATCH_PREVIEW_CHARS = 800;
+    const MISMATCH_NOTE = '\n[...多调用结果无法按调用切分，本条仅为首段预览；完整结果见本步最后一条工具消息...]';
     toolCalls.forEach((c, i) => {
       const wireId = wireCalls ? (wireCalls[i] as any)?.id : undefined;
-      let content = perCall ? perCall[i] : (resultText || '');
+      let content: string;
+      if (perCall) {
+        content = perCall[i];
+      } else if (!mismatch || i === toolCalls.length - 1) {
+        // 单调用（分段天然不匹配不切分）或最后一条：完整结果（仍受单条封顶）
+        content = text;
+      } else {
+        content = safeSlice(text, 0, MISMATCH_PREVIEW_CHARS) + MISMATCH_NOTE;
+      }
       if (budgetChars > 0 && content.length > budgetChars) {
         const headChars = Math.floor(budgetChars * 0.6);
         const tailChars = Math.floor(budgetChars * 0.25);
-        content = content.slice(0, headChars)
+        content = safeSlice(content, 0, headChars)
           + '\n[...工具输出过长已截断（单条窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件（输出中会给出 offset 续读位置）。]'
-          + (tailChars > 0 ? content.slice(-tailChars) : '');
+          + (tailChars > 0 ? safeSlice(content, -tailChars) : '');
       }
       this.messages.push({
         role: 'tool',
@@ -731,12 +793,12 @@ export class VerifyCritiqueLoop {
       // 展示与历史回灌前必须剥掉推理原文，否则用户整段看到模型内心独白。
       rawContent = StructuredReasoner.stripThinkTags(rawContent);
 
-      // 解析工具调用（严格结构化模式走 StrictStructuredToolAdapter）
+      // 解析工具调用：恒走三路自适应（JSON/文本/XML 容错探测）——
+      // StrictStructuredToolAdapter 的 <> 严格独占解析路径已归档，
+      // strictStructured 仅影响 XML 探测深度，不再独占解析路径。
       let toolCalls: ToolCall[] = preParsedToolCalls ?? [];
 
       if (toolCalls.length === 0) {
-        // 三路自适应解析（OpenAI JSON / 文本 / <> XML），恒容错；
-        // strictStructured 仅影响 XML 探测深度，不再独占解析路径。
         const res = this.universalAdapter.parse(rawContent, {
           strictStructured: this.strictStructured,
           tolerant: true,
@@ -793,8 +855,6 @@ export class VerifyCritiqueLoop {
 
       // === 多任务风格纪律规则实时跟踪 ===
       // 高纪律模式下执行更严格的跟踪；实用模式下也做轻量统计以便提示
-      // 注意：verificationResult 在此处尚未声明，必须使用局部占位以避免 TDZ 崩溃
-      const pendingVerificationResult = ''; // 本步执行前的验证结果占位（执行后会被覆盖）
       if (highRigor || true) {  // 始终统计，提示和打分会按模式使用
         for (const call of toolCalls) {
           const name = (call.toolName || '').toLowerCase();
@@ -821,8 +881,9 @@ export class VerifyCritiqueLoop {
           if (cat === 'terminal') {
             this.terminalCommandsExecuted++;
             // 简单启发：如果当前调用本身看起来像 check 类命令，则不算违规
+            //（检查对象是调用原文；尾部空格维持旧占位拼接的匹配语义）
             const looksLikeCheck = /check|stat|verify|cat |ls |echo |head |tail |grep |ps |netstat|ss |df |du |exit code|stdout/i.test(
-              (call.rawBlock || '') + ' ' + (pendingVerificationResult || '')
+              (call.rawBlock || '') + ' '
             );
             if (!looksLikeCheck && this.stepsSinceLastRealVerification >= 1) {
               this.terminalNoCheckViolations++;
@@ -973,15 +1034,15 @@ export class VerifyCritiqueLoop {
       // 接口契约 v3.1：PASS 降级为 evidence——记录信号并计入 trajectory.success
       // （run() 末尾统一计算），但不再直接终止循环；终止由 end_turn /
       // consecutive-failures / max-steps 决定。
-      if (signal === 'PASS' || verificationResult.includes('ALL_TESTS_PASSED')) {
+      if (signal === 'PASS' || this.isPassTail(verificationResult)) {
         this.hasPerformedRealVerification = true;
       }
 
       // critique 文本单独不能终止任务（#2：critique 已摘除，本判定为休眠保留——
       // LoopStep.critique 恒 undefined，条件永假）
       if (critique && /任务已解决|已修复|问题已解决|完全正确|验证通过/i.test(critique)) {
-        // 必须本步有真实验证（PASS 信号或 ALL_TESTS_PASSED）才允许终止
-        if (signal === 'PASS' || verificationResult.includes('ALL_TESTS_PASSED') || didRealVerificationThisStep) {
+        // 必须本步有真实验证（PASS 信号或 ALL_TESTS_PASSED 尾标）才允许终止
+        if (signal === 'PASS' || this.isPassTail(verificationResult) || didRealVerificationThisStep) {
           done = true;
         }
       }
@@ -995,7 +1056,7 @@ export class VerifyCritiqueLoop {
     if (!stopReason) stopReason = 'max-steps';
     if (stopReason === 'no-verification' || stopReason === 'answered') {
       const hasPass = this.steps.some(
-        s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
+        s => s.verificationSignal === 'PASS' || this.isPassTail(s.verificationResult)
       );
       if (hasPass) stopReason = 'completed';
     }
@@ -1004,7 +1065,7 @@ export class VerifyCritiqueLoop {
     // RefinedMemoryStore.refine 的任务落定提炼——见 MEMORY-DESIGN §7.1）
 
     const success = this.steps.some(
-      s => s.verificationSignal === 'PASS' || s.verificationResult.includes('ALL_TESTS_PASSED')
+      s => s.verificationSignal === 'PASS' || this.isPassTail(s.verificationResult)
     ) || stopReason === 'answered';
     // aborted 时携带本步已流出正文，供宿主落 turn（partialText）
     return { success, steps: this.steps, stopReason, partialText, contextOverflowCompacted: this.overflowRetryUsed };
@@ -1023,6 +1084,19 @@ export class VerifyCritiqueLoop {
     return this.extractUserText(rawContent).length > 0;
   }
 
+  /**
+   * PASS 类尾标的分段尾锚定判定（classifySignal 与 run() 终局统计共用）：
+   * 任一 '\n---\n' 分段以一行 ALL_TESTS_PASSED（容忍 VERIFICATION: 前缀与
+   * 尾随空白）或 VERIFICATION: PASS 结束才算——【P2 修复】旧的全文
+   * includes('ALL_TESTS_PASSED') 读到含该字面量的文件正文即假"验证通过"。
+   */
+  private isPassTail(result: string): boolean {
+    const segments = String(result ?? '').split('\n---\n');
+    return segments.some((s) =>
+      /(?:^|\n)[ \t]*(?:VERIFICATION:[ \t]*)?ALL_TESTS_PASSED\s*$/.test(s)
+      || /(?:^|\n)VERIFICATION: PASS\s*$/.test(s));
+  }
+
   private classifySignal(result: string): VerificationSignal {
     // 真实引擎成功信号入册。
     // 顺序契约：
@@ -1038,7 +1112,7 @@ export class VerifyCritiqueLoop {
     // 多调用步骤一成一败仍判 PASS：PASS 段存在即过（可接受粒度，测试已注明）。
     const segments = result.split('\n---\n');
     const segEndsWith = (re: RegExp) => segments.some((s) => re.test(s));
-    if (result.includes('ALL_TESTS_PASSED') || segEndsWith(/\nVERIFICATION: PASS\s*$/)) return 'PASS';
+    if (this.isPassTail(result)) return 'PASS';
     if (segEndsWith(/\nVERIFICATION: APPLIED\s*$/) || segEndsWith(/\nVERIFICATION: NEUTRAL\s*$/) || result.includes('PARTIAL')) return 'PARTIAL';
     if (result.includes('FAIL') || result.includes('ERROR')) return 'FAIL';
     if (/\nEXIT_CODE:0\s*$/.test(result)) return 'PASS';
@@ -1067,25 +1141,25 @@ export class VerifyCritiqueLoop {
         const iron = flags.length ? flags.join('+') : (isPractical ? '' : 'ok');
 
         // 保留 plan / verify 的核心结构（不被激进截断）
-        const plan = (s.reasoning.plan || '').slice(0, planLimit);
-        const verify = (s.reasoning.verify || '').slice(0, planLimit);
+        const plan = safeSlice(s.reasoning.plan || '', 0, planLimit);
+        const verify = safeSlice(s.reasoning.verify || '', 0, planLimit);
         const fullResult = s.verificationResult || '';
         let resultText = fullResult;
         let resultTruncated = false;
         if (fullResult.length > RESULT_LIMIT) {
           const trimmed = fullResult.length - RESULT_HEAD - RESULT_TAIL;
-          resultText = fullResult.slice(0, RESULT_HEAD)
+          resultText = safeSlice(fullResult, 0, RESULT_HEAD)
             + `\n[...已修剪 ${trimmed} 字符...]`
-            + (RESULT_TAIL > 0 ? fullResult.slice(-RESULT_TAIL) : '');
+            + (RESULT_TAIL > 0 ? safeSlice(fullResult, -RESULT_TAIL) : '');
           resultTruncated = true;
         }
         // 截断结果必须告知模型——且明确保留了头尾，模型可据此判断是否需要重读。
         const resultNote = resultTruncated
           ? `\n[⚠ 上一轮结果过长已修剪中段（保留头 ${RESULT_HEAD} + 尾 ${RESULT_TAIL} 字符）。若需要完整内容（尤其 read_file 输出），请用 read_file 重新读取目标文件（输出中会给出 offset 续读位置）。]`
           : '';
-        const thinking = (s.reasoning.thinking || '').slice(0, thinkLimit);
+        const thinking = safeSlice(s.reasoning.thinking || '', 0, thinkLimit);
         const critique = s.critique
-          ? s.critique.slice(0, critiqueLimit)
+          ? safeSlice(s.critique, 0, critiqueLimit)
           : 'N/A';
 
         // 包含完整的结构化块（plan + verify + result）便于长链推理
@@ -1150,9 +1224,9 @@ Critique: ${critique}`;
     if (part.length <= perStep) return part;
     const headChars = Math.floor(perStep * 0.6);
     const tailChars = Math.floor(perStep * 0.25);
-    return part.slice(0, headChars)
+    return safeSlice(part, 0, headChars)
       + '\n[...本步内容过长已截断（单步窗口预算）；如需完整输出（尤其 read_file 结果），请重新读取目标文件...]'
-      + (tailChars > 0 ? part.slice(-tailChars) : '');
+      + (tailChars > 0 ? safeSlice(part, -tailChars) : '');
   }
 
   /**

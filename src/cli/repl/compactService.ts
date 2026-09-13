@@ -14,9 +14,9 @@
 
 import type { Session } from './Session.js';
 import type { Turn } from './types.js';
-import { getStrategy, turnBrief } from './compactStrategies.js';
+import { getStrategy, turnBrief, NESTED_SUMMARY_MAX_CHARS } from './compactStrategies.js';
 import { appendCompactMarker } from './rolloutStore.js';
-import { estTokens } from './tokenEstimate.js';
+import { estTokens, safeSlice } from './tokenEstimate.js';
 import { RefinedMemoryStore } from '../../memory/RefinedMemoryStore.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -113,8 +113,8 @@ function buildSummaryPrompt(removed: Turn[]): string {
 
 /** B2：fallback 摘要总长封顶——嵌套压缩不治理时摘要代代膨胀，可自身超窗。 */
 const FALLBACK_SUMMARY_MAX_CHARS = 24000;
-/** 被移除的上一代 [COMPACT] 合成轮，其旧摘要全文内联的上限（滚雪球治理）。 */
-const NESTED_SUMMARY_MAX_CHARS = 400;
+// 被移除的上一代 [COMPACT] 合成轮的旧摘要内联上限（滚雪球治理）——
+// 常量与截断标记统一收口到 compactStrategies（turnFullBrief 同款封顶）。
 
 function fallbackSummary(removed: Turn[]): string {
   // Deterministic offline summary (also used when the model call fails):
@@ -126,14 +126,14 @@ function fallbackSummary(removed: Turn[]): string {
     if (String(t.userInput || '').startsWith('[COMPACT]') && String(t.result?.summary || '').length > NESTED_SUMMARY_MAX_CHARS) {
       brief = turnBrief({
         ...t,
-        result: { ...(t.result || {}), summary: String(t.result?.summary || '').slice(0, NESTED_SUMMARY_MAX_CHARS) + '…[上一代摘要已截断]' },
+        result: { ...(t.result || {}), summary: safeSlice(String(t.result?.summary || ''), 0, NESTED_SUMMARY_MAX_CHARS) + '…[上一代摘要已截断]' },
       } as Turn);
     }
     return `- ${brief}`;
   });
   let out = `[COMPACT 历史摘要 · ${removed.length} 轮]\n` + lines.join('\n');
   if (out.length > FALLBACK_SUMMARY_MAX_CHARS) {
-    out = out.slice(0, FALLBACK_SUMMARY_MAX_CHARS) + '\n…[摘要超长已截断]';
+    out = safeSlice(out, 0, FALLBACK_SUMMARY_MAX_CHARS) + '\n…[摘要超长已截断]';
   }
   return out;
 }
@@ -317,11 +317,15 @@ export function startBackgroundCompact(
   (async () => {
     try {
       if (cancelled) return;
-      result = await computeCompactResult(session, client);
+      const computed = await computeCompactResult(session, client);
+      // 落定后复查 cancelled（P2 竞态修复：cancel 发生在 compute 进行中时，
+      // 旧实现 finally 无条件 ready=true → 任务边界处 apply 一份已取消的僵尸结果）。
+      if (cancelled) return;
+      result = computed;
     } catch {
-      result = buildFallbackCompactResult(session);
+      if (!cancelled) result = buildFallbackCompactResult(session);
     } finally {
-      ready = true;
+      if (!cancelled) ready = true;
       // remove from inFlight lazily: keep guard until result consumed? The
       // spec says cancel() clears; a second trigger while ready-but-unapplied
       // should be allowed (nothing in flight anymore).
@@ -384,12 +388,16 @@ export function applyCompactResult(session: Session, res: CompactResult, windowT
   // B4：kept 字节感知收缩——KEEP_RECENT 按条数保留，巨轮（大文件读写结果
   // 落在 result.summary/answerText）可让压缩后仍逼近窗口。提供 windowTokens
   // 时从最旧 kept 继续收缩（下限 2 轮），直到估算 ≤60% 窗口。
+  // 【P2 账本修复】被 shift 掉的 kept 轮 id 一并写入 covered——否则 marker
+  // 只写快照 coveredTurnIds，resume 重放（按 coveredIds 保留其余）会复活
+  // 被收缩轮次。
   let shrunk = 0;
   if (windowTokens && windowTokens > 0 && remaining.length > 2) {
     const capTokens = windowTokens * 0.6;
     while (remaining.length > 2
       && estimateSessionTokens({ turns: [synthetic, ...remaining] } as Session) > capTokens) {
-      remaining.shift();
+      const dropped = remaining.shift()!;
+      covered.add(dropped.id);
       shrunk++;
     }
   }
@@ -398,7 +406,8 @@ export function applyCompactResult(session: Session, res: CompactResult, windowT
   // afterTokens 用一次性快照视图估算（不触碰活体 session）。
   const estView = { turns: [synthetic, ...remaining] } as Session;
   const afterTokens = estimateSessionTokens(estView);
-  const markerWritten = appendCompactMarker(session.id, synthetic, [...covered], res.beforeTokens, afterTokens);
+  const effectiveCovered = [...covered];
+  const markerWritten = appendCompactMarker(session.id, synthetic, effectiveCovered, res.beforeTokens, afterTokens);
   if (!markerWritten) {
     return {
       ...res,
@@ -429,6 +438,8 @@ export function applyCompactResult(session: Session, res: CompactResult, windowT
   return {
     ...res,
     kept: remaining.length,
+    // 账本口径回传：含 B4 收缩丢弃的 kept 轮（与磁盘 marker 一致）
+    coveredTurnIds: effectiveCovered,
     afterTokens,
     message: `✓ 已压缩 ${res.removed} 轮历史（${res.summarySource === 'model' ? '模型摘要' : '确定性摘要兜底'}）；估算上下文 ${res.beforeTokens} → ${afterTokens} tokens`
       + (shrunk > 0 ? `；kept 超预算已再收缩 ${shrunk} 轮（下限 2）` : '')

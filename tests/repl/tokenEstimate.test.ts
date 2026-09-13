@@ -4,7 +4,7 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { estTokens, resolveWindowTokens } from '../../src/cli/repl/tokenEstimate.js';
+import { estTokens, resolveWindowTokens, safeSlice } from '../../src/cli/repl/tokenEstimate.js';
 
 describe('A1 tokenEstimate: estTokens（CJK-aware）', () => {
   it('纯 ASCII ≈ 4 字符/token', () => {
@@ -26,6 +26,86 @@ describe('A1 tokenEstimate: estTokens（CJK-aware）', () => {
   it('null/undefined 容错', () => {
     assert.equal(estTokens(null as any), 0);
     assert.equal(estTokens(undefined as any), 0);
+  });
+});
+
+// ==================== 包B：CJK 判定范围扩展（旧实现只认 0x4e00-0x9fff） ====================
+describe('包B estTokens CJK 范围扩展', () => {
+  it('扩展A / 假名 / 谚文 / 兼容表意 / 中文标点 / 全角 均按 1.5 token/字符', () => {
+    assert.equal(estTokens('\u3400'.repeat(100)), 150, '扩展A 0x3400-0x4DBF');
+    assert.equal(estTokens('\u3042'.repeat(100)), 150, '假名 0x3040-0x30FF');
+    assert.equal(estTokens('\uAC00'.repeat(100)), 150, '谚文 0xAC00-0xD7AF');
+    assert.equal(estTokens('\uF900'.repeat(100)), 150, '兼容表意 0xF900-0xFAFF');
+    assert.equal(estTokens('\u3002'.repeat(100)), 150, '中文标点 0x3000-0x303F');
+    assert.equal(estTokens('\uFF0C'.repeat(100)), 150, '全角标点 0xFF00-0xFFEF');
+    assert.equal(estTokens('\uFF6A'.repeat(100)), 150, '半角片假名 0xFF66-0xFF9F');
+  });
+
+  it('锚点回归：纯 CJK 100 字 = 150 tokens、ascii 400 = 100 tokens 不变', () => {
+    assert.equal(estTokens('中'.repeat(100)), 150);
+    assert.equal(estTokens('a'.repeat(400)), 100);
+    assert.equal(estTokens('abc中文'), 4);
+  });
+
+  it('emoji（星外平面码点）按非 CJK 计（1 码点 ≈ 0.25）', () => {
+    assert.equal(estTokens('👍'), 1);
+  });
+});
+
+// ==================== 包B：safeSlice 码点对齐截断（不产孤立代理项） ====================
+describe('safeSlice：码点对齐截断', () => {
+  const text = 'a👍b🇨🇳c中d𝕏e'; // BMP + 代理对混合
+  const hasOrphanSurrogate = (s: string): boolean => {
+    for (let i = 0; i < s.length; i++) {
+      const u = s.charCodeAt(i);
+      if (u >= 0xd800 && u <= 0xdbff) {
+        const n = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+        if (!(n >= 0xdc00 && n <= 0xdfff)) return true;
+      } else if (u >= 0xdc00 && u <= 0xdfff) {
+        const p = i > 0 ? s.charCodeAt(i - 1) : 0;
+        if (!(p >= 0xd800 && p <= 0xdbff)) return true;
+      }
+    }
+    return false;
+  };
+
+  it('任意 start/end 组合截断均无孤立代理项；与 String.slice 在合法边界上逐字节一致', () => {
+    for (let start = 0; start <= text.length; start++) {
+      for (let end = start; end <= text.length; end++) {
+        const s = safeSlice(text, start, end);
+        assert.equal(hasOrphanSurrogate(s), false, `safeSlice(${start},${end}) 产生孤立代理项`);
+        if (!hasOrphanSurrogate(text.slice(start, end))) {
+          assert.equal(s, text.slice(start, end), `safeSlice(${start},${end}) 偏离 slice 语义`);
+        }
+      }
+    }
+  });
+
+  it('边界落在代理对中间：成对回退，不切一半', () => {
+    const t = 'x👍y';
+    assert.equal(safeSlice(t, 0, 2), 'x', 'end 切在代理对中间 → 回退一位，不含孤立高位代理项');
+    assert.equal(safeSlice(t, 2), 'y', 'start 切在代理对中间 → 跳过孤立低位代理项');
+    assert.equal(safeSlice(t, 1, 3), '👍', '完整代理对保留');
+  });
+
+  it('负索引/越界/退化容错（对齐 String.slice 语义）', () => {
+    assert.equal(safeSlice('hello', -3), 'llo');
+    assert.equal(safeSlice('hello', 1, -1), 'ell');
+    assert.equal(safeSlice('hello', 3, 2), '');
+    assert.equal(safeSlice('hello', 99, 100), '');
+    assert.equal(safeSlice('hello', 0), 'hello');
+    assert.equal(safeSlice(null as any, 0, 2), '');
+    assert.equal(safeSlice(undefined as any, -2), '');
+  });
+
+  it('码点前缀性质：head 截断恰为前 k 个完整码点（k 最大且码元长度 ≤ end）', () => {
+    const cps = [...text];
+    const prefixLen = (k: number) => cps.slice(0, k).reduce((n, c) => n + c.length, 0);
+    for (let end = 0; end <= text.length; end++) {
+      let k = 0;
+      while (k < cps.length && prefixLen(k + 1) <= end) k++;
+      assert.equal(safeSlice(text, 0, end), cps.slice(0, k).join(''), `end=${end}`);
+    }
   });
 });
 

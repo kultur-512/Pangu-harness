@@ -14,6 +14,8 @@
 // 本闸按"同参数同工具"签名细计数，阻断发生在 before_call（执行前），而非事后掐。
 
 import type { ToolCall } from '../types/toolCall.js';
+import { normalizeToolName } from '../tools/executor.js';
+import { WRITE_TOOLS } from '../tools/approval.js';
 
 /** before_call 判定：blocked=false 放行；blocked=true 时本步不执行工具。 */
 export interface GuardrailDecision {
@@ -52,6 +54,21 @@ export function toolCallSignature(call: ToolCall): string {
 /** 失败降级推断（调用方未显式传 failed 时用）：结果串含 FAIL/ERROR 即失败。 */
 function looksLikeFailure(result: string): boolean {
   return result.includes('FAIL') || result.includes('ERROR');
+}
+
+/**
+ * 只读拒绝尾标（engineAdapter 契约）：聚合文本中对每个 gate readonly 拒绝的
+ * 调用，在其结果段落【末尾】追加一行 `[TOOL_DENIED_READONLY <toolName>]`。
+ * 判定用分段尾锚定（与 VerifyCritiqueLoop.classifySignal 的 segEndsWith 同一
+ * 分段方式，'\n---\n' 切段后逐段测尾标）——旧的整段 includes('DENIED_READONLY')
+ * 会把读到含该字面量的文件正文（如本仓库守卫源码自身）误计成只读拒绝。
+ */
+const DENIED_READONLY_TAIL_RE = /(?:^|\n)\[TOOL_DENIED_READONLY\s+\S+\]\s*$/;
+
+function reasonHasReadonlyDenialTail(reason: string): boolean {
+  return String(reason ?? '')
+    .split('\n---\n')
+    .some((seg) => DENIED_READONLY_TAIL_RE.test(seg));
 }
 
 export class ToolCallGuardrailController {
@@ -124,9 +141,13 @@ export class ToolCallGuardrailController {
       // 成功即打破连败：该签名 / 该工具计数归零。
       this.exactFailures.delete(key);
       this.toolFailures.delete(name);
-      // 只读拒绝快速通道：写工具执行成功（如用户已 /approvals default 放行）→
-      // 跨工具总计数归零（readonly 根因已解除）。
-      this.readonlyDenials.delete('__any_write__');
+      // 只读拒绝快速通道：仅【写工具】执行成功（如用户已 /approvals default
+      // 放行）才视为 readonly 根因解除、跨工具总计数归零。read/grep 成功不清
+      // 零——否则只读档下"写拒→读成功"交替会永久饿死阈值 2 的快速止损
+      // （对抗审查 P1-3，注释原称"写工具成功"但代码不查工具类型）。
+      if (WRITE_TOOLS.has(normalizeToolName(name))) {
+        this.readonlyDenials.delete('__any_write__');
+      }
     }
 
     // 幂等无进展跟踪：同签名同结果（截断预览）重复计数；结果变化即重置。
@@ -143,9 +164,9 @@ export class ToolCallGuardrailController {
 
   /**
    * 只读拒绝快速通道（0.8.1 UX）：execute 返回 DENIED_READONLY 结果时按工具逐
-   * call 调用。reason 含 DENIED_READONLY → 连续计数 +1；否则（拒绝性质变化）
-   * 该工具计数归零。达阈值后 beforeCall 直接阻断——readonly 语义确定，同参数
-   * 重试无意义，比一般失败硬闸（5/8）更早止损。
+   * call 调用。reason 的分段【尾部】含 `[TOOL_DENIED_READONLY <tool>]` 标记行 →
+   * 连续计数 +1；否则（拒绝性质变化）该工具计数归零。达阈值后 beforeCall 直接
+   * 阻断——readonly 语义确定，同参数重试无意义，比一般失败硬闸（5/8）更早止损。
    */
   recordDenied(tool: string, reason: string): void {
     const name = String(tool ?? '').trim();
@@ -154,7 +175,7 @@ export class ToolCallGuardrailController {
     // 此前按工具名分桶，write_file 1 次 + edit_file 1 次 = 各 1，阈值 2 永不
     // 触发，模型在只读档位死磕到步数耗尽。readonly 场景任何写类拒绝都是同一
     // 根因（档位），总计数 2 即阻断并指引用户。
-    if (String(reason ?? '').includes('DENIED_READONLY')) {
+    if (reasonHasReadonlyDenialTail(reason)) {
       this.readonlyDenials.set('__any_write__', (this.readonlyDenials.get('__any_write__') ?? 0) + 1);
     } else {
       this.readonlyDenials.delete('__any_write__');
