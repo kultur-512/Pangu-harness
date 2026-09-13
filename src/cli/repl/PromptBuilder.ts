@@ -6,11 +6,25 @@ import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierConfig.js';
 import type { TaskIntent } from '../taskIntent.js';
-import { estTokens } from './tokenEstimate.js';
+import { estTokens, resolveWindowTokens } from './tokenEstimate.js';
 
 // estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
 // 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
 export { estTokens };
+
+/**
+ * G6：句边界截断——预算内截到最后一个句末标点（句号/问号/叹号/省略号）；
+ * 找不到足够长的句边界才硬切。修复：旧 slice(0,117) 会把卡的后半段答案剪掉
+ * （实测 18.5% 的可播种句超 120 字符，LongMemEval 恰是"答案就在某句里"）。
+ */
+export function truncateAtSentence(text: string, budget: number): string {
+  const t = String(text ?? '');
+  if (t.length <= budget) return t;
+  const head = t.slice(0, budget + 3);
+  const m = head.match(/[\s\S]*[。．！？!?]/);
+  const cut = m && m[0].length >= Math.floor(budget * 0.5) ? m[0] : t.slice(0, budget);
+  return cut.trimEnd() + '...';
+}
 
 // ==================== L0 硬约束（≤3 条，非整段注入） ====================
 export const L0_INVARIANTS: string[] = [
@@ -497,7 +511,15 @@ export class PromptBuilder {
       const synthetic = this.session.turns.find((t) => String(t.userInput || '').startsWith('[COMPACT]'));
       if (synthetic && synthetic.result?.summary) {
         const summary = String(synthetic.result.summary);
-        const capped = summary.length > 1500 ? summary.slice(0, 1500) + '…[摘要已截断]' : summary;
+        // C3（0.8.2 审查）：注入 cap 从固定 1500 字符改窗口比例预算
+        // min(6000 字符, 15% 窗口 tokens×4)——旧 cap ÷ 24 轮 ≈ 62 字符/轮，
+        // "逐字保留"的用户指令在注入面全灭（30 轮会话跨任务带宽仅窗口 4-8%）。
+        let budgetChars = 6000;
+        try {
+          const w = resolveWindowTokens((this.session as any).provider, this.session.model);
+          budgetChars = Math.min(6000, Math.floor(w * 0.15 * 4));
+        } catch {}
+        const capped = summary.length > budgetChars ? summary.slice(0, budgetChars) + '…[摘要已截断]' : summary;
         this.tryInject('compaction-note', [`\n【历史压缩摘要】`, capped], lines);
       } else if (this.session.turns.length > 12) {
         this.tryInject('compaction-note', `\n（历史较长：${this.session.turns.length} 轮，更早轮次未注入。如需把早期关键背景带进上下文，可用 /compact 生成压缩摘要。）`, lines);
@@ -524,7 +546,7 @@ export class PromptBuilder {
           const n0 = this.memoryNumberSeq;
           let accepted = 0;
           for (const c of overflow.pulled) {
-            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary}`;
+            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${truncateAtSentence(c.summary, 120)}`;
             const cost = estTokens(line);
             if (budget - cost < 0) break; // 超预算放弃（不降级不重试）
             lines2.push(line);
@@ -612,9 +634,12 @@ export class PromptBuilder {
         const n0 = this.memoryNumberSeq;
         const added = this.tryInject('memory-cards', [
           '\n【相关记忆】',
+          // G3 最小版：知识更新指令——冲突事实并存时以后注入者为准（配合
+          // 卡内日期前缀，1B 级模型也能据此选新弃旧；此前旧事实因插入序靠前
+          // 被优先采纳，knowledge-update 题全 0 的直接原因之一）。
+          '（规则：同一主题的事实以后面出现的卡为准；带 [S日期] 前缀的以日期较新者为准。）',
           ...cards.map((c, i) => {
-            const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
-            return `  - [M${n0 + i + 1}] ${label(c)} ${one}`;
+            return `  - [M${n0 + i + 1}] ${label(c)} ${truncateAtSentence(c.summary, 120)}`;
           }),
           ghost,
         ], lines);
@@ -627,7 +652,7 @@ export class PromptBuilder {
         const memStart = lines.findIndex((l) => l.includes('【相关记忆】'));
         if (memStart >= 0) {
           this.lastMemoryBlockText = lines.slice(memStart)
-            .filter((l) => l.includes('【相关记忆】') || l.startsWith('  - [M') || l.startsWith('（另有'))
+            .filter((l) => l.includes('【相关记忆】') || l.includes('（规则：') || l.startsWith('  - [M') || l.startsWith('（另有'))
             .join('\n');
         }
         return added;
@@ -670,7 +695,7 @@ export class PromptBuilder {
       if (cards.length > 0) {
         lines.push('\n【提炼后的教训（来自历史项目记忆）】');
         for (const c of cards) {
-          const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
+          const one = truncateAtSentence(c.summary, 120);
           lines.push(`  - [${c.category}] ${one}`);
         }
       }

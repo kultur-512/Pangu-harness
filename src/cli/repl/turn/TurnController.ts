@@ -321,6 +321,9 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
         approvalBridge,
         planMode: ctx.session.planMode,
         mcpTools: ctx.mcpToolsReady,
+        // C5：溢出 → 会话级应急压缩（交互主路径接线；防重入由 loop 的
+        // overflowNotified 每任务一次保证，压缩失败不阻断任务）。
+        onContextOverflow: () => runSyncCompact(ctx, '溢出应急压缩：'),
         onEvent: (ev: any) => {
           if (controller.signal.aborted) return;
 

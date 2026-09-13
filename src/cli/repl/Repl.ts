@@ -440,6 +440,17 @@ export class Repl {
       // loop 70% 窗口预算裁剪的依据（此前只有 server/headless 路径传入，
       // 交互模式长任务在溢出前没有任何主动裁剪）。
       windowTokens: resolveWindowTokens(provider, modelName),
+      // C5（0.8.2 审查）：溢出 → 宿主应急压缩接线——onContextOverflow 首次
+      // 触发时对会话跑一次同步压缩（loop 的 overflowNotified 保证每任务至多
+      // 一次；绕 0.85 阈值的 force 语义由 compactSession 的轮次门槛自然承担），
+      // 会话级自愈而非只靠 loop 内截断。best-effort：失败不阻断任务。
+      onContextOverflow: async () => {
+        try {
+          const { compactSession } = await import('./compactService.js');
+          const r = await compactSession(this.session, client);
+          if (r.ok) this.renderer.warn(`溢出应急压缩：${r.message}`);
+        } catch { /* 记忆/压缩失败不阻断任务 */ }
+      },
       // classic 路径与 SSE 主路径共享同一审批/中断语义。
       approvalMode: this.session.approvalMode,
       sessionAllowlist: this.session.sessionApprovalAllowlist,

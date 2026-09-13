@@ -91,6 +91,8 @@ export async function runAgentTask(
     approvalTimeoutMs?: number;
     planMode?: boolean;
     mcpTools?: any[];
+    /** 溢出回调透传（宿主注册会话级应急压缩；headless 缺省不注册）。 */
+    onContextOverflow?: (info: { error: unknown }) => void | Promise<void>;
   }
 ): Promise<RunResult> {
   const start = Date.now();
@@ -219,6 +221,8 @@ export async function runAgentTask(
       signal: ctx.signal,
       // 窗口预算挂真值（provider 真实窗口，unknown → 32768 保守值）
       windowTokens: resolveWindowTokens(ctx.provider ?? (session as any).provider, session.model),
+      // C5：溢出回调透传（宿主可注册会话级应急压缩；headless 无宿主时缺省）
+      onContextOverflow: (ctx as any).onContextOverflow,
       onStep: (event: any) => {
         if (ctx.signal?.aborted) return;
         ctx.onEvent(event);

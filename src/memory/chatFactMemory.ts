@@ -25,9 +25,8 @@ const MAX_TOTAL_CARDS = 80;
  * 句级拆卡（0.8.2 第二轮修正）：18 题 B 档错题归因——15 错中 11 错是
  * "gold 不在截断后的卡里"（整轮截 120/240 字符的摘要形态覆盖率不足，
  * 事实藏在对话任意位置）。改为按句拆分：含数字/专名的句子独立成卡
- * （事实粒度 = 句，检索关键词更精准），确定性规则、零 LLM。 */
-const SENTENCE_HAS_FACT = (x: string): boolean =>
-  /\d/.test(x) || /[A-Z][a-z]+/i.test(x) === false && /[A-Z]/.test(x) || /\d|n|\$/.test(x) || false;
+ * （事实粒度 = 句，检索关键词更精准），确定性规则、零 LLM。
+ */
 const isFactSentence = (x: string): boolean => {
   const t = x.trim();
   if (t.length < 12 || t.length > 240) return false;
@@ -189,7 +188,9 @@ export async function recordConversationTurn(
     const turnTag = new Date(now).toISOString().slice(0, 16).replace('T', ' ');
     const candidates: string[] = [];
     for (const [src, text] of [['用户', input], ['助手', reply]] as const) {
-      const sentences = text.match(/[^.!?\n]*[.!?]+|[^.!?\n]+$/g) ?? [];
+      // G1 死代码修复：改走 splitSentences（先按行、再按句、>240 硬切）——
+      // 内联正则按 \n 断句，无句号结尾的多行长轮整段丢失（审查实证）。
+      const sentences = splitSentences(text);
       let picked = 0;
       for (const raw of sentences) {
         if (picked >= MAX_CARDS_PER_TURN) break;

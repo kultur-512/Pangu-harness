@@ -52,7 +52,14 @@ const DEFAULT_STRATEGY: CompactStrategy = {
   buildPrompt: (removed, opts) => {
     const lines = removed.map((t, i) => `${i + 1}. ${turnFullBrief(t)}`);
     return [
-      opts?.instruction ?? '请把以下历史任务轮次压缩成一段不超过 300 字的摘要，保留：每项任务的核心诉求、关键结果与得分、重要教训（失败原因/约束）。',
+      // C3（0.8.2 审查）：删"不超过 300 字"总额约束——它与 VERBATIM_RULE 的
+      // 逐字保留数学上互斥（多条被移除轮时不可能同时满足），模型要么违反
+      // 字数（摘要过长 → 注入端截断）要么丢指令。改为两段式结构化输出。
+      opts?.instruction ?? [
+        '请把以下历史任务轮次压缩为两段：',
+        '【第一段·用户指令清单】逐条列出每轮 [ ] 内的用户指令原文（不改写、不省略、不合并）；',
+        '【第二段·要点】结果、得分与重要教训（失败原因/约束）可自由压缩。',
+      ].join('\n'),
       VERBATIM_RULE,
       '只输出摘要正文，不要寒暄。',
       '---',
