@@ -196,3 +196,76 @@ export interface EmbeddingCache {
 export function createDefaultProvider(buckets?: number): EmbeddingProvider {
   return new LocalNGramHashProvider(buckets);
 }
+
+// ===== 7. 进程级向量缓存 + 增量批量接口（B4 · 2026-09-13 混合检索配套） =====
+
+import { createHash } from 'node:crypto';
+
+/** 可嵌入卡最小形状（RefinedMemoryStore 的候选卡投影）。 */
+export interface EmbeddableCard {
+  id: string;
+  summary: string;
+}
+
+interface CardVectorEntry {
+  /** sha1(summary)——摘要变才重嵌 */
+  hash: string;
+  vec: DenseVector;
+}
+
+/** 进程级向量缓存：key = cardId。跨回合复用（嵌入 200 卡重算仅 ~10ms，
+ *  但增量命中后接近 0）；纯内存不写盘。 */
+const cardVectorCache = new Map<string, CardVectorEntry>();
+
+const sha1Hex = (s: string): string => createHash('sha1').update(s).digest('hex');
+
+function toSyncVector(v: DenseVector | Promise<DenseVector>): DenseVector {
+  // v0 provider 全部同步。Promise 形态（未来远端 provider）无法被同步混合排序
+  // 消费——此处显式抛错，由调用方（RefinedMemoryStore 混合排序）的 try/catch
+  // 降级到纯词面排序兜底。
+  if (v && typeof (v as Promise<DenseVector>).then === 'function') {
+    throw new Error('[embed] async provider is not supported by the synchronous hybrid ranking path');
+  }
+  return v as DenseVector;
+}
+
+/**
+ * 增量批量嵌入（B4）：key=cardId，hash=sha1(summary)，hash 变才重嵌。
+ * 返回 Map<cardId, 向量>（与入参卡一一对应，未知/缺 id 的卡跳过）。
+ */
+export function embedCards(
+  cards: readonly EmbeddableCard[],
+  provider: EmbeddingProvider = createDefaultProvider(),
+): Map<string, DenseVector> {
+  const out = new Map<string, DenseVector>();
+  for (const c of cards ?? []) {
+    const id = String(c?.id ?? '');
+    if (!id) continue;
+    const text = String(c?.summary ?? '');
+    const hash = sha1Hex(text);
+    const hit = cardVectorCache.get(id);
+    if (hit && hit.hash === hash) {
+      out.set(id, hit.vec);
+      continue;
+    }
+    const vec = toSyncVector(provider.embed(text));
+    cardVectorCache.set(id, { hash, vec });
+    out.set(id, vec);
+  }
+  return out;
+}
+
+/** 查询向量（即时嵌入，不入卡缓存——查询文本几乎不重复）。 */
+export function embedQuery(text: string, provider: EmbeddingProvider = createDefaultProvider()): DenseVector {
+  return toSyncVector(provider.embed(String(text ?? '')));
+}
+
+/** 当前缓存条目数（测试/调试可见性）。 */
+export function embedCacheSize(): number {
+  return cardVectorCache.size;
+}
+
+/** 清空向量缓存（测试隔离用）。 */
+export function resetEmbedCacheForTest(): void {
+  cardVectorCache.clear();
+}

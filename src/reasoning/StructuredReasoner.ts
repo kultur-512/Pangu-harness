@@ -6,6 +6,7 @@
 // 自我批评保持建设性，避免过度苛责和无谓消耗。
 
 import { BenchmarkProfiles, BenchmarkType, BenchmarkProfile } from '../benchmarks/BenchmarkProfiles.js';
+import { resolveToday } from '../memory/timeAnchor.js';
 
 export interface ReasoningStep {
   type: 'thinking' | 'plan' | 'verify' | 'critique' | 'risk' | 'action' | 'format_check';
@@ -380,6 +381,7 @@ ${issue}`;
 - 不要以"工程助手"自居设限，不要拒绝或贬低非工程话题，不要把话题拉回软件开发
 - 不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签
 - 简洁自然：用户在终端环境，偏好直接的内容；不复述身份、档位、工作目录等系统信息
+- 今天是 ${resolveToday()}。涉及"多久之前/多少周/几天前"的问题，用今天减去记忆卡中标注的事实日期计算。
 - 不知道就如实说不知道，不编造事实、数据与年代
 - 用中文回答（除非用户使用其他语言）
 - 助手人格是本交互界面的一部分，无需向用户声明或讨论底层模型与供应商信息`;

@@ -62,17 +62,36 @@ function buildPrompt({ qid, question, mode }) {
   return [SYS, '', '## Long-term memory', mem, '## /Long-term memory', '', '## Question', question, '', 'Answer:'].join('\n');
 }
 
-/** ZL-compact 播种：产品 recordFactLines 同源落卡（tsx loader 必需）。 */
+/** ZL-compact 播种：产品 recordFactLines 同源落卡（tsx loader 必需）。
+ *  0.8.3 时间锚定：按 Session 块分组播种——从 `## Session N (..., DATE ...)`
+ *  行提取各会话日期，播种行加 `【S·yyyy-MM-dd】` 前缀（C4 档 cell-zl-compact
+ *  的 [S日期] 时序锚点先例）。旧实现从全文一次性抽行，会话日期全部丢失。 */
+const SEED_TURN_RE = /^\*\*(User|Assistant)\*\*: /;
+const SEED_SESSION_RE = /^## Session \d+ \([^,]+,\s*(\d{4})\/(\d{2})\/(\d{2})/;
 async function seedCompact(qid, wsDir) {
   const { recordFactLines } = await import('../../../src/memory/chatFactMemory.js');
   const prev = process.env.PANSHA_MEMORY_FILE;
   process.env.PANSHA_MEMORY_FILE = 'memory.json';
   const hay = readHay(qid);
-  const lines = hay.split('\n')
-    .filter((l) => /^\*\*(User|Assistant)\*\*: /.test(l))
-    .map((l) => l.replace(/^\*\*(User|Assistant)\*\*: /, ''));
   const facts = [];
-  for (let i = 0; i < lines.length - 1; i += 2) facts.push(`Q: ${lines[i]}\nA: ${lines[i + 1]}`);
+  let date = '';
+  let pendingQ = null;
+  for (const line of hay.split(/\r?\n/)) {
+    const sm = line.match(SEED_SESSION_RE);
+    if (sm) {
+      date = `${sm[1]}-${sm[2]}-${sm[3]}`;
+      pendingQ = null; // 审查建议-5：跨会话悬空 User 行不得与下一会话首条 Assistant 配对
+      continue;
+    }
+    if (!SEED_TURN_RE.test(line)) continue;
+    const body = line.replace(SEED_TURN_RE, '');
+    if (line.startsWith('**User**: ')) {
+      pendingQ = body; // 待与下一个 Assistant 行配对
+    } else if (pendingQ !== null) {
+      facts.push(`【S·${date || 'unknown'}】Q: ${pendingQ}\nA: ${body}`);
+      pendingQ = null;
+    }
+  }
   const r = recordFactLines(wsDir, facts);
   if (prev === undefined) delete process.env.PANSHA_MEMORY_FILE;
   else process.env.PANSHA_MEMORY_FILE = prev;

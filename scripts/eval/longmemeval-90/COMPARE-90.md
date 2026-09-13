@@ -37,3 +37,26 @@ node --import tsx scripts/eval/longmemeval-90/run-product.mjs --label repaired  
 node --import tsx scripts/eval/longmemeval-90/run-cells.mjs --cell ZL-compact-90 # 其余五格
 node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repaired.jsonl ...
 ```
+
+---
+
+## 附录（2026-09-14）：0.8.4 记忆架构优化后的 optimized 轮
+
+三路架构探索（写路径/检索/时间性）→ 实现 → 子代理 review（3 必须返工 + 5 建议全部处置）→ 全量 1200 例绿 → 同 runner 重跑：
+
+| 轮 | strict | lenient | 关键变化 |
+|---|---|---|---|
+| baseline | 9/90 | 16/90 | 修复前代码 |
+| repaired | 13/90 | 18/90 | 对抗审查修缮批次 |
+| **optimized** | **15/90 (16.7%)** | 18/90 | 时间锚定 + 宽进严排 + 混合检索 + 窗口感知注入 |
+
+分题型（strict）：temporal-reasoning 0→**1**（产品管线首次得分，假日期污染根除 + "今天是 X"注入；lenient 1→4）；single-session-assistant 2→**4**；knowledge-update 4→**5**；single-session-user 5→3（±2 在 1B 单轮方差内）；multi-session 2（持平）。
+
+优化内容（架构级，非测试集定向）：
+1. **时间锚定**：sessionDate 参数贯通播种链，卡带 factDateText；【】前缀只带日期（根除评测回放把记录时间冒充事实时间的污染）；stable 段与 chat directive 注入"今天是 X"；悬空 [S日期] 规则替换为事实时间差值规则。
+2. **宽进严排**：对卡（Q/A 对）成为主落卡单元（无条件），isFactSentence 从硬门改 confidence 分类器（句级补充卡 ≥0.7 才发）；80 帽硬拒绝删除（新进旧出交存储层）；配对牵连修复；分句器缩写保护（Dr./e.g. 不再切碎）；confidence 软惩罚只进排序不进淘汰门（review 返工）。
+3. **混合检索**：embed.ts 4096 维 n-gram 语义接入 loadFiltered（两步归一防量纲压制；keywords<2 / 异常自动回纯词面；投影 key 含查询防串槽）。
+4. **窗口感知注入**：固定卡数帽改窗口比例预算（8K≈10%、大窗 15%、1600 token 帽）+ 渲染后实测 token 贪心门（对卡实际 122-470 token/张，纯张数帽超发 3-11 倍——review FAIL 实测后返工）；PANSHA_MEMORY_LIMIT 显式时行为不变。
+
+诚实备注：+2 strict 中 temporal/assistant/knowledge-update 的增益方向与机制证据一致，single-session-user 的 -2 属方差级波动；对卡写入使 A 侧保留了 smartSlice 数字句优先的 400 字符（渲染同源 400，review 返工对齐），注入 token 成本上升由预算门兜底。
+

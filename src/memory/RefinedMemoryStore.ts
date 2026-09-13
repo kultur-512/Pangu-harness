@@ -11,6 +11,11 @@ import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
 import { normalizeRelPath } from './trajectoryFiles.js';
 import { atomicWriteFileSync } from '../utils/atomicFile.js';
+// B3 混合排序的语义底座（embed.js 零依赖、零副作用）。申报：原设想"动态
+// import('./embed.js')"——但 loadFiltered 必须保持同步签名（不传 queryText 的
+// 现有调用方行为逐字节不变是硬约束，改成 async 会破坏全部同步消费方），import()
+// 是异步的，故降为静态 import + 惰性实例化（provider 仅在 semantic 激活时创建）。
+import { cosineSimilarity, embedCards, embedQuery, createDefaultProvider } from './embed.js';
 
 // ==================== 持久化文件校验（包C 缺陷3/10 共用） ====================
 
@@ -93,6 +98,16 @@ export interface LoadFilter {
   keywords?: string[];
   /** preference 保留 1 席位（即使排序靠后） */
   reservePreferenceSeat?: boolean;
+  // ===== B3 混合排序（2026-09-13 检索端配套） =====
+  /**
+   * 查询文本（当前任务 + 最近轮次拼合）——semantic 激活的必要条件之一。
+   * 不传时所有行为与旧版逐字节一致（旧公式 0.7×eff + 0.3×rel）。
+   */
+  queryText?: string;
+  /** 语义通道开关（还需 queryText 且 keywords ≥2 才真正激活） */
+  semantic?: boolean;
+  /** 融合权重 α ∈ [0,1]（默认 0.5）：score = α*(0.5*effN+0.5*relN) + (1-α)*cos */
+  semanticWeight?: number;
 }
 
 /** 投影缓存条目（快照冻结） */
@@ -125,7 +140,63 @@ function normalizeFilterKey(filter: LoadFilter): string {
     `ws=${normFilterValue(filter.currentWorkspaceFiles)}`,
     `kw=${normFilterValue(filter.keywords)}`,
     `seat=${normFilterValue(filter.reservePreferenceSeat)}`,
+    // B3：查询文本与 α 进投影 key——不同查询/不同融合权重不得共享同一排序快照
+    `q=${normFilterValue(filter.queryText)}`,
+    `sem=${normFilterValue(filter.semantic)}`,
+    `alpha=${normFilterValue(filter.semanticWeight)}`,
   ].join('&');
+}
+
+// ==================== B3 混合排序（词面 + 语义融合） ====================
+
+export type SemanticEmbedder = (texts: string[]) => number[][];
+
+/** 测试注入口：非 null 时替代 embed.js（可注入确定性向量或抛错模拟降级）。 */
+let semanticEmbedderOverride: SemanticEmbedder | null = null;
+
+/** 注入/清除测试用语义嵌入器（进程级；测后传 null 还原产品路径）。 */
+export function setSemanticEmbedderForTest(fn: SemanticEmbedder | null): void {
+  semanticEmbedderOverride = fn;
+}
+
+/**
+ * 混合排序融合公式（两步归一）：
+ *   effN = eff / maxEff（候选集内归一）、relN = min(1, rel/2)、
+ *   score = α*(0.5*effN + 0.5*relN) + (1-α)*cos，α = semanticWeight（默认 0.5）。
+ * cos 缺失（_sem=0）时语义项为 0，该卡按纯词面项参与排序。
+ */
+export function hybridScore(eff: number, maxEff: number, rel: number, sem: number, alpha: number): number {
+  const effN = maxEff > 0 ? eff / maxEff : 0;
+  const relN = Math.min(1, rel / 2);
+  const a = Number.isFinite(alpha) ? Math.min(1, Math.max(0, alpha)) : 0.5;
+  return a * (0.5 * effN + 0.5 * relN) + (1 - a) * sem;
+}
+
+/**
+ * 对候选集计算查询余弦：返回 Map<cardId, cos>。
+ * 走 embed.js 产品路径（embedCards 进程级增量缓存）；测试可注入 override。
+ * 任何异常向上抛出，由 loadFiltered 捕获后回退纯词面。
+ */
+function computeSemanticScores(cards: RefinedMemoryCard[], queryText: string): Map<string, number> {
+  const out = new Map<string, number>();
+  if (semanticEmbedderOverride) {
+    const vectors = semanticEmbedderOverride([queryText, ...cards.map((c) => String(c.summary ?? ''))]);
+    const qv = vectors[0];
+    if (!qv) return out;
+    cards.forEach((c, i) => {
+      const v = vectors[i + 1];
+      out.set(c.id, v && v.length === qv.length ? cosineSimilarity(v, qv) : 0);
+    });
+    return out;
+  }
+  const provider = createDefaultProvider();
+  const qv = embedQuery(queryText, provider);
+  const vecs = embedCards(cards.map((c) => ({ id: c.id, summary: String(c.summary ?? '') })), provider);
+  for (const c of cards) {
+    const v = vecs.get(c.id);
+    out.set(c.id, v ? cosineSimilarity(v, qv) : 0);
+  }
+  return out;
 }
 
 export class RefinedMemoryStore {
@@ -393,6 +464,8 @@ export class RefinedMemoryStore {
   /**
    * 探索阶段自动拉取 — top-N 之外的相关卡（≤5），排除已注入卡。
    * 走投影 Map（独立键：maxCards 未设 → 与 L1 注入键不同槽，不重算 loadFiltered）。
+   * B5：filter 整体透传（含 queryText/semantic/semanticWeight——投影 key 已含
+   * 查询文本与 α，不同查询不串槽）。
    */
   getOverflowCards(filter: LoadFilter, alreadyInjected: string[]): { pulled: RefinedMemoryCard[]; totalRemaining: number } {
     const all = this.loadFilteredCached({ ...filter, maxCards: undefined, reservePreferenceSeat: false });
@@ -481,13 +554,16 @@ export class RefinedMemoryStore {
       filtered = refSet.length > 0 ? refSet : preReference;
     }
 
-    // 阶梯衰减 + effectiveWeight 计算
+    // 阶梯衰减 + effectiveWeight 计算。_effective（含 confidence 惩罚）只进排序；
+    // 出局门用未惩罚基线 _effectiveBase（审查建议-4：惩罚若进淘汰判定，0.4 置信卡
+    // 在第一个衰减段即跌破 0.3，"排序自然下沉"变成提前约一倍寿命的硬出局）。
     filtered = filtered
       .map(c => {
-        const eff = this.calculateEffectiveWeight(c, now);
-        return { ...c, _effective: eff } as RefinedMemoryCard & { _effective: number };
+        const effBase = this.calculateEffectiveBase(c, now);
+        const eff = this.applyConfidencePenalty(effBase, c);
+        return { ...c, _effective: eff, _effectiveBase: effBase } as RefinedMemoryCard & { _effective: number; _effectiveBase?: number };
       })
-      .filter(c => (c as any)._effective >= 0.3);
+      .filter(c => ((c as any)._effectiveBase ?? (c as any)._effective) >= 0.3);
 
     // 相关性（任务关键词命中 summary → +1，cap 3）
     const kws = (filter.keywords ?? []).map(k => String(k).toLowerCase()).filter(Boolean);
@@ -496,20 +572,52 @@ export class RefinedMemoryStore {
         const s = (c.summary || '').toLowerCase();
         let rel = 0;
         for (const k of kws) if (s.includes(k)) rel++;
+        // B2：对卡（source==='dialogue-pair'）按 Q:/A: 分段，Q 侧（首行）命中的
+        // 关键词计数 ×2（提问侧命中说明"这卡在答这个问题"）；总帽 3 不变。
+        if ((c as any).source === 'dialogue-pair') {
+          const qSide = (String(c.summary || '').split('\n')[0] || '').toLowerCase();
+          let qRel = 0;
+          for (const k of kws) if (qSide.includes(k)) qRel++;
+          rel += qRel;
+        }
         return { ...c, _relevance: Math.min(3, rel) } as any;
       });
     }
 
-    // 排序 = 0.7×effectiveWeight + 0.3×relevance；同分先按 count 再按
-    // lastSeen **倒序**（G3 最小版：新旧事实并存时让较新者排前——旧排序
-    // 同分回退稳定插入序 = 时间正序 = 旧事实恒在前，1B 取第一张即错）。
+    // B3：混合排序——semantic 且 queryText 且候选关键词 ≥2 才激活语义通道；
+    // 任一异常（embed 不可用等）回退纯词面（旧公式），绝不影响加载主流程。
+    const semanticActive = filter.semantic === true && !!filter.queryText && kws.length >= 2;
+    let semScores: Map<string, number> | null = null;
+    const alpha = filter.semanticWeight ?? 0.5;
+    if (semanticActive) {
+      try {
+        semScores = computeSemanticScores(filtered, String(filter.queryText));
+      } catch {
+        semScores = null; // 降级：纯词面
+      }
+    }
+
+    // 排序。semantic 未激活 = 旧公式 0.7×effectiveWeight + 0.3×relevance（不传
+    // queryText 的现有调用方行为逐字节不变）；激活时按两步归一融合（hybridScore）。
+    // 同分先按 count 再按 lastSeen **倒序**（G3 最小版：新旧事实并存时让较新者
+    // 排前——旧排序同分回退稳定插入序 = 时间正序 = 旧事实恒在前，1B 取第一张即错）。
+    const maxEff = semScores
+      ? filtered.reduce((m, c) => Math.max(m, (c as any)._effective ?? 0), 0)
+      : 0;
     filtered.sort((a, b) => {
       const ea = (a as any)._effective ?? 0;
       const eb = (b as any)._effective ?? 0;
       const ra = (a as any)._relevance ?? 0;
       const rb = (b as any)._relevance ?? 0;
-      const sa = 0.7 * ea + 0.3 * ra;
-      const sb = 0.7 * eb + 0.3 * rb;
+      let sa: number;
+      let sb: number;
+      if (semScores) {
+        sa = hybridScore(ea, maxEff, ra, semScores.get(a.id) ?? 0, alpha);
+        sb = hybridScore(eb, maxEff, rb, semScores.get(b.id) ?? 0, alpha);
+      } else {
+        sa = 0.7 * ea + 0.3 * ra;
+        sb = 0.7 * eb + 0.3 * rb;
+      }
       return sb - sa || (b as any).count - (a as any).count || (b.lastSeen ?? 0) - (a.lastSeen ?? 0);
     });
 
@@ -825,6 +933,20 @@ export class RefinedMemoryStore {
    *   推到 900 天（永生霸榜），封顶后半衰期上限 = 基础 ×3。
    */
   private calculateEffectiveWeight(card: RefinedMemoryCard, now: number): number {
+    return this.applyConfidencePenalty(this.calculateEffectiveBase(card, now), card);
+  }
+
+  /** confidence 软惩罚因子：带 confidence 字段 ×(0.5+0.5×confidence)，无字段恒等。 */
+  private applyConfidencePenalty(v: number, card: RefinedMemoryCard): number {
+    const conf = (card as any).confidence;
+    const confMul = typeof conf === 'number' && Number.isFinite(conf)
+      ? 0.5 + 0.5 * Math.min(1, Math.max(0, conf))
+      : 1;
+    return v * confMul;
+  }
+
+  /** 未惩罚有效权重（出局门 / 审计用）：四段阶梯 × kind 基线，pin 冻结 1.0。 */
+  private calculateEffectiveBase(card: RefinedMemoryCard, now: number): number {
     // pin 卡冻结衰减
     if ((card as any).pinned) return 1.0;
     const mc = (card.memoryCategory || 'general') as MemoryCategory;

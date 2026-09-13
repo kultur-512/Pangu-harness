@@ -69,6 +69,17 @@ export interface RefinedMemoryCard {
   status?: 'active' | 'archived';
   /** 合并卡记录来源卡 id（可回滚）；本期只写不读 */
   mergedFrom?: string[];
+
+  // ===== 宽进严排字段（2026-09-13 写路径改造，加性字段：旧文件无此字段照常加载） =====
+  /** 产出来源标记（'dialogue-pair' = 对话对卡，摘要为 'Q: …\nA: …' 双段；缺省 = 旧卡/其他路径） */
+  source?: string;
+  /**
+   * 分类器置信度 ∈ [0,1]（chatFactMemory.confidenceOf 产出的写入侧软信号）。
+   * 检索端按 (0.5 + 0.5×confidence) 软惩罚有效权重（B1）——0.4 置信闲聊 ×0.7、
+   * 数字事实 ×1.0；无字段老卡不乘（行为不变）。质量判断后移到检索排序，
+   * 替代旧"低置信写入侧硬拒绝"。
+   */
+  confidence?: number;
 }
 
 /**

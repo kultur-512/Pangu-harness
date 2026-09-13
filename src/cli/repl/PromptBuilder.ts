@@ -7,6 +7,7 @@ import type { Turn } from './types.js';
 import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierConfig.js';
 import type { TaskIntent } from '../taskIntent.js';
 import { estTokens, resolveWindowTokens } from './tokenEstimate.js';
+import { resolveToday } from '../../memory/timeAnchor.js';
 
 // estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
 // 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
@@ -24,6 +25,29 @@ export function truncateAtSentence(text: string, budget: number): string {
   const m = head.match(/[\s\S]*[。．！？!?]/);
   const cut = m && m[0].length >= Math.floor(budget * 0.5) ? m[0] : t.slice(0, budget);
   return cut.trimEnd() + '...';
+}
+
+/**
+ * C1（2026-09-13 对卡渲染）：source==='dialogue-pair' 的卡不走 truncateAtSentence(120)
+ * （句边界截断曾把已落卡事实腰斩），改为分行渲染——Q 行 ≤160 字 + A 行 ≤240 字，
+ * label 用 [对话记忆]。其他卡渲染不变（单行、句边界截断）。
+ * 返回行数组（对卡 1-2 行，普通卡 1 行）。
+ */
+function renderMemoryCardLines(
+  card: any,
+  seq: number,
+  label: (c: any) => string,
+  factTag: (c: any) => string
+): string[] {
+  const head = `  - [M${seq}] ${label(card)}${factTag(card)} `;
+  if (card?.source === 'dialogue-pair') {
+    const s = String(card.summary ?? '');
+    const nl = s.indexOf('\n');
+    const q = (nl >= 0 ? s.slice(0, nl) : s).replace(/^Q:\s*/i, '').slice(0, 160);
+    const a = (nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, '').slice(0, 400);
+    return a ? [`${head}Q: ${q}`, `    A: ${a}`] : [`${head}Q: ${q}`];
+  }
+  return [`${head}${truncateAtSentence(card?.summary, 120)}`];
 }
 
 // ==================== L0 硬约束（≤3 条，非整段注入） ====================
@@ -268,7 +292,10 @@ export class PromptBuilder {
     // 身份画像（2026-09-12 真机反馈）：通用全能智能体，工程是强项不是边界——
     // 1B 小模型曾把"面向软件工程长期维护场景"理解成"只答工程"（真机实证：英国
     // 历史追问被拒、话题被拉回 CI/CD）。档位语义显式限定为工程执行参数，防复读。
-    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。`;
+    // 时间锚定（0.8.3）：身份行带"今天是 …"——QA prompt 此前没有今天是几号，
+    // "多久之前/多少周"类问题无从计算（temporal-reasoning 0/15 主因之二）。
+    // 放 stable 段：resolveToday() 天内不变 → 天内字节稳定（前缀缓存友好）。
+    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。今天是 ${resolveToday()}。`;
     this.buildLines.push(systemLine);
 
     // === L0 硬约束（≤3 条精选，非整段注入） ===
@@ -526,7 +553,7 @@ export class PromptBuilder {
       }
     }
 
-    // === 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===
+    // === 探索阶段自动拉取（standard/high 触发一次；预算 = L1 预算 tokens（窗口未知回退 700）；ghost 状态机）===
     const AUTO_PULL_TIERS = new Set(['standard', 'high']);
     const preAutoPullCount = this.lastInjectedCardIds.length; // L1 已注入 ids 数
     if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier)) {
@@ -534,22 +561,35 @@ export class PromptBuilder {
         const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
         const memStore = new RefinedMemoryStore(this.session.workspace);
         const overflow = memStore.getOverflowCards(
-          { tier: this.session.tier, keywords: this.lastKeywords, currentWorkspaceFiles: currentWsFiles.length ? currentWsFiles : undefined },
+          {
+            tier: this.session.tier,
+            keywords: this.lastKeywords,
+            currentWorkspaceFiles: currentWsFiles.length ? currentWsFiles : undefined,
+            // C3/B5：溢出拉取与 L1 同源查询（投影 key 已含查询文本，不串槽）
+            queryText: this.buildMemoryQueryText(issue),
+            semantic: process.env.PANSHA_SEMANTIC_SEARCH !== '0',
+          },
           this.lastInjectedCardIds
         );
         if (overflow.pulled.length > 0) {
-          const label = (c: any): string => c.kind === 'preference' ? '[用户偏好]' : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
+          const label = (c: any): string =>
+            c.source === 'dialogue-pair' ? '[对话记忆]'
+              : c.kind === 'preference' ? '[用户偏好]'
+              : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
+          // 0.8.3 时间锚定：卡带 factDateText → 渲染 [事实时间:…]（老卡无字段不变）
+          const factTag = (c: any): string => c?.factDateText ? ` [事实时间:${c.factDateText}]` : '';
           const lines2: string[] = [];
           const l1Tokens = estTokens(lines.filter((l) => l.includes('相关记忆')).join('\n'));
-          let budget = 700 - l1Tokens;
+          // C2：溢出块预算与 L1 同源（window 感知），700 仅作窗口未知回退
+          let budget = this.memoryBudgetTokens() - l1Tokens;
           const addedCards: string[] = [];
           const n0 = this.memoryNumberSeq;
           let accepted = 0;
           for (const c of overflow.pulled) {
-            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${truncateAtSentence(c.summary, 120)}`;
-            const cost = estTokens(line);
+            const cardLines = renderMemoryCardLines(c, n0 + accepted + 1, label, factTag);
+            const cost = estTokens(cardLines.join('\n'));
             if (budget - cost < 0) break; // 超预算放弃（不降级不重试）
-            lines2.push(line);
+            lines2.push(...cardLines);
             addedCards.push(c.id);
             accepted++;
             budget -= cost;
@@ -619,17 +659,42 @@ export class PromptBuilder {
           return w.length >= 2 && !STOPWORDS.has(lw);
         });
       this.lastKeywords = keywords;
+      // C3（2026-09-13 混合检索接线）：查询侧从只有 issue 扩为
+      // "issue + 最近 2 轮 userInput/answerText 各前 200 字符"，传 loadFiltered 的
+      // queryText；语义通道默认开（PANSHA_SEMANTIC_SEARCH=0 显式关闭）。
+      const queryText = this.buildMemoryQueryText(issue ?? '');
+      const semantic = process.env.PANSHA_SEMANTIC_SEARCH !== '0';
       const allCards = memStore.loadFiltered({
         tier: this.session.tier,
         currentWorkspaceFiles: currentFiles,
         keywords,
+        queryText,
+        semantic,
       });
       const maxCards = this.memoryCardLimitForLevel(level);
-      const overflow = allCards.length > maxCards;
-      const cards = allCards.slice(0, maxCards);
+      // 审查 FAIL-1：对卡实际成本 122-470 token/张（英文/中文），41 系数张数帽
+      // 在小窗口+对卡多时超发 3-11 倍（8K 窗极端可注满整个窗口）。改为按渲染后
+      // 实测 token 贪心装入窗口比例预算；张数帽仅作上限，至少保 1 张。
+      const budgetTokens = this.memoryBudgetTokens();
+      const label = (c: any): string =>
+        c.source === 'dialogue-pair' ? '[对话记忆]'
+          : c.kind === 'preference' ? '[用户偏好]'
+          : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
+      // 0.8.3 时间锚定：卡带 factDateText → 渲染 [事实时间:…]（老卡无字段不变）
+      const factTag = (c: any): string => c?.factDateText ? ` [事实时间:${c.factDateText}]` : '';
+      const cards: any[] = [];
+      const rendered: string[][] = [];
+      let usedTokens = 0;
+      for (let i = 0; i < allCards.length && cards.length < maxCards; i++) {
+        const ls = renderMemoryCardLines(allCards[i], this.memoryNumberSeq + cards.length + 1, label, factTag);
+        const t = ls.reduce((acc, l) => acc + estTokens(l), 0);
+        if (cards.length > 0 && usedTokens + t > budgetTokens) break;
+        cards.push(allCards[i]);
+        rendered.push(ls);
+        usedTokens += t;
+      }
+      const overflow = cards.length < allCards.length;
       if (cards.length > 0) {
-        // 来源标签（注入安全：preference 必须有 [用户偏好] 标签）
-        const label = (c: any): string => c.kind === 'preference' ? '[用户偏好]' : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
         const ghost = overflow ? `\n（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
         const n0 = this.memoryNumberSeq;
         const added = this.tryInject('memory-cards', [
@@ -637,10 +702,13 @@ export class PromptBuilder {
           // G3 最小版：知识更新指令——冲突事实并存时以后注入者为准（配合
           // 卡内日期前缀，1B 级模型也能据此选新弃旧；此前旧事实因插入序靠前
           // 被优先采纳，knowledge-update 题全 0 的直接原因之一）。
-          '（规则：同一主题的事实以后面出现的卡为准；带 [S日期] 前缀的以日期较新者为准。）',
-          ...cards.map((c, i) => {
-            return `  - [M${n0 + i + 1}] ${label(c)} ${truncateAtSentence(c.summary, 120)}`;
-          }),
+          // 0.8.3：原"带 [S日期] 前缀的以日期较新者为准"是悬空规则——全代码库
+          // 无任何路径产出 [S日期] 前缀（grep 证实）。替换为事实时间差值规则，
+          // 与今天（身份行）+ [事实时间:…] 标注配套，"多久之前/多少周"可计算。
+          '（规则：记忆卡【】内的日期与[事实时间:...]标注的是事实发生时间；计算"多久之前/多少周"时用它与今天的差值，不要用其他时间戳。）',
+          // C1：对卡分行渲染（Q ≤160 / A ≤400，与写侧 smartSlice 同源），普通卡单行截 120；
+          // 行集已在 token 门按预算贪心生成（rendered），此处只拼接
+          ...rendered.flat(),
           ghost,
         ], lines);
         if (added) {
@@ -657,7 +725,7 @@ export class PromptBuilder {
         const memStart = lines.findIndex((l) => l.includes('【相关记忆】'));
         if (memStart >= 0) {
           this.lastMemoryBlockText = lines.slice(memStart)
-            .filter((l) => l.includes('【相关记忆】') || l.includes('（规则：') || l.startsWith('  - [M') || l.startsWith('（另有'))
+            .filter((l) => l.includes('【相关记忆】') || l.includes('（规则：') || l.startsWith('  - [M') || l.startsWith('    A: ') || l.startsWith('（另有'))
             .join('\n');
         }
         return added;
@@ -709,16 +777,50 @@ export class PromptBuilder {
     }
   }
 
+  /**
+   * C2（2026-09-13 注入预算 token 化）：注入预算 tokens = min(floor(window×比例), 1600)，
+   * window ≤8192 取 10%、更大窗口取 15%（固定卡数帽不随窗口伸缩是错的——8K 与
+   * 128K 窗口给同样的 8 张，要么撑爆小窗要么浪费大窗）。窗口未知/异常回退 700
+   * （旧溢出块常量，语义=保守小预算）。
+   */
+  private memoryBudgetTokens(): number {
+    try {
+      const w = resolveWindowTokens((this.session as any).provider, this.session.model);
+      return Math.min(Math.floor(w * (w <= 8192 ? 0.10 : 0.15)), 1600);
+    } catch {
+      return 700;
+    }
+  }
+
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
     // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
-    // （Pi/CC 实验把整个 memory 文件塞进上下文）。产品默认不受影响。
+    // （Pi/CC 实验把整个 memory 文件塞进上下文）。评测格依赖它——env 显式
+    // 设置时完全维持现状（不走窗口感知）。
     const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
     if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
-    if (level === 'light') return 3;
-    if (level === 'medium') return 6;
-    if (level === 'high') return 8;
-    if (level === 'full') return 10;
-    return 4;
+    // C2：窗口感知张数——budget/41（每卡 ~41 token 经验值：标签+事实时间+摘要 120 字），
+    // clamp 到 [6, 40]：下限 6 保证轻量档最小可见性，上限 40 防大窗刷屏。
+    // level 参数保留（'none' 档在调用方已拦截；light/medium/high/full 的旧固定
+    // 帽 3/6/8/10 由窗口预算取代）。
+    void level;
+    const budget = this.memoryBudgetTokens();
+    return Math.max(6, Math.min(Math.floor(budget / 41), 40));
+  }
+
+  /**
+   * C3（2026-09-13 混合检索接线）：记忆检索查询文本 = 当前任务 + 最近 2 轮的
+   * userInput/answerText 各前 200 字符。仅 issue 单查询曾丢"上一轮刚说过"的
+   * 指代型问题（"那第二个呢？"），扩窗后语义通道才有可用的邻近上下文。
+   */
+  private buildMemoryQueryText(issue: string): string {
+    const parts: string[] = [String(issue ?? '')];
+    for (const t of this.session.turns.slice(-2)) {
+      const u = String(t?.userInput ?? '').replace(/\s+/g, ' ').trim();
+      if (u) parts.push(u.slice(0, 200));
+      const a = String((t as any)?.result?.answerText ?? '').replace(/\s+/g, ' ').trim();
+      if (a) parts.push(a.slice(0, 200));
+    }
+    return parts.filter(Boolean).join('\n');
   }
 
   /**
@@ -761,10 +863,11 @@ export class PromptBuilder {
   private describeMemory(level: TierConfig['memoryLoadLevel']): string {
     switch (level) {
       case 'none': return '不加载历史记忆';
-      case 'light': return '轻量（3 条以内）';
-      case 'medium': return '中等（~6 条）';
-      case 'high': return '高强度（~8 条）';
-      case 'full': return '全量（~10 条 + 强过滤）';
+      // 0.8.3 注入量已窗口感知（窗口比例预算 + 实测 token 门），固定条数自描述失真（审查建议-8）
+      case 'light': return '轻量（小预算）';
+      case 'medium': return '中等（中等预算）';
+      case 'high': return '高强度（较大预算）';
+      case 'full': return '全量（最大预算 + 强过滤）';
       default: return String(level);
     }
   }

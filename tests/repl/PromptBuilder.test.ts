@@ -400,3 +400,105 @@ describe('PromptBuilder.getRecentContext 答案落盘（R6）', () => {
     assert.ok(!prompt.includes(' → '), '无答案轮不引入答案段');
   });
 });
+
+// ==================== 0.8.3 记忆时间锚定：消费者今天感知 + 事实时间渲染 ====================
+// temporal-reasoning 题型 0/15 修复的两处产品面：
+//   (a) stable 段身份行带"今天是 …"（QA prompt 此前没有今天是几号）；
+//   (b) 卡带 factDateText → 渲染 [事实时间:…]；悬空 [S日期] 规则替换为事实时间差值规则。
+describe('PromptBuilder 时间锚定（0.8.3）', () => {
+  let savedToday: string | undefined;
+  const setToday = (v?: string) => {
+    if (v === undefined) delete process.env.PANSHA_TODAY;
+    else process.env.PANSHA_TODAY = v;
+  };
+  const withToday = async (v: string | undefined, fn: () => Promise<void>) => {
+    savedToday = process.env.PANSHA_TODAY;
+    setToday(v);
+    try { await fn(); } finally {
+      if (savedToday !== undefined) process.env.PANSHA_TODAY = savedToday;
+      else setToday(undefined);
+    }
+  };
+
+  it('stable 段身份行带"今天是 …"（PANSHA_TODAY 可控，天内字节稳定）', async () => {
+    await withToday('2023-01-19', async () => {
+      const sess = new Session({ tier: 'high' });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const s1 = pb.buildStableSegment('chat');
+      const s2 = pb.buildStableSegment('chat');
+      assert.ok(s1.includes('今天是 2023-01-19。'), '身份行注入今天');
+      assert.equal(s1, s2, 'stable 段逐字节相同（天内，前缀缓存友好）');
+      const p1 = await pb.buildForTask('任务甲', 'chat');
+      assert.ok(p1.includes('今天是 2023-01-19。'), 'buildForTask 产物带今天');
+    });
+  });
+
+  it('悬空 [S日期] 规则替换为事实时间差值规则（不再引用无人产出的前缀）', async () => {
+    const sess = new Session({ tier: 'high' });
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    const prompt = await pb.buildForTask('任意任务');
+    if (prompt.includes('【相关记忆】')) {
+      assert.ok(prompt.includes('事实发生时间'), '新规则文案在场');
+      assert.ok(!prompt.includes('[S日期]'), '悬空规则移除');
+    }
+  });
+
+  it('卡带 factDateText → 渲染 [事实时间:…]；无字段老卡渲染不变（溢出块同规则）', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-factdate-'));
+    const memFile = path.join(wsRoot, 'mem.json');
+    const prevMemFile = process.env.PANSHA_MEMORY_FILE;
+    process.env.PANSHA_MEMORY_FILE = memFile;
+    try {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const store = new RefinedMemoryStore(wsRoot);
+      const now = Date.now();
+      const mk = (id: string, summary: string, extra: object = {}) => ({
+        id, kind: 'preference', category: 'OTHER', memoryCategory: 'insight', summary,
+        weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now,
+        applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now, ...extra,
+      });
+      store.save([
+        mk('fact-1', '用户完成了一次 5K 跑步 facttag', { factDate: Date.UTC(2023, 0, 19), factDateText: '2023-01-19' }),
+        mk('fact-2', '用户喜欢清晨跑步 facttag', { factDate: Date.UTC(2023, 4, 1), factDateText: '2023-05-01' }),
+        mk('fact-3', '用户住在西雅图 facttag'), // 老卡：无字段
+      ] as any[]);
+
+      const sess = new Session({ tier: 'high' });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, 'facttag');
+      assert.equal(added, true, '前置：注入成功');
+      const mLines = lines.filter((l) => l.includes('  - [M'));
+      const withTag = mLines.filter((l) => l.includes('[事实时间:'));
+      const withoutTag = mLines.filter((l) => !l.includes('[事实时间:'));
+      assert.ok(mLines.some((l) => l.includes('[事实时间:2023-01-19]') && l.includes('5K 跑步')), '渲染形状 [M] [标签] [事实时间:…] 摘要');
+      assert.ok(withTag.length >= 2, '带字段卡都渲染事实时间');
+      assert.ok(withoutTag.some((l) => l.includes('西雅图')), '无字段老卡渲染不变');
+      // 溢出块（auto-pull）同样规则：预占 L1 名额，把剩余卡挤进溢出块
+      const pb2 = new PromptBuilder(sess, TierRegistry.get('high'));
+      process.env.PANSHA_MEMORY_LIMIT = '1';
+      try {
+        const lines2: string[] = [];
+        await (pb2 as any).appendMemoryCardsDedup(lines2, undefined, 'facttag');
+        (pb2 as any).autoPulledThisBuild = false;
+        (pb2 as any).memoryNumberSeq = (pb2 as any).lastInjectedCardIds.length;
+        const store2 = new RefinedMemoryStore(wsRoot);
+        const overflow = store2.getOverflowCards({ tier: 'high', keywords: ['facttag'] }, (pb2 as any).lastInjectedCardIds);
+        assert.ok(overflow.pulled.length >= 1, '前置：存在溢出卡');
+        const r = await (pb2 as any).buildVolatileSegment('facttag');
+        assert.ok(r.includes('【额外记忆】'), '溢出块注入');
+        const extra = r.split('【额外记忆】')[1] || '';
+        assert.ok(extra.includes('[事实时间:'), '溢出块卡渲染事实时间');
+      } finally {
+        delete process.env.PANSHA_MEMORY_LIMIT;
+      }
+    } finally {
+      if (prevMemFile === undefined) delete process.env.PANSHA_MEMORY_FILE;
+      else process.env.PANSHA_MEMORY_FILE = prevMemFile;
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+});
