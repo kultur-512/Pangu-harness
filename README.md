@@ -4,7 +4,7 @@
 
 > 华为命题《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 场景主线：**软件工程长期维护**（跨多轮需求演进 / 跨文件关联 / 持续状态跟踪）
-> 当前版本 **v0.8.0-rc** · 四分支已合入 develop（2026-09-12）· `npm test` **1008 例全绿** · 评测管线就绪待真机端点（0.7 终止语义重构/意图前移/记忆落定 → 0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理）· 分版详录见 [CHANGELOG.md](CHANGELOG.md) · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)
+> 当前版本 **v0.8.0-rc** · 四分支已合入 develop（2026-09-12）· `npm test` **1162 例全绿**（concurrency=4，CI 已挂 test 门） · 评测管线就绪待真机端点（0.7 终止语义重构/意图前移/记忆落定 → 0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理）· 分版详录见 [CHANGELOG.md](CHANGELOG.md) · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)
 
 **命名约定**（用户明确指示）
 - **外部产品名**（用户/市场看到）：**烛龙**（Zhulong）—— CLI 启动、欢迎语、模型身份串均使用此名
@@ -12,7 +12,7 @@
 
 ## 长程上下文能力
 
-- **记忆卡（结构化记忆）**：失败教训 / 成功经验 / 用户偏好；证据门槛写入（只认真实验证通过）+ 类别分档可见性 + 参照文件过滤 + 四段阶梯衰减 + 验证保鲜 + 同主题合并 + 注入审计（`/memory`）
+- **记忆卡（结构化记忆）**：失败教训 / 成功经验 / 用户偏好 / 对话事实；证据门槛写入（只认真实验证通过）+ kind 分桶容量（failure 40 / success 10 / preference 80，pinned 免淘汰）+ 档位可见性 + 参照文件过滤 + 四段阶梯衰减 + 验证保鲜 + 同主题合并 + 注入审计（`/memory stats`：注入账本 + 最近注入事件）+ 原子写与损坏隔离
 - **上下文协议（0.8）**：messages 双通道（小模型自动降级文本协议）+ stable/volatile 三段 prompt（前缀缓存友好）+ 意图三路分流 + 卡死硬闸 + 工具大输出落盘回读
 - **交互手感（0.8）**：输入 `/` 即时命令菜单（过滤/↑↓ 导航）· shift+tab 档位环专属色徽标 · `/model` 菜单化编号直达 · `/tier` 思考强度滑杆
 - **会话资产**：追加式 rollout jsonl（turn/approval/rewind + 业务事件/压缩标记/注入审计）+ `--resume`/`--branch`/`/tree` 续接与分支

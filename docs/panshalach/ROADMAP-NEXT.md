@@ -10,6 +10,8 @@
 - 旧分支（zhaiyuanhao1/wangzuo1/wanghaoyu1/zhaotianang1）**已冻结**，新工作自 develop 拉 `<pinyin>2`。
 - **0.8.2 上下文压缩对抗审查修复（2026-09-13，zhaiyuanhao1）**：P1 计量地基（tokenEstimate 收口 / 实测 usage 锚点 lastPromptTokens / CJK-aware 估算 / REPL windowTokens 接线 / 裁剪后复查 + 单步封顶 / messages 模式溢出重试真实截断）+ P2 摘要质量（提炼统一到 apply 写盘后 / turnFullBrief 逐字保留落地 / fallback 嵌套封顶 / 压缩摘要注入 prompt / kept 字节感知收缩）+ 文案诚实化（溢出应急=确定性截断，与摘要压缩严格区分）。测试 1039 绿。
 
+- **0.8.3 对抗性审查修缮（2026-09-13，zhaiyuanhao1）**：四路子系统深审（记忆/循环压缩/工具安全/适配器模型层）确认 3 P0 + 12 P1 + 全部 P2 并全量修复——审批工具别名绕过（readonly/plan 档 `write`/`edit` 直写）、readonly bash 白名单换行/命令替换逃逸、messages 二级收缩纯中文巨结果死循环（默认路径 P0）、记忆 OTHER 桶 10 张挤爆（80/200 声明不可达）与原子写/quarantine/审计账本、适配器容错砍尾、模型层 body 超时/Retry-After/流式 name 幂等。新增对抗性回归测试 118 例（旧代码验红）+ CI test 门（ci.yml）+ 90 题 LME 基建与修复前基线（strict 9/90）。测试 **1162 例绿**（concurrency=4）。B2 记忆审计清单中：注入审计视图（/memory stats）、classic recordChatFact 接线、容量治理、chat-fact 去重本轮已完成；messages 分段补 Repl/Simulate、2-gram 相关性、prevEnvSnapshot 仍遗留。
+
 ## 未完成项
 
 ### A. 9/24 交付关键路径（有截止时间，按序）

@@ -3,6 +3,20 @@
 > **当前状态（2026-09-12）**：v0.8.0-rc · 四分支已合入 develop（`5105ebf`）· tsc 干净 + `npm test` **1008 例全绿** + 双契约 PASS + eval 冒烟 A/B/C/C4 全过 · 评测管线就绪待真机端点 · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
+## 修缮批次（2026-09-13 · 对抗性审查修复 zhaiyuanhao1）
+
+对抗性审查（四路子系统深审 + 双路独立复核 + 新测试旧代码验红）确认 3 P0 + 12 P1 + 全部 P2，本轮全量修复（约 50 文件，新增对抗性回归测试 118 例——每项修复先在旧代码上断言级验红再转绿）：
+
+- **fix(tools) 审批与沙箱**：工具名统一 normalizeToolName 归一（堵 `write`/`edit` 别名绕过 readonly/plan 档审批与 checkpoint/写锁）· readonly 白名单补 `
+`/反引号/`$`（堵换行连击与命令替换逃逸；`%` 不收防误伤 `--format=%h`）· 'a' 决策对 bash 改会话内放行且 dangerous 仍强制审批、不再把整个 bash 持久化落盘 · checkpoint realpath 校验（堵工作区内 symlink 把工作区外文件外拷进历史目录）· 敏感清单补 `.panshalach.json`/`.git` · DANGER_PATTERNS 补漏（push -f 独立 flag / rm 分离旗标 / Remove-Item）· grep 5MB 读取上限 · rewindToTurn 逐文件容错 + 半回滚汇总 · redact 扩 Bearer 全值/AKIA/ghp_/私钥块并接入 grep 输出 · UserConfirmation 非 TTY 守卫 · mcpClient 树杀 + 审批 timer 局部化
+- **fix(loop+model) 循环与计量**：messages 二级收缩改 estTokens 反推 + 64 次迭代上限 + 进展检查（堵纯中文巨工具结果的收缩定点死循环——P0，生产常量复现 18 万次迭代不终止）· estTokens CJK 范围扩至中文标点/全角/Ext-A/假名/谚文 · classifySignal 残余全文 includes 全部尾锚定（堵 ALL_TESTS_PASSED 正文误判假成功）· readonly 拒绝改段尾结构化标记 `[TOOL_DENIED_READONLY <tool>]`（堵正文含字面量误计数的假硬闸）· recordResult 仅写工具成功才清零跨工具拒绝计数（堵读写交替饿死阈值 2）· errorClassify 无 status 正文判 overflow + /billing/ 收窄（429 限流文案不再被误杀不重试）· 多调用分段不整段复制 · B4 kept 收缩落 coveredTurnIds 账本（resume 不再复活已收缩轮）· 模型摘要路径嵌套封顶 · compact cancel 竞态复查 · safeSlice 码点安全截断全截断点换用
+- **fix(memory) 记忆系统**：容量分桶按 kind 治理（failure 40/类内每 category 10 · success 10 · preference 80——chat-fact 卡以该桶承载；pinned 免淘汰）——旧实现所有正向卡挤 category:'OTHER' 一个 10 张桶，"80 张对话记忆/总 200" 声明不可达、第 11 张起静默截断 · recordFactLines 返回真实落盘数（不再谎报截断前候选数）· load() 形状校验 + 损坏文件 quarantine（`.corrupt-<时间戳>`，不再静默清库/毒化）· 7 处写盘换 atomicFile（tmp+rename，复用 taskState commitAtomic 抽共享模块）· taskState env 绝对路径直采（对齐 1d75f73 修复的同类 bug 在此残留）· isFactSentence 词界（旧正则实为字面退格符死代码）+ chat-fact 去重键剥离时间戳前缀（堵跨分钟重复落卡）· `/memory stats` 注入审计视图（按 kind 卡数/注入账本/最近注入事件）· markInjected 进程级账本持久可查（不再一次性实例记账即弃）· 事件流尾部读取（超 5000 条最新事件可见）· /memory import 形状+大小校验 · mergeSimilarCards NaN 防护 + 停用词修正 · classic REPL 接 recordChatFact（chat 直答事实沉淀此前在此路径静默缺失）· PromptBuilder 卡 id 注入契约修正
+- **fix(adapter+model) 适配器与模型层**：容错切分不再砍尾（漏写 `</>` 的块此前被无条件切掉末 3 字符——弱模型深层残缺形态最后一个参数静默丢失）+ 残缺闭合标签 best-effort 提取 · 流式 tool name delta 幂等合并（方言网关整名重发不再拼成 `write_filewrite_file`）· 非流式 body 读取纳入超时 + SSE 整体 deadline（`streamDeadlineMs` 可注入）· Retry-After ≤30s 按服务端、>30s 最多补试 1 次（不再钳 30s 连锤 6 发）· 空回复改占位标记（不再把原始响应 JSON 灌进上下文）· SSE 尾行无换行 flush（usage/[DONE] 不再丢、不再误触发非流式重发双请求）· ProviderRegistry 前缀剥离单点化且仅剥已配置 provider 名（防误剥 Ollama/LM Studio 含冒号目录名）· 死代码归档（RateLimiter/universal-tool-parser.cjs/XmlStructuredToolParser/demo×2 → `archive/2026-09-13-adapter-model/`）
+- **chore(ci)**：新增 `.github/workflows/ci.yml`（install + tsc + `node --test --test-concurrency=4`，失败自动重跑一次规避已知进程级假象）——此前仓库 CI 只有分支保护检查，npm test 从不被 CI 执行
+- **feat(eval)**：90 题 LME 基建 `scripts/eval/longmemeval-90/`（确定性抽样 15/型×6 + 产品管线 runner——recordChatFact 同源播种 + headless QA，弃用评测复制品直写存储路线 + 统一判分器 strict/lenient 双口径/复述豁免/数字回退）；90 题修复前基线 **strict 9/90**（平均落卡 8.3 张——旧 OTHER 桶 10 张帽的实证）
+
+**质量门**：`npx tsc --noEmit` 干净；`node --test --test-concurrency=4` **1162 例 1161 pass + 1 skip + 0 fail**；`smoke-eval.mjs` 20/20；三组安全 payload（别名写/换行命令/命令替换）在旧代码实证绕过存在、修复后全部拒绝。
+
 ## 合并记录（2026-09-12 · 四分支收口 develop）
 
 合并窗口（操作：翟苑皓；顺序=主线先落、增量按冲突从机械到实质消化，每步全量验证门）：

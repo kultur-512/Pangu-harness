@@ -69,7 +69,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 | `full` | 全部放行（写不确认） |
 
 - one-shot/headless：`--approval <readonly|default|full>` 或 `PANSHA_APPROVAL` env（0.6.5 前锁死 readonly，写文件必然被拒）。**0.7.3 起审批语义在全部入口真实生效**——one-shot / classic / simulate 向执行引擎透传 `approvalMode`、会话放行清单与审批桥（此前 flag 只改会话字段、引擎收不到）。
-- REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。审批提示选 **`a`（本会话总是允许）**时，决策同时持久化到项目配置 `.panshalach.json` 的 `approvalAllowlist`（0.7.3 起）——下次会话启动自动并入放行清单，不再重复确认（best-effort，写失败不影响审批流）。
+- REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。审批提示选 **`a`（总是允许）**：对 `write_file`/`edit_file` 决策持久化到项目配置 `.panshalach.json` 的 `approvalAllowlist`（0.7.3 起）——下次会话启动自动并入放行清单；对 **`bash` 仅本会话内放行且不落盘**（2026-09-13 修缮：防一次 'a' 等于任意命令跨会话永久免审），且危险命令（rm -rf / git push -f 等）即便在放行清单内仍会再次弹卡确认。
 
 ## 5. 交互手感（0.8 · Claude Code 级）
 

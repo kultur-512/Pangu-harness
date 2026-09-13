@@ -25,7 +25,7 @@
 ## 3. 数据模型
 
 ### 3.1 RefinedMemoryCard（src/memory/RefinedMemoryCard.ts）
-见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(档位可见性+分类半衰期) / summary(建设性一句话) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers / referencedFiles / pinned / status·mergedFrom。容量每类10·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
+见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(档位可见性+分类半衰期) / summary(建设性一句话) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers / referencedFiles / pinned / status·mergedFrom。容量按 kind（failure 40·类内每 category 10 / success 10 / preference 80——chat-fact 同桶；pinned 免淘汰）·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
 
 ### 3.2 事件记忆（已落地 · R4，`memory/events.ts`；下为立项时规划 schema）
 ```ts
@@ -106,7 +106,7 @@ interface TaskState {
 
 - **衰减**：加载时算 effective，不写回（读不刷新鲜）。age 锚 = **max(lastSeen, lastUsedAt)**（接口契约 v3，2026-09-04 修复 `??` 短路——复发卡的 lastSeen 刷新此前对衰减不可见）。四段：age<half/2 → 1.0；<half → .7；<2half → .4；else .1；且 <0.3 丢弃。分类半衰期：failure/general 90d、implementation/insight 180d、architecture 365d；count≥2 半衰期×count；preference 基 0.6（默认低于事实卡）；pin 冻结。
 - **合并（M3.3a）**：active 且 effective≥0.5 的候选，2-gram 公共词元≥2 归组（组≤6）；合并 summary≤800、count=Σ、decayWeight 从 now 起算（防 Σcount 霸榜）；原卡 `status=archived` 软删（可回滚）。
-- **容量**：按 category 每类≤10（新者优先）→ 总≤200（按 weight×count 淘汰）。
+- **容量**：按 kind 分桶——failure 40（类内每 category ≤10）/ success 10 / preference 80（chat-fact 卡 kind='preference' 同桶承载；pinned 卡免淘汰，非 pinned 竞争剩余名额）→ 总≤200（按 weight×count 淘汰）。2026-09-13 修缮：旧『按 category 每类≤10』使 success/preference/chat-fact（全部 category='OTHER'）互挤一个 10 张桶，80/200 声明不可达。
 - **投影缓存**：多槽 LRU(≤8)，写操作 invalidate，跨衰减阶梯自动重建。
 - **.gitignore**：自动追加记忆文件名。
 
