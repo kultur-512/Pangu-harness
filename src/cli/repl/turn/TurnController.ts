@@ -129,8 +129,12 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
   // auto-compact pre-flight (CC-style) — background-first, applied at
   // task boundary, never blocks input. Sync fallback only when critical.
   {
-    const ratioNow = Math.min(1, (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens);
+    // A2 计量口径：实测优先——budgetReport.lastPromptTokens（网关实测的
+    // 最后一次请求 prompt 大小 ≈ 活体上下文），无实测回落 estTokens 估算。
+    // bumpCtx 流式累计只是任务内的粗显示，不做压缩判定依据。
     const cs = await import('../compactService.js');
+    const tokNow = cs.measuredContextTokens(ctx.session) ?? cs.estimateSessionTokens(ctx.session);
+    const ratioNow = Math.min(1, tokNow / ctx.ctxWindowTokens);
     if (cs.shouldAutoCompact(ctx.session, ratioNow)) {
       const { resolveSharedClient } = await import('../ModelProvider.js');
       let client: any = null;
@@ -331,7 +335,8 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
             });
           }
 
-          // heuristic context meter (chars/4) from reasoning/plan/result/critique
+          // heuristic context meter from reasoning/plan/result/toolBlocks
+          // （任务内粗显示；压缩判定与任务落定校准走实测优先口径，见 A2）
           if (ev && ev.type === 'step') {
             bumpCtx(ctx, ev.thinking); bumpCtx(ctx, ev.plan);
             bumpCtx(ctx, typeof ev.result === 'string' ? ev.result : '');
@@ -344,9 +349,9 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
               const ratio = Math.min(1, (ctx.ctxUsedChars / 4) / ctx.ctxWindowTokens);
               try { bridge.setTop({ ctxRatio: ratio }); } catch {}
             }
-          } else if (ev && ev.type === 'critique') {
-            bumpCtx(ctx, ev.critique);
           }
+          // 0.8.2：critique 分支已删——全仓无 type:'critique' SSE 发射源
+          //（仅类型定义与 bridge 消费端），此分支自引入起未执行过。
 
           if (useRich) {
             mapSseToBridge(ev.type || 'event', ev, bridge, ctx);
@@ -402,6 +407,12 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       };
       try { ctx.session.addTurn(turn); } catch {}
       try { rollout.appendTurn(ctx.session.id, turn as any); } catch {}
+      // A2：任务落定后以"实测优先"口径重校准计量——流式期间 bumpCtx 只累计
+      // 末步输出（粗显示），这里回到真实上下文锚点，TopBar/空闲行/tip 同源。
+      try {
+        const { measuredContextTokens, estimateSessionTokens } = await import('../compactService.js');
+        ctx.ctxUsedChars = (measuredContextTokens(ctx.session) ?? estimateSessionTokens(ctx.session)) * 4;
+      } catch {}
       // answered 时把模型正文呈现给用户（/edit 可取回）
       // 正文已随 message.delta 流式呈现 → 不再贴 600 字截断预览；
       // 仅当流式不可用（provider 无 streamChat，全程 0 字符流式）时兜底输出全文。

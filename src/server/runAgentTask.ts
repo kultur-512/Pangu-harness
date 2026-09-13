@@ -60,22 +60,11 @@ export interface RunResult {
   injectedCardIds?: string[];
 }
 
-/**
- * 解析当前模型的上下文窗口（tokens）。
- * 走 provider.getModelContextLength 通道；≤0 或遗留 256000 哨兵视为
- * unknown → 回落 32768 保守值（8K 模型按 256K 预算跑长任务必爆——预算必须挂真值）。
- */
-export function resolveWindowTokens(provider: ModelProvider | undefined, model: string): number {
-  try {
-    // PANSHA_CTX_WINDOW 显式覆盖优先（与 sseInteractive UI 侧同一优先级——
-    // env 覆盖时两侧若分叉，UI 压缩阈值与 loop 裁剪预算会不一致）。
-    const env = Number(process.env.PANSHA_CTX_WINDOW);
-    if (Number.isFinite(env) && env > 0) return env;
-    const n = Number((provider as any)?.getModelContextLength?.(model));
-    if (Number.isFinite(n) && n > 0 && n !== 256000) return n;
-  } catch {}
-  return 32768;
-}
+// 窗口解析收口到共享模块 ./cli/repl/tokenEstimate.ts（UI 计量 / loop 预算 /
+// runAgentTask 三处必须同源，否则 UI 压缩阈值与 loop 裁剪预算会分叉）；
+// 此处再导出保持既有测试/调用方的 import 路径不变。
+import { resolveWindowTokens } from '../cli/repl/tokenEstimate.js';
+export { resolveWindowTokens };
 
 /**
  * Run a task and emit progress events through onEvent.

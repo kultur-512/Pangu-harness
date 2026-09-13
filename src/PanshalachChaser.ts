@@ -34,6 +34,13 @@ export interface BudgetReport {
    * false = 字符长度 /4 估算（usage 缺失时的回落口径）。
    */
   usageMeasured: boolean;
+  /**
+   * 压缩计量锚点：本任务最后一次模型调用的实测 prompt_tokens。
+   * 单次请求的 prompt ≈ 当前活体上下文（system+历史+全部步骤重发），
+   * 是"现在上下文多大"的最佳实测值——累计值（estimatedUsedTokens）跨步
+   * 重复计入历史，不能当上下文占用用。
+   */
+  lastPromptTokens?: number;
   triggeredSoftLimit: boolean;
   triggeredDegradation: boolean;
   rolloutsExecuted: number;
@@ -453,12 +460,17 @@ ${issueDescription}`
 
     // M2-4：真实 usage 计量——loop 每次模型调用经 wrapper 传 onUsage 累加；
     // usage 缺失（网关无 usage 字段）时回落 len/4 估算（budgetReport 标注实测/估算）。
-    const usageAccum = { prompt: 0, completion: 0 };
+    // lastPrompt：最近一次请求的实测 prompt_tokens——上下文占用的最佳锚点
+    // （累计值跨步重复计入历史，见 BudgetReport.lastPromptTokens 注释）。
+    const usageAccum = { prompt: 0, completion: 0, lastPrompt: 0 };
     let usageSamples = 0;
     let usageMeasured = false;
     const onUsage = (u: { prompt?: number; completion?: number }) => {
       if (!u || typeof u !== 'object') return;
-      if (typeof u.prompt === 'number' && u.prompt >= 0) usageAccum.prompt += u.prompt;
+      if (typeof u.prompt === 'number' && u.prompt >= 0) {
+        usageAccum.prompt += u.prompt;
+        usageAccum.lastPrompt = u.prompt;
+      }
       if (typeof u.completion === 'number' && u.completion >= 0) usageAccum.completion += u.completion;
       usageSamples++;
     };
@@ -739,6 +751,7 @@ ${issueDescription}`
       estimatedUsedTokens,
       usageRatio: Math.min(1, estimatedUsedTokens / budgetTokens),
       usageMeasured,
+      ...(usageMeasured && usageAccum.lastPrompt > 0 ? { lastPromptTokens: usageAccum.lastPrompt } : {}),
       triggeredSoftLimit,
       triggeredDegradation,
       rolloutsExecuted,

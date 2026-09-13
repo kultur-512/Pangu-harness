@@ -2,8 +2,11 @@
 // context compaction — summarize old turns with the model, keep the
 // most recent ones verbatim, and report the token-estimate drop.
 //
-// Claude-Code-style context accounting (heuristic chars/4):
-//   estimateTokens(session) = 4k + Σ turns(userInput + summary)
+// Context accounting (A2 计量修复):
+//   measuredContextTokens(session)  — 真实优先：budgetReport.lastPromptTokens
+//                                     （网关实测的最后一次请求 prompt 大小）
+//   estimateSessionTokens(session)  — 回落口径：CJK-aware estTokens
+//                                     = 1000 + Σ turns(user + summary + answer)
 //
 // The summarizer receives the removed turns and MUST preserve key signals:
 // task essence, outcome, score, budget notes. A fake client can be injected
@@ -13,11 +16,11 @@ import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import { getStrategy, turnBrief } from './compactStrategies.js';
 import { appendCompactMarker } from './rolloutStore.js';
+import { estTokens } from './tokenEstimate.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const KEEP_RECENT = 6;
-const EST_CHARS_PER_TOKEN = 4;
 
 // configured strategy id, cached per workspace (read once per process).
 const strategyCache = new Map<string, string>();
@@ -60,14 +63,39 @@ export interface CompactResult {
   syntheticTurn?: Turn;
 }
 
+/**
+ * 会话上下文 token 估算（无实测 usage 时的回落口径）。
+ * 旧实现按 chars/4 且只数 userInput+summary——中文按 4 字符/token 系统性
+ * 低估 ~2.5 倍，且丢掉 chat 答案正文（answerText）。改为 CJK-aware
+ * estTokens 并纳入 answerText；固定基线 1000 tokens 对应旧的 4000 字符
+ * system+契约开销假设。
+ */
 export function estimateSessionTokens(session: Session): number {
-  let chars = 4000; // system + tier contract baseline
+  let tokens = 1000; // system + tier contract + 工具 schema 固定开销（基线）
   for (const t of session.turns) {
-    chars += (t.userInput?.length || 0);
-    chars += (t.result?.summary?.length || 0);
-    chars += 40;
+    tokens += estTokens(t.userInput || '');
+    tokens += estTokens(t.result?.summary || '');
+    tokens += estTokens((t.result as any)?.answerText || '');
+    tokens += 10; // 每轮角色/分隔符固定开销
   }
-  return Math.ceil(chars / EST_CHARS_PER_TOKEN);
+  return tokens;
+}
+
+/**
+ * 真实上下文占用（tokens）——chaser 把每次模型调用的实测 usage 随
+ * budgetReport 落盘，其中 lastPromptTokens 是"最后一次请求的 prompt 大小"，
+ * ≈ 当前活体上下文（system+历史+全部步骤每次全量重发）。累计值
+ * （estimatedUsedTokens）跨步重复计入历史，不能当上下文占用用。
+ * 返回 null = 会话里没有任何实测锚点（旧会话/网关无 usage），调用方回落
+ * estimateSessionTokens。
+ */
+export function measuredContextTokens(session: Session): number | null {
+  for (let i = session.turns.length - 1; i >= 0; i--) {
+    const br = (session.turns[i] as any)?.result?.budgetReport;
+    const n = Number(br?.lastPromptTokens);
+    if (br && br.usageMeasured === true && Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
 }
 
 function buildSummaryPrompt(removed: Turn[]): string {

@@ -12,6 +12,7 @@ import { PromptBuilder } from './PromptBuilder.js';
 import { TierRegistry } from '../../tiers/TierConfig.js';
 import { classifyTaskIntent } from '../taskIntent.js';
 import { createCliApprovalBridge } from '../../tools/approval.js';
+import { resolveWindowTokens } from './tokenEstimate.js';
 
 // Import all commands
 import HelpCommand from './commands/HelpCommand.js';
@@ -340,14 +341,14 @@ export class Repl {
       return;
     }
 
-    // Consume model context length from provider (persisted or cache). Default 256K.
+    // Consume model context length from provider (persisted or cache).
+    // 收口到共享 resolveWindowTokens：unknown/哨兵 → 32768 保守值（旧回落
+    // 256000 会把未知窗口谎报成"上下文 256K"）；与 loop 裁剪预算同源。
     const modelName = this.session.model || 'default';
     const effectiveModel = (provider && typeof (provider as any).getEffectiveModel === 'function')
       ? (provider as any).getEffectiveModel(modelName)
       : modelName;
-    const contextLen: number = (provider && typeof (provider as any).getModelContextLength === 'function')
-      ? (provider as any).getModelContextLength(modelName)
-      : 256000;
+    const contextLen: number = resolveWindowTokens(provider, modelName);
 
     const { PanshalachChaser } = await import('../../PanshalachChaser.js');
     const chaser = new PanshalachChaser(client, this.session.tier);
@@ -436,6 +437,9 @@ export class Repl {
       dryRun: simulate,
       memoryPreInjected: true,
       intent, // 入口前移的意图显式传入
+      // loop 70% 窗口预算裁剪的依据（此前只有 server/headless 路径传入，
+      // 交互模式长任务在溢出前没有任何主动裁剪）。
+      windowTokens: resolveWindowTokens(provider, modelName),
       // classic 路径与 SSE 主路径共享同一审批/中断语义。
       approvalMode: this.session.approvalMode,
       sessionAllowlist: this.session.sessionApprovalAllowlist,

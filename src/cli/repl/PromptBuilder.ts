@@ -6,6 +6,11 @@ import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierConfig.js';
 import type { TaskIntent } from '../taskIntent.js';
+import { estTokens } from './tokenEstimate.js';
+
+// estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
+// 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
+export { estTokens };
 
 // ==================== L0 硬约束（≤3 条，非整段注入） ====================
 export const L0_INVARIANTS: string[] = [
@@ -17,18 +22,6 @@ export const L0_INVARIANTS: string[] = [
 /** M2.1 预算红线断言：L0 超过 3 条即失败（测试调用）。 */
 export function assertL0Count(): void {
   if (L0_INVARIANTS.length > 3) throw new Error('L0_INVARIANTS 超过 3 条（M2.1 预算红线）');
-}
-
-/** 确定性 token 估算 — ceil(asciiLen/4 + cjkLen×1.5)。纯函数。 */
-export function estTokens(text: string): number {
-  let ascii = 0;
-  let cjk = 0;
-  for (const ch of String(text ?? '')) {
-    const code = ch.codePointAt(0)!;
-    if (code >= 0x4e00 && code <= 0x9fff) cjk++;
-    else ascii++;
-  }
-  return Math.ceil(ascii / 4 + cjk * 1.5);
 }
 
 export interface TierConstraint {

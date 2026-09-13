@@ -5,6 +5,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { compactSession, estimateSessionTokens, shouldAutoCompact } from '../../src/cli/repl/compactService.js';
+import { measuredContextTokens } from '../../src/cli/repl/compactService.js';
 import { Session } from '../../src/cli/repl/Session.js';
 import type { Turn } from '../../src/cli/repl/types.js';
 
@@ -84,6 +85,36 @@ describe('compactService', () => {
     const small = new Session();
     for (let i = 0; i < 5; i++) small.addTurn(mkTurn(i));
     assert.equal(shouldAutoCompact(small, 0.9), false);
+  });
+});
+
+// ==================== A2 计量修复：实测锚点 + CJK-aware 估算 ====================
+describe('A2 计量：measuredContextTokens + estimateSessionTokens', () => {
+  it('取末尾最近一次实测 lastPromptTokens；无实测 → null', () => {
+    const s = new Session({ tier: 'high', workspace: '/tmp/ws-a2' });
+    s.addTurn({ ...mkTurn(1), result: { success: true, summary: 'x', budgetReport: { usageMeasured: true, lastPromptTokens: 12000 } as any } });
+    s.addTurn({ ...mkTurn(2), result: { success: true, summary: 'x', budgetReport: { usageMeasured: false, estimatedUsedTokens: 999 } as any } });
+    assert.equal(measuredContextTokens(s), 12000, 'usageMeasured=false 的估算值不可作锚点');
+    s.addTurn({ ...mkTurn(3), result: { success: true, summary: 'x', budgetReport: { usageMeasured: true, lastPromptTokens: 15000 } as any } });
+    assert.equal(measuredContextTokens(s), 15000, '取最近的实测锚点');
+    const bare = new Session();
+    bare.addTurn(mkTurn(1));
+    assert.equal(measuredContextTokens(bare), null, '无实测 → 调用方回落估算');
+  });
+
+  it('estimateSessionTokens：CJK 按 1.5 token/字 + answerText 计入', () => {
+    const s = new Session();
+    s.addTurn({
+      id: 'c1', timestamp: 1, userInput: '中'.repeat(100), userInputType: 'task', tier: 'high', durationMs: 1,
+      result: { success: true, summary: '' },
+    });
+    const t1 = estimateSessionTokens(s);
+    assert.ok(t1 >= 1000 + 150, `CJK 100 字必须 ≥150 tokens（旧 chars/4 只有 25）：got ${t1}`);
+    s.addTurn({
+      id: 'c2', timestamp: 2, userInput: 'answer turn', userInputType: 'task', tier: 'high', durationMs: 1,
+      result: { success: true, summary: '', answerText: 'a'.repeat(400) },
+    });
+    assert.ok(estimateSessionTokens(s) - t1 >= 100, 'answerText（400 ascii ≈ 100 tokens）必须计入估算');
   });
 });
 
