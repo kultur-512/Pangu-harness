@@ -69,3 +69,6 @@ archive/2026-09-12-process-docs/solution/
 # eval 运行时产物（0.8.2 隔离工作区之前的遗留 + 运行时状态）
 .panshalach-eval-tmp/
 .panshalach-task-state.eval.json
+
+# 90题 LME 运行时工作区
+scripts/eval/longmemeval-90/ws/
