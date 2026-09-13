@@ -2,10 +2,31 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PromptBuilder, TierConstraintRegistry } from '../../src/cli/repl/PromptBuilder.js';
+import { StructuredReasoner } from '../../src/reasoning/StructuredReasoner.js';
 import { Session } from '../../src/cli/repl/Session.js';
 import { TierRegistry, Tier } from '../../src/tiers/TierConfig.js';
 
 describe('PromptBuilder', () => {
+  it('强化执行提示要求首轮只输出可执行 XML 工具块', () => {
+    const prompt = StructuredReasoner.buildToolCallFormatEnforcementPrompt([
+      'read_file', 'glob', 'bash', 'write_file', 'edit_file',
+    ]);
+    assert.ok(prompt.includes('现在立刻调用工具，不要先写计划'));
+    assert.ok(prompt.includes('<read_file>'));
+    assert.ok(prompt.includes('<file_path>src/utils/math.ts</file_path>'));
+    assert.ok(prompt.includes('不要输出“好的”、分析、步骤列表'));
+    assert.ok(prompt.includes('禁止只回复说明'));
+    assert.ok(!prompt.includes('```'));
+  });
+
+  it('不为不可用工具生成首轮示例', () => {
+    const prompt = StructuredReasoner.buildToolCallFormatEnforcementPrompt(['bash']);
+    assert.ok(prompt.includes('<bash>'));
+    assert.ok(!prompt.includes('<read_file>'));
+    assert.ok(!prompt.includes('<write_file>'));
+  });
+
+
   it('includes tier contract and recent context', async () => {
     const sess = new Session({ tier: 'high' });
     sess.addTurn({

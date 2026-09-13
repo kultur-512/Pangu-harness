@@ -105,7 +105,7 @@ describe('0.8 P2 messages 栈组装（loop 层）', () => {
     assert.deepEqual(first[0], { role: 'system', content: 'STABLE' }, 'system 首位');
     assert.deepEqual(first[1], { role: 'user', content: 'TASK-INIT' }, '首条 user = 初始 prompt');
     assert.equal(first[2].role, 'user');
-    assert.ok(first[2].content.includes('执行命令示例'), '首步格式教学作为独立 user 消息注入');
+    assert.ok(first[2].content.includes('现在立刻调用工具，不要先写计划'), '首步格式教学作为独立 user 消息注入');
     assert.equal(model.calls.chat, 1);
     assert.equal(model.calls.complete, 0, 'chat 通道下 complete 零调用');
   });
@@ -354,10 +354,10 @@ describe('0.8 P2 chaser 接线（messages 通道）', () => {
         intent: 'execution',
       });
       assert.equal(chatCalls, 0, 'off 模式零 messages 调用');
-      assert.equal(prompts.length, 1);
+      assert.equal(prompts.length, 2);
       assert.ok(prompts[0].includes('修复 login 页面'), 'off 模式任务文本走 issueDescription');
       assert.ok(!prompts[0].includes('STABLE-SEG'), 'off 模式 segments 不进入 prompt');
-      assert.equal(res.bestTrajectory?.stopReason, 'answered');
+      assert.equal(res.bestTrajectory?.stopReason, 'no-verification');
     } finally {
       restoreEnv();
     }

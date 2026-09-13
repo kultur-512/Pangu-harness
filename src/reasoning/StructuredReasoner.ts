@@ -324,14 +324,39 @@ ${executionResult}${toolInfo}
     const canWrite = tools.has('write_file');
 
     const examples: string[] = [];
-    examples.push(`执行命令示例：
+    // 首个动作优先读/搜：弱模型更容易复制完整的只读调用，看到结果后再修改。
+    if (tools.has('read_file')) {
+      examples.push(`第一步（先读取目标文件）——只输出下面这个工具块，不要写任何解释：
+<>
+  <read_file>
+    <file_path>src/utils/math.ts</file_path>
+  </read_file>
+</>`);
+    } else if (tools.has('glob')) {
+      examples.push(`第一步（先查找目标文件）——只输出下面这个工具块，不要写任何解释：
+<>
+  <glob>
+    <pattern>src/**/*.ts</pattern>
+  </glob>
+</>`);
+    } else {
+      examples.push(`第一步——只输出下面这个工具块，不要写任何解释：
 <>
   <bash>
     <command>echo hello</command>
   </bash>
 </>`);
+    }
+    if (tools.has('bash')) {
+      examples.push(`验证示例：
+<>
+  <bash>
+    <command>npm test</command>
+  </bash>
+</>`);
+    }
     if (canWrite) {
-      examples.push(`写文件示例：
+      examples.push(`写文件示例（必须先读文件后使用）：
 <>
   <write_file>
     <file_path>notes.txt</file_path>
@@ -341,16 +366,19 @@ ${executionResult}${toolInfo}
     }
 
     return `【工具调用格式（必须遵守）】
-每一步你必须输出恰好一个工具调用块，用 <> 行包裹，直接输出，不要放进 \`\`\` 代码块：
+这是执行任务，不是问答。**现在立刻调用工具，不要先写计划。**
+每一步的输出必须以 <> 开始、以 </> 结束，并且只能包含一个工具调用块。
+第一步只输出上面“第一步”示例同形的 XML 工具块；不要输出“好的”、分析、步骤列表、Markdown 代码围栏或任何工具块外文字。
 
 ${examples.join('\n\n')}
 
 规则：
-- 一次只调用一个工具，看到结果后再决定下一步。
-- 可用工具：${[...tools].sort().join(', ')}。不要调用列表之外的工具。
+- 先调用工具，看到工具结果后再解释或决定下一步；计划文字不能代替工具调用。
+- 一次只调用一个工具；可用工具：${[...tools].sort().join(', ')}。不要调用列表之外的工具。
 - 参数写在 <参数名>值</参数名> 中，不要用 JSON。
-- 完成修改后必须运行验证命令；全部通过时在最后输出 VERIFICATION: PASS。
-- 禁止只描述计划而不输出工具调用块。`;
+- 修改前必须先 read_file；完成修改后必须用 bash 运行验证命令并检查输出。
+- 只有真实验证命令通过时，最后才输出 VERIFICATION: PASS。
+- 如果你无法调用工具，仍必须输出合法工具块，禁止只回复说明。`;
   }
 
   /**
