@@ -56,6 +56,8 @@ export interface RunResult {
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
   verifyCmd?: string[];
+  /** 0.8.2 证据链：本任务实际注入的记忆卡号（lastBuildMeta 透出；headless 宿主打印证据行用） */
+  injectedCardIds?: string[];
 }
 
 /**
@@ -197,11 +199,19 @@ export async function runAgentTask(
   let success = false;
 
   try {
-    const result = await chaser.solveIssue(enriched, session.workspace, {
+    // 0.8.2 chat 净化（真机 1B 元话语根因修复）：chat 直答的 user 必须是
+    // "记忆块 + 用户原话"，绝不能是整段 enriched（stable 外壳 + 结构块会把
+    // 1B 拖回工程框架、记忆卡与当前输入混淆）。记忆块由宿主从 lastBuildMeta
+    // 侧通道传出，任务原文原样传 chaser。
+    const solveIssueInput = intent === 'chat' ? req.task : enriched;
+    const chatMemoryBlock = intent === 'chat' ? pb.getChatMemoryBlock() : undefined;
+    const result = await chaser.solveIssue(solveIssueInput, session.workspace, {
       tier: session.tier as any,
       yes: true,
       dryRun: !!req.simulate,
       memoryPreInjected: true,
+      // 0.8.2：chat 直答的独立记忆块（与原文分离——chaser 组装干净 user）
+      chatMemoryBlock,
       // 入口前移的意图显式传入（chaser 不再对富化文本兜底分类）
       intent,
       // 审批透传
@@ -281,6 +291,16 @@ export async function runAgentTask(
       ? lastStepResult
       : undefined;
 
+    // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
+    // 此前产卡门只认 completed（工程任务）——纯对话的事实永远不入记忆，
+    // 跨会话个人化（LongMemEval 场景）结构性失忆。best-effort：绝不影响对话。
+    if (intent === 'chat' && answerText) {
+      try {
+        const { recordChatFact } = await import('../memory/chatFactMemory.js');
+        await recordChatFact(session.workspace, req.task, answerText);
+      } catch { /* 记忆沉淀失败不影响对话 */ }
+    }
+
     ctx.onEvent({
       type: 'result',
       success,
@@ -299,6 +319,9 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      // 0.8.2 证据链透出：headless/one-shot 宿主（RunCommand/eval runner）可从此
+      // 读取逐任务注入账本——此前注入审计只在 rollout context 事件里，stdout 不可见。
+      injectedCardIds,
       ...(partialText ? { partialText } : {}),
       ...(answerText ? { answerText } : {}),
     };

@@ -77,6 +77,7 @@ export const FAILURE_SECONDARY = Object.freeze([
   'mcp-unavailable',       // MCP 工具不可用
   'approval-denied',       // 审批被拒绝
   'prompt-too-short',      // A 档 prompt chars 未达溢出阈值（标 not-applicable）
+  'external-verify-nonzero', // 外部 verify.sh 退出码非零（工作产物不满足约束）
   'unknown',
 ]);
 

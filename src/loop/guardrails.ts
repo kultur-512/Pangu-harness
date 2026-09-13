@@ -124,8 +124,9 @@ export class ToolCallGuardrailController {
       // 成功即打破连败：该签名 / 该工具计数归零。
       this.exactFailures.delete(key);
       this.toolFailures.delete(name);
-      // 只读拒绝快速通道：该工具执行成功（如用户已 /approvals default 放行）→ 归零。
-      this.readonlyDenials.delete(name);
+      // 只读拒绝快速通道：写工具执行成功（如用户已 /approvals default 放行）→
+      // 跨工具总计数归零（readonly 根因已解除）。
+      this.readonlyDenials.delete('__any_write__');
     }
 
     // 幂等无进展跟踪：同签名同结果（截断预览）重复计数；结果变化即重置。
@@ -149,10 +150,14 @@ export class ToolCallGuardrailController {
   recordDenied(tool: string, reason: string): void {
     const name = String(tool ?? '').trim();
     if (!name) return;
+    // 0.8.2 一致性修复（真机 1B 实录）：readonly 拒绝按【跨工具总数】计数——
+    // 此前按工具名分桶，write_file 1 次 + edit_file 1 次 = 各 1，阈值 2 永不
+    // 触发，模型在只读档位死磕到步数耗尽。readonly 场景任何写类拒绝都是同一
+    // 根因（档位），总计数 2 即阻断并指引用户。
     if (String(reason ?? '').includes('DENIED_READONLY')) {
-      this.readonlyDenials.set(name, (this.readonlyDenials.get(name) ?? 0) + 1);
+      this.readonlyDenials.set('__any_write__', (this.readonlyDenials.get('__any_write__') ?? 0) + 1);
     } else {
-      this.readonlyDenials.delete(name);
+      this.readonlyDenials.delete('__any_write__');
     }
   }
 
@@ -172,15 +177,19 @@ export class ToolCallGuardrailController {
   }
 
   private checkReadonlyDenial(call: ToolCall): GuardrailDecision | undefined {
-    const name = String(call.toolName ?? '').trim();
-    const count = this.readonlyDenials.get(name) ?? 0;
+    // 0.8.2：跨工具总计数（readonly 场景任何写类拒绝都是同一根因——
+    // 真机 1B 实录：write 1 次 + edit 1 次 = 按工具分桶各 1，阈值 2 永不触发，
+    // 模型死磕到步数耗尽）。
+    const count = this.readonlyDenials.get('__any_write__') ?? 0;
     if (count >= this.readonlyDenyBlockAfter) {
       return {
         blocked: true,
         reason:
           `TOOL_ERROR: GUARDRAIL_READONLY_DENIED\n` +
-          `当前为只读档位，写操作无法执行。请立即 end_turn 并向用户报告：` +
-          `需要用户执行 /approvals default 切换档位后重试（${name} 已连续被只读拒绝 ${count} 次）。`,
+          `当前为只读档位，任何写操作（write_file/edit_file）都无法执行，` +
+          `与具体工具无关（已累计拒绝 ${count} 次）。本任务无法在只读档位完成：` +
+          `请立即 end_turn，并向用户说明"需要切换到 default 档位（/approvals default 或 shift+tab）后重新提交任务"。` +
+          `不要再次尝试任何写操作。`,
       };
     }
     return undefined;

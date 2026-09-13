@@ -31,6 +31,15 @@ const CHAT_SELF_QUESTION =
 /** R5（0.8.1）：疑问/概念提问标记——命中即抑制 execution 判定（概念提问不进执行循环白烧步数）。 */
 const QUESTION_MARK_RE = /(什么|怎么|怎样|为何|区别|差异|[?？])|吗[\s?？!！。.]*$/;
 
+/** R7（0.8.2）：英文疑问引导词开头（LongMemEval 接入驱动：英文疑问句大多无
+ *  '?' 结尾，旧正则漏判——"What was the first issue I had..." 类提问被
+ *  动词启发误判 execution）。疑问词开头 = 提问，除非带明确文件引用。 */
+const EN_INTERROGATIVE_RE = /^(what|when|where|who|whom|whose|which|why|how)\b/i;
+
+/** R7（0.8.2）：第一人称经历回忆（中英）——问的是用户自己的历史，
+ *  属对话问答（个人化记忆场景），不进执行循环。 */
+const FIRST_PERSON_RECALL_RE = /(我(的|曾|有|在|什么时候|哪个|多少|第一次|最近))|\b(did|do|have|has)\s+i\b|\b(my|our)\s+(first|last|new|old|current)\b/i;
+
 /** R5（0.8.1）：文创/文字润饰类宾语——写诗/优化表达等纯文本创作（无文件参照时 → chat 直答）。 */
 const TEXT_CRAFT_RE = /(一首|诗|歌词|对联|谜语|故事|小说|散文|作文|文案|表达|措辞|润色)/;
 
@@ -73,6 +82,14 @@ export function classifyTaskIntent(input: string): TaskIntent {
   // （"能在 memo.txt 里加一行吗"仍是写请求）。
   const EXPLICIT_WRITE_RE = /(写入|添加|改成|创建|新建|加上|加一行|写一行|写两行|补全|完成|继续|接着|搞定|收尾|落盘)/;
   if (EXPLICIT_WRITE_RE.test(t) && hasFileRef) return 'execution';
+
+  // R7（0.8.2）：英文疑问引导词开头 / 第一人称经历回忆 → 提问（置于
+  // EXECUTION_WORDS 之前——提问不进执行循环；含文件引用仍走 search 先只读确认）。
+  // LongMemEval 接入驱动：英文疑问句大多无 '?' 结尾，旧正则漏判导致
+  // "What was the first issue I had..." 类个人化提问被动词启发误判。
+  if (EN_INTERROGATIVE_RE.test(t) || FIRST_PERSON_RECALL_RE.test(t)) {
+    return hasFileRef ? 'search' : 'chat';
+  }
 
   if (QUESTION_MARK_RE.test(t)) {
     return hasFileRef ? 'search' : 'chat';

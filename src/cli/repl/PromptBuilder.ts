@@ -150,6 +150,15 @@ export class PromptBuilder {
     private tierConfig: TierConfig
   ) {}
 
+  // 0.8.2：最近一次 build 注入的记忆块独立文本（chat 直答干净组装用）
+  private lastMemoryBlockText = '';
+
+  /** 最近一次注入的【相关记忆】块（无注入 → 空串）。chat 直答的 user 应为
+   *  "此块 + 用户原话"——绝不能整段 enriched 塞进 user（1B 元话语根因）。 */
+  getChatMemoryBlock(): string {
+    return this.lastMemoryBlockText;
+  }
+
   // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
   private duplicatesSkipped = 0;
@@ -573,7 +582,17 @@ export class PromptBuilder {
       // use pre-collected relevant files (from caller) for reference filtering
       const currentFiles = currentWorkspaceFiles && currentWorkspaceFiles.length ? currentWorkspaceFiles : undefined;
       // 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
-      const keywords = (issue ?? '').split(/\s+/).map(w => w.replace(/^[/@#]/, '')).filter(w => w.length >= 2);
+      // 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
+      // 停用词占满相关性命中，区分度归零）；中文 2 字词保留。
+      const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
+      const keywords = (issue ?? '')
+        .split(/\s+/)
+        .map(w => w.replace(/^[/@#]/, ''))
+        .filter(w => {
+          const lw = w.toLowerCase();
+          if (/[一-龥]/.test(w)) return w.length >= 2;
+          return w.length >= 2 && !STOPWORDS.has(lw);
+        });
       this.lastKeywords = keywords;
       const allCards = memStore.loadFiltered({
         tier: this.session.tier,
@@ -599,6 +618,15 @@ export class PromptBuilder {
         if (added) this.memoryNumberSeq += cards.length;
         // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
         this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        // 0.8.2：独立记忆块文本（chat 直答干净组装用——chat 的 user 应是
+        // "记忆块 + 用户原话"，而不是整段 enriched prompt 外壳，否则 1B 被
+        // 结构块噪音拖垮、元话语复发）。非 chat 也存，无副作用。
+        const memStart = lines.findIndex((l) => l.includes('【相关记忆】'));
+        if (memStart >= 0) {
+          this.lastMemoryBlockText = lines.slice(memStart)
+            .filter((l) => l.includes('【相关记忆】') || l.startsWith('  - [M') || l.startsWith('（另有'))
+            .join('\n');
+        }
         return added;
       }
       this.lastInjectedCardIds = [];
@@ -649,6 +677,10 @@ export class PromptBuilder {
   }
 
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
+    // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
+    // （Pi/CC 实验把整个 memory 文件塞进上下文）。产品默认不受影响。
+    const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
+    if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
     if (level === 'light') return 3;
     if (level === 'medium') return 6;
     if (level === 'high') return 8;

@@ -18,7 +18,8 @@ fi
 if grep -qE "eval-support|evalSupport" "$TARGET"; then
   echo "[T4] PASS: eval-support 相关代码存在"
 else
-  echo "[T4] WARN: 未找到 eval-support 相关代码（可能尚未添加）"
+  echo "[T4] FAIL: 未找到 eval-support 相关代码"
+  FAILS=$((FAILS + 1)); exit 1
 fi
 
 # 3. 编译验证

@@ -52,7 +52,7 @@ import {
 } from './results/schema.mjs';
 
 /** 当前 runner 对应的 panshalach 版本（证据链必填） */
-const PANSHALACH_VERSION = '0.7.4';
+const PANSHALACH_VERSION = '0.8.0-rc';
 
 // ── 常量 ──
 
@@ -349,54 +349,60 @@ function evalAblationEnv(ablation, evalTaskId, memFileRel) {
  * - taskStyle/applicableTiers: 与档位无关（"all"）
  * - count/lastSeen/firstSeen/lastUsedAt: 同 now
  */
-function defaultSeedMemory(now) {
-  return {
-    meta: { version: '1.0.0', lastUpdated: now, totalCards: 2 },
-    cards: [
-      {
-        id: 'seed-success-001',
-        kind: 'success',
-        category: 'OTHER',
-        memoryCategory: 'implementation',
-        summary: '【seed】真实跑分前必传 --seed-memory <path> 覆盖本合成卡',
-        weight: 1.0,
-        taskStyle: 'all',
-        count: 1,
-        lastSeen: now,
-        firstSeen: now,
-        applicableTiers: [],
-        decayWeight: 1.0,
-        lastUsedAt: now,
-      },
-      {
-        id: 'seed-lesson-001',
-        kind: 'lesson',
-        category: 'OTHER',
-        memoryCategory: 'process',
-        summary: '【seed】B/C/C4 档需真实预填业务记忆方有比较意义',
-        weight: 1.0,
-        taskStyle: 'all',
-        count: 1,
-        lastSeen: now,
-        firstSeen: now,
-        applicableTiers: [],
-        decayWeight: 1.0,
-        lastUsedAt: now,
-      },
+/**
+ * 默认合成 seed（0.8.2 重写）：按任务族注入**业务相关**的方法论记忆。
+ * 旧版占位卡（"请传 --seed-memory 覆盖"）对任务零价值——真机 A/B 曲线实证
+ * B 档无增益反拖累（T1: A 40% vs B 20%）。记忆的价值在内容与任务的相关性，
+ * 不在注入动作本身——本函数让 B 档真正测"有相关经验 vs 无记忆"。
+ * 正式跑分仍推荐 --seed-memory <path> 预填真实业务记忆。
+ */
+function defaultSeedMemory(now, taskFamily = 'T1') {
+  const PLAYBOOK = {
+    T1: [
+      { id: 'seed-t1-checklist', kind: 'success', mc: 'implementation',
+        summary: '【经验】多约束文件生成任务：先逐条列出约束清单，写完后用 read_file 复读全文逐条自检（文件名大小写/数量/空行/禁用字符），一条不满足就重写' },
+      { id: 'seed-t1-format', kind: 'success', mc: 'implementation',
+        summary: '【经验】markdown checkbox 规范：格式必须是 "- [ ] "（短横+空格+方括号+空格），每个 checkbox 行后跟一个空行，全文禁止 tab 与 emoji' },
+    ],
+    T2: [
+      { id: 'seed-t2-refactor', kind: 'success', mc: 'implementation',
+        summary: '【经验】跨文件签名重构：先 grep 全部调用点并列清单，逐个调用点改写后再改函数签名，最后 tsc + 测试双验证；禁止改不相关文件' },
+      { id: 'seed-t2-bigint', kind: 'success', mc: 'implementation',
+        summary: '【经验】number|bigint 联合类型函数：调用点传 BigInt() 结果时返回值也要 .toString()/bigint 传播，测试用例必须覆盖 2 个以上 bigint 场景' },
+    ],
+    T3: [
+      { id: 'seed-t3-longdoc', kind: 'success', mc: 'implementation',
+        summary: '【经验】长文档摘要任务：先 read_file 分段读完全文再动笔，摘要必须覆盖全部小节结构，保留关键数字与结论' },
     ],
   };
+  const cards = (PLAYBOOK[taskFamily] || PLAYBOOK.T1).map((c) => ({
+    id: c.id,
+    kind: c.kind,
+    category: 'OTHER',
+    memoryCategory: c.mc,
+    summary: c.summary,
+    weight: 1.0,
+    taskStyle: 'all',
+    count: 1,
+    lastSeen: now,
+    firstSeen: now,
+    applicableTiers: [],
+    decayWeight: 1.0,
+    lastUsedAt: now,
+  }));
+  return { meta: { version: '1.1.0', lastUpdated: now, totalCards: cards.length }, cards };
 }
 
 // export 给 tests 单独验证 defaultSeedMemory 结构合法
 export { defaultSeedMemory };
 
-async function writeSeedMemory(memFileAbs, ablation, opts, now) {
+async function writeSeedMemory(memFileAbs, ablation, opts, now, memTaskFamily) {
   let seed;
   if (opts.seedMemory) {
     seed = JSON.parse(await readFile(opts.seedMemory, 'utf8'));
   } else if (ablation.injectMemory && !ablation.overflowWindow) {
-    // B/C/C4 档:无 --seed-memory 时写默认合成 seed
-    seed = defaultSeedMemory(now);
+    // B/C/C4 档:无 --seed-memory 时写默认合成 seed（按任务族定制业务方法论）
+    seed = defaultSeedMemory(now, memTaskFamily ?? 'T1');
   } else {
     // A 档:不写 seed（预期 0 注入）
     return;
@@ -470,14 +476,14 @@ function parseMemory(stdout) {
 
   // 回退：正则文本匹配（兼容旧输出）
   if (injected.length === 0) {
-    const injectedMatch = stdout.match(/injectedCardIds[:\s]*\[([^\]]*)\]/i);
+    const injectedMatch = stdout.match(/injectedCardIds\s*[:=]\s*\[([^\]]*)\]/i);
     if (injectedMatch) {
       const ids = injectedMatch[1].match(/[a-zA-Z0-9_-]+/g);
       if (ids) injected.push(...ids);
     }
   }
   if (verified.length === 0) {
-    const verifiedMatch = stdout.match(/verifiedCardIds[:\s]*\[([^\]]*)\]/i);
+    const verifiedMatch = stdout.match(/verifiedCardIds\s*[:=]\s*\[([^\]]*)\]/i);
     if (verifiedMatch) {
       const ids = verifiedMatch[1].match(/[a-zA-Z0-9_-]+/g);
       if (ids) verified.push(...ids);
@@ -568,7 +574,36 @@ async function runOne(fixture, ablation, opts) {
   // - B/C/C4 档预写 seed；A 档不写（预期 0 注入,靠 PANSHA_NO_MEMORY=1 保证）
   // - run 后 finally 删除该文件 → 下次 run 不污染
   const memFileRel = `.panshalach-memory.eval-${runId.slice(0, 8)}.json`;
-  const cwd = fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT;
+
+  // 0.8.2 评审必改：per-run 隔离工作区——agent 产物（TODO.md/repo 改动等）写入
+  // 临时副本，不落活仓库；跨 run 残留（根目录遗留 TODO.md → 下次 run 零动作
+  // 也 completed 的构造性假阳性）随 finally 清目录根除。任务语料（T2 repo、
+  // T3 document.md 等）从 tasks/<Tn>/ 整目录拷入，保证 prompt 相对路径成立。
+  const wsDir = join(ROOT, '.panshalach-eval-tmp', `ws-${taskFamily}-${runId.slice(0, 8)}`);
+  const { cpSync, existsSync } = await import('node:fs');
+  const taskAssetDir = join(TASKS_DIR, taskFamily);
+  try {
+    cpSync(taskAssetDir, wsDir, { recursive: true });
+    console.log(`  [eval] 隔离工作区: ${relative(ROOT, wsDir)}（语料拷自 ${relative(ROOT, taskAssetDir)}）`);
+  } catch (e) {
+    console.warn(`  [eval] 任务语料拷贝失败（${e.message}）——回退 ROOT cwd`);
+  }
+  const cwd = existsSync(wsDir) ? wsDir : (fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT);
+  // 0.8.2：fixture repo 带 devDependencies（tsx/typescript）但 node_modules 不入库
+  // ——副本里不装依赖，T2 verify.sh 的 tsc/npm test 检查结构性必挂（exit 2 假阴性）。
+  let repoDepsReady = false;
+  if (existsSync(join(wsDir, 'repo', 'package.json'))) {
+    try {
+      const isWinNpm = process.platform === 'win32';
+      const dr = await spawnWithTimeout(isWinNpm ? 'npm.cmd' : 'npm',
+        ['install', '--no-audit', '--no-fund', '--loglevel=error'],
+        { cwd: join(wsDir, 'repo'), timeoutMs: 180_000 });
+      repoDepsReady = dr.exitCode === 0;
+      console.log(`  [eval] repo deps install exit=${dr.exitCode}`);
+    } catch (e) {
+      console.warn(`  [eval] repo deps install 失败: ${e.message}`);
+    }
+  }
   const memFileAbs = join(cwd, memFileRel);
   let memSeeded = false;
   let memCleaned = false;
@@ -576,7 +611,9 @@ async function runOne(fixture, ablation, opts) {
     if (memCleaned) return;
     memCleaned = true;
     try { await (await import('node:fs/promises')).rm(memFileAbs, { force: true }); } catch {}
+    try { await (await import('node:fs/promises')).rm(wsDir, { recursive: true, force: true }); } catch {}
   }
+
 
   /** @type {import('./results/schema.mjs').EvalResult} */
   const result = {
@@ -636,14 +673,15 @@ async function runOne(fixture, ablation, opts) {
   await mkdir(tmpDir, { recursive: true });
   const promptFile = join(tmpDir, `prompt-${fixture.id}-${ablation.key}.txt`);
   await writeFile(promptFile, fixture.prompt, 'utf8');
+  // cwd = 隔离工作区 → 入口必须绝对路径（相对 src/cli.ts 在临时目录下不存在）
   const cliArgs = [
-    'tsx', 'src/cli.ts',
+    'tsx', join(ROOT, 'src', 'cli.ts'),
     '--headless',
     '--approval', 'full',
     'run', `@${promptFile}`,  // @path 机制：eval harness 展开临时文件内容
   ];
 
-  console.log(`  [eval] spawn: npx ${cliArgs.slice(0, -1).join(' ')} run @<prompt>`);
+  console.log(`  [eval] spawn: npx ${cliArgs.join(' ')} (@<prompt> = 临时文件内容)`);
   console.log(`  [eval] ablation: inject=${ablation.injectMemory} overflow=${ablation.overflowWindow} semantic=${ablation.semanticSearch}`);
   console.log(`  [eval] memFile: ${memFileRel} (cwd=${relative(ROOT, cwd) || '.'})`);
 
@@ -651,7 +689,7 @@ async function runOne(fixture, ablation, opts) {
   // - B/C/C4 档（有 seed 或默认合成）→ 期望注入非空
   // - A 档不写 → 期望 0 注入
   try {
-    await writeSeedMemory(memFileAbs, ablation, opts, startedAt.getTime());
+    await writeSeedMemory(memFileAbs, ablation, opts, startedAt.getTime(), taskFamily);
     memSeeded = true;
   } catch (e) {
     console.warn(`  [eval] seedMemory 写入失败: ${e.message}`);
@@ -669,6 +707,8 @@ async function runOne(fixture, ablation, opts) {
     result.durationMs = tick();
     result.finishedAt = new Date().toISOString();
 
+    let externalVerify = null;
+    let externalVerifyCmd;
     if (error) {
       console.warn(`  [eval] 子进程错误: ${error.message}`);
       result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, error.message);
@@ -680,7 +720,40 @@ async function runOne(fixture, ablation, opts) {
       const verification = parseVerification(stdout, stderr, exitCode ?? 1);
       const memory = parseMemory(stdout);
 
+      // 解析引擎真实 stopReason——锚定 one-shot 汇总行（`完成 (Nms) · <四态>`），
+      // 不做全文子串匹配（agent 答案正文里说"已通过验证"会误翻）。此值为
+      // engineStopReason：verdict 分支无更权威值时保留它（此前各分支无条件重写
+      // stopReason → answered 永不可达的死存储，评审必改项）。
+      const summaryMatch = stdout.match(/完成 \(\d+ms\)\s*·\s*(已通过验证|已回复|任务执行失败|未通过验证)/);
+      const engineStopReason = summaryMatch
+        ? ({ '已通过验证': 'completed', '已回复': 'answered', '任务执行失败': 'error', '未通过验证': 'no-verification' })[summaryMatch[1]]
+        : undefined;
+      if (engineStopReason) result.stopReason = engineStopReason;
+
+      // R6 合同外部验证（0.8.2 纰漏修复）：runner 亲自执行任务族 verify.sh——
+      // 此前 verdict 只看 agent 自验信号，agent 做对工作但未自验时证据链断裂
+      // （真机 MiniMax T1 实证：TODO.md 5/5 约束全对，verdict 却 no-verification）。
+      if (!error) {
+        const verifyScript = join(TASKS_DIR, fixture.id, 'verify.sh');
+        try {
+          const vr = await spawnWithTimeout('bash', [verifyScript], {
+            env: evalAblationEnv(ablation, evalTaskId, memFileRel),
+            cwd,
+            timeoutMs: 120_000,
+          });
+          externalVerify = { exitCode: vr.exitCode, tail: String(vr.stdout || '').slice(-1200) };
+        } catch (e2) {
+          externalVerify = { exitCode: null, error: e2?.message || String(e2) };
+        }
+        console.log(`  [eval] external verify.sh exit=${externalVerify.exitCode}`);
+        externalVerifyCmd = `bash tasks/${fixture.id}/verify.sh (exit=${externalVerify.exitCode})`;
+      }
+
       result.verification = verification;
+      // 外部验证证据在 verification 对象赋值后合并（此前追加被整体替换丢弃——评审必改项）
+      if (externalVerifyCmd) {
+        result.verification.commands = [...(result.verification.commands || []), externalVerifyCmd];
+      }
       result.memory = {
         injectedCardIds: memory.injectedCardIds,
         verifiedCardIds: memory.verifiedCardIds,
@@ -692,31 +765,55 @@ async function runOne(fixture, ablation, opts) {
       // (invalid / not_applicable),不再仅靠 tags——下游消费方按 verdict 直接分类
       // 防线失败只对 memory-on 档（B/C/C4）有意义：被要求注入却 0 注入 = 防线失守；
       // A 档（baseline no-memory）0 注入是预期行为，不算失败。
+      // 溢出要求限定长上下文任务族（T3 长文档 / T5 压缩保持）——T1/T2 是小 prompt
+      // 任务，A 档永远不可能溢出；按子串匹配判溢出会被 agent 答案正文里的
+      // "窗口/截断"字样误翻（真机 T1×A 实证假阳性 completed）。0.8.2 起溢出
+      // 检查只对 T3/T5 生效，T1/T2 的 A 档 = 有效基线样本（A/B 曲线可统计）。
+      const overflowRequired = taskFamily === 'T3' || taskFamily === 'T5';
+      // verdict 优先级（评审裁决）：防线失败 > 溢出豁免 > 外部验证（authoritative，
+      // 非 0 一票否决 agent 自称 PASS——Verify-Before-Claim 的机器执法）> 自验信号。
       if (ablation.injectMemory === true && memory.injectedCardIds.length === 0) {
         result.tags.push('line-defense-failed');
         result.verdict = 'invalid';            // EVAL_VERDICTS：不计为有效样本
         result.stopReason = 'no-verification';
         result.failureTaxonomy = { primary: 'memory-not-cited' };
-      } else if (ablation.overflowWindow && !/(overflow|truncat|窗口|截断)/i.test(stdout)) {
+      } else if (overflowRequired && ablation.overflowWindow
+                 && !/(overflow|truncat|窗口|截断|compact|压缩)/i.test(stdout)) {
         result.tags.push('overflow-skipped');
         result.verdict = 'not_applicable';    // EVAL_VERDICTS：A 档未溢出
         result.stopReason = 'no-verification';
         result.failureTaxonomy = { primary: 'no-verification', secondary: 'prompt-too-short' };
+      } else if (externalVerify && externalVerify.exitCode !== null && externalVerify.exitCode !== 0) {
+        // 外部验证失败（exit≥1）：工作产物不满足约束。即使 agent 自称
+        // ALL_TESTS_PASSED 也一票否决（真机 T2×B 实证：重构 1/5 自称通过）。
+        // stopReason 保留引擎终态，verdict/signal 反映外部验证失败。
+        result.verdict = 'no-verification';
+        result.verification.signal = 'FAIL';
+        result.verification.exitCode = externalVerify.exitCode;
+        result.failureTaxonomy = { primary: 'verification-failed', secondary: 'external-verify-nonzero' };
+      } else if (externalVerify && externalVerify.exitCode === 0) {
+        // 外部验证退出码 0 = R6 验收四问之④（有外部验证退出码吗）的正源
+        result.verdict = 'completed';
+        result.stopReason = 'completed';
+        result.verification.signal = 'PASS';
+        result.verification.exitCode = externalVerify.exitCode;
+        result.failureTaxonomy = undefined;
+        writeEvalTaskNextStep(opts, evalTaskId, 'verification done', fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT).catch(() => {});
       } else if (verification.signal === 'PASS' || verification.signal === 'ALL_TESTS_PASSED') {
+        // 无外部验证脚本可依时的自验回退（T4/T5 之外的路径不触发——runner 现对
+        // 全部 T1-T5 执行 verify.sh，本分支仅防御性保留）
         result.verdict = 'completed';
         result.stopReason = 'completed';
         result.failureTaxonomy = undefined;
-
-        // U2/U3: 成功时写 nextStep = verification done 到 eval TaskStateStore
-        // 失败/异常不写 nextStep（合同约定：nextStep 仅成功态写入）
         writeEvalTaskNextStep(opts, evalTaskId, 'verification done', fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT).catch(() => {});
       } else if (verification.signal === 'FAIL' || verification.signal === 'TESTS_FAILED') {
         result.verdict = 'no-verification';
-        result.stopReason = 'no-verification';
+        if (!engineStopReason) result.stopReason = 'no-verification';
         result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, '');
       } else {
+        // 无自验、无外部验证信号：verdict=no-verification；stopReason 保留引擎终态
+        // （answered = 有正文但未动手的假完成，verdict 不计成功——口径一致）
         result.verdict = 'no-verification';
-        result.stopReason = 'no-verification';
         result.failureTaxonomy = parseFailure(stdout, stderr, exitCode ?? 1, '');
       }
     }
@@ -728,6 +825,19 @@ async function runOne(fixture, ablation, opts) {
     await writeFile(join(artifactDir, 'stdout.txt'), stdout, 'utf8');
     await writeFile(join(artifactDir, 'stderr.txt'), stderr, 'utf8');
     await writeFile(join(artifactDir, 'result.json'), JSON.stringify(result, null, 2), 'utf8');
+    if (externalVerify) {
+      let wsListing = '';
+      try {
+        const { readdirSync } = await import('node:fs');
+        wsListing = readdirSync(cwd).join(String.fromCharCode(10));
+      } catch { wsListing = '(cwd 已清理或不可读)'; }
+      await writeFile(join(artifactDir, 'external-verify.txt'),
+        `exit=${externalVerify.exitCode}
+[cwd listing]
+${wsListing}
+
+${externalVerify.tail || ''}`, 'utf8');
+    }
 
     result.artifacts = {
       rolloutJsonl: relative(ROOT, join(artifactDir, 'stdout.txt')),
@@ -755,12 +865,22 @@ async function runOne(fixture, ablation, opts) {
  * spawn 子进程，带超时控制。
  */
 function spawnWithTimeout(command, args, opts = {}) {
+  // Windows: Node >= 20.12 (CVE-2024-27980) 直接 spawn .cmd/.bat 抛 EINVAL——
+  // 必须 shell:true 且把参数拼成带引号的命令串（路径含空格安全）。
+  // Windows: Node >= 20.12 (CVE-2024-27980) 直接 spawn .cmd/.bat 抛 EINVAL——
+  // 必须 shell:true 且把参数拼成带引号的命令串。cmd.exe 的引号转义是 `""` 加倍
+  // （不是 \"——那是 POSIX 惯例，对 cmd 是 no-op，评审指出原实现为恒等替换）。
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
+  const spawnArgs = needsShell
+    ? args.map((a) => (/["\s]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a))
+    : args;
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = spawn(command, spawnArgs, {
       env: opts.env || process.env,
       cwd: opts.cwd || ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      shell: needsShell,
     });
 
     let stdout = '';
@@ -770,8 +890,14 @@ function spawnWithTimeout(command, args, opts = {}) {
     const timeout = setTimeout(() => {
       if (!settled) {
         settled = true;
-        child.kill('SIGTERM');
-        setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 5000);
+        // Windows shell:true 下 kill 只杀 cmd.exe 包装进程——npx→node 孙进程存活
+        // 会与下一 run 的外部验证并发写工作区。taskkill /T 杀整棵进程树。
+        if (process.platform === 'win32' && child.pid) {
+          try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }); } catch {}
+        } else {
+          child.kill('SIGTERM');
+          setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 5000);
+        }
         resolve({ stdout, stderr, exitCode: null, error: new Error(`timeout after ${opts.timeoutMs}ms`) });
       }
     }, opts.timeoutMs || DEFAULT_TIMEOUT_MS);

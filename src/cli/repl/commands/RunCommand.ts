@@ -97,6 +97,14 @@ const command: Command = {
       );
 
       const duration = Date.now() - start;
+      // 0.8.2 证据行：注入账本 + 落定产物打到 stdout（eval runner 的 parseMemory
+      // 依赖此行抓 injectedCardIds——headless 无 rich UI，证据必须在文本流可见）。
+      try {
+        const inj = (result as any).injectedCardIds;
+        if (Array.isArray(inj)) {
+          ctx.renderer.writeLine(`[memory] injectedCardIds=[${inj.join(',')}]`);
+        }
+      } catch { /* 证据行失败不影响任务结果 */ }
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = result.stopReason;
       const summary = stopReason === 'completed' ? '已通过验证'
