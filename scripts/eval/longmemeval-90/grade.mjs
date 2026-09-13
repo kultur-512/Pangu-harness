@@ -93,7 +93,7 @@ function pivot(rows, questions) {
     if (l != null) { t.lp += l; t.lt++; lp += l; lt++; }
     if (r.status === 'timeout') timeouts++;
     msSum += r.ms; msN++;
-    factsSum += r.facts ?? 0;
+    factsSum += (typeof r.facts === 'number' ? r.facts : 0);
   }
   return { types, perType, total: { sp, st, lp, lt, timeouts, msAvg: msN ? msSum / msN : 0, factsAvg: msN ? factsSum / msN : 0 } };
 }
