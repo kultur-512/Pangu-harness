@@ -278,6 +278,81 @@ describe('PromptBuilder.buildForTask intent 分支（F7）', () => {
   });
 });
 
+// ==================== 包C 缺陷12：卡 id 契约——去重跳过时无孤儿 id ====================
+// 旧代码 `this.lastInjectedCardIds = concat(...)` 在 `if (added)` 之外——tryInject
+// 因 key 去重跳过时块未渲染，先行 concat 产出没有 [M*] 行对应的孤儿 id
+// （下游 markInjected / ContextSnapshot 审计到"注入了看不见的卡"）。
+// 修复：concat 移入 if 内，保证"lastInjectedCardIds 顺序 == [M*] 渲染顺序"契约。
+describe('包C 缺陷12：memory-cards key 去重跳过时不产生孤儿注入 id', () => {
+  it('预占 memory-cards key 后 appendMemoryCardsDedup 跳过渲染 → lastInjectedCardIds 不新增', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-orphan-'));
+    const memFile = path.join(wsRoot, 'mem.json');
+    const prevMemFile = process.env.PANSHA_MEMORY_FILE;
+    const prevNoMem = process.env.PANSHA_NO_MEMORY;
+    process.env.PANSHA_MEMORY_FILE = memFile; // RefinedMemoryStore isAbsolute 直采，隔离于仓库真实记忆
+    delete process.env.PANSHA_NO_MEMORY;
+    try {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const store = new RefinedMemoryStore(wsRoot);
+      const now = Date.now();
+      store.save([
+        { id: 'orphan-check-1', kind: 'failure', category: 'COMMAND_FAILED', memoryCategory: 'failure', summary: '登录空指针修复教训 keywordorphan', weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now },
+        { id: 'orphan-check-2', kind: 'failure', category: 'WEAK_VERIFICATION', memoryCategory: 'failure', summary: '终端命令检查教训 keywordorphan', weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now },
+      ] as any[]);
+
+      const sess = new Session({ tier: 'high' });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      (pb as any).injectedKeys.add('memory-cards'); // 预占 key → tryInject 必跳过
+
+      const added = await (pb as any).appendMemoryCardsDedup([], undefined, 'fix keywordorphan login');
+      assert.equal(added, false, '块被去重跳过 → 返回 false');
+      // 旧实现：concat 在 if 外 → 孤儿 id 混入注入账本（红）
+      assert.deepEqual((pb as any).lastInjectedCardIds, [], '去重跳过时不得产生孤儿注入 id');
+    } finally {
+      if (prevMemFile === undefined) delete process.env.PANSHA_MEMORY_FILE;
+      else process.env.PANSHA_MEMORY_FILE = prevMemFile;
+      if (prevNoMem !== undefined) process.env.PANSHA_NO_MEMORY = prevNoMem;
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('对照组：正常注入时 ids 与 [M*] 行同批产生（契约不回归）', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-orphan-ok-'));
+    const memFile = path.join(wsRoot, 'mem.json');
+    const prevMemFile = process.env.PANSHA_MEMORY_FILE;
+    const prevNoMem = process.env.PANSHA_NO_MEMORY;
+    process.env.PANSHA_MEMORY_FILE = memFile;
+    delete process.env.PANSHA_NO_MEMORY;
+    try {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const store = new RefinedMemoryStore(wsRoot);
+      const now = Date.now();
+      const mk = (id: string, summary: string) => ({ id, kind: 'failure', category: 'COMMAND_FAILED', memoryCategory: 'failure', summary, weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now });
+      store.save([mk('ctl-1', '控制组教训甲 ctrltoken'), mk('ctl-2', '控制组教训乙 ctrltoken'), mk('ctl-3', '控制组教训丙 ctrltoken')] as any[]);
+
+      const sess = new Session({ tier: 'high' });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, 'ctrltoken fix');
+      assert.equal(added, true, '前置：正常注入');
+      const mLines = lines.filter((l) => l.includes('  - [M'));
+      const ids = (pb as any).lastInjectedCardIds as string[];
+      assert.equal(ids.length, mLines.length, 'id 数 == [M*] 渲染行数（顺序契约）');
+    } finally {
+      if (prevMemFile === undefined) delete process.env.PANSHA_MEMORY_FILE;
+      else process.env.PANSHA_MEMORY_FILE = prevMemFile;
+      if (prevNoMem !== undefined) process.env.PANSHA_NO_MEMORY = prevNoMem;
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 // ==================== R6（0.8.1）：最近上下文带答案摘要 ====================
 describe('PromptBuilder.getRecentContext 答案落盘（R6）', () => {
   it("answered 轮的 answerText 进入最近上下文（截 200 字符，换行折叠）", async () => {

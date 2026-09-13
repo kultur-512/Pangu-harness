@@ -87,8 +87,21 @@ export interface RefinedMemoryFile {
  * 默认容量与衰减参数
  */
 export const MEMORY_LIMITS = {
-  /** 单类别最大卡片数 */
+  /** 单类别最大卡片数（历史常量；容量治理已改按 kind 分桶，见 MAX_PER_KIND） */
   MAX_PER_CATEGORY: 10,
+  /**
+   * 按 kind 分桶的容量帽（包C 缺陷1 修复，2026-09-13）：
+   * 旧 applyCapacityLimits 按 category 分桶各留 MAX_PER_CATEGORY=10，而
+   * success / preference(/remember) / merged / chat-fact 卡全部 category:'OTHER'
+   * → 三类卡挤一个 10 张桶，第 11 张起静默截断最旧；chat-fact 声称的 80 张帽
+   * （chatFactMemory MAX_TOTAL_CARDS=80）与全局 200 帽不可达。
+   * 按 kind 实际取值集合（RefinedMemoryCard.kind: 'failure' | 'success' |
+   * 'preference'）映射；chat-fact 卡（chatFactMemory）kind 即 'preference'，
+   * 其 80 帽以该桶承载。无 kind 的旧卡在容量归一为 'failure'（对齐 loadFiltered）。
+   */
+  MAX_PER_KIND: { failure: 40, success: 10, preference: 80 } as Record<string, number>,
+  /** failure kind 内每 category 细分帽（category 多样时防单 category 刷爆类帽） */
+  MAX_PER_KIND_PER_CATEGORY: 10,
   /** 全局硬上限（卡片数） */
   MAX_TOTAL_CARDS: 200,
   /** 衰减半衰期（天）—— 30 天未被触发的卡片权重衰减为 50% */

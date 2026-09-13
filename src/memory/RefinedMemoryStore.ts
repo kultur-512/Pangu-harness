@@ -1,7 +1,7 @@
 // Panshalach 提炼后持久化存储
 // 功能：提炼 / 加载 / 过滤 / 容量控制 / 衰减 / .gitignore 默认加入
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync } from 'fs';
 import { join, isAbsolute } from 'path';
 import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
@@ -10,6 +10,39 @@ import { FailureCategory } from './FailureMemory.js';
 import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
 import { normalizeRelPath } from './trajectoryFiles.js';
+import { atomicWriteFileSync } from '../utils/atomicFile.js';
+
+// ==================== 持久化文件校验（包C 缺陷3/10 共用） ====================
+
+/**
+ * 单卡形状校验：id / summary 必须是非空字符串。
+ * load() 与 import() 共用——旧实现对 parsed.cards 直接 cast，cards 非数组时
+ * 下游 .map 抛 TypeError 被上层 catch 吞 → 静默零注入/静默清库。
+ */
+export function isValidMemoryCardShape(c: unknown): boolean {
+  return !!c && typeof c === 'object' &&
+    typeof (c as any).id === 'string' && (c as any).id.length > 0 &&
+    typeof (c as any).summary === 'string';
+}
+
+/** 持久化文件整体校验：cards 必须是数组且逐卡形状合格（meta 宽松——save 会重建）。 */
+export function isValidMemoryFile(parsed: unknown): parsed is RefinedMemoryFile {
+  return !!parsed && typeof parsed === 'object' &&
+    Array.isArray((parsed as any).cards) &&
+    (parsed as any).cards.every(isValidMemoryCardShape);
+}
+
+/**
+ * 进程级注入账本（cardId → 最近注入时间 + 累计次数）——包C 缺陷8：
+ * 从实例级升级，短命实例（runAgentTask 每步 new 即弃）的记账不再丢。
+ * 仍纯内存、不写盘（契约 v3：markInjected 仅记账）。
+ */
+const injectionLedger = new Map<string, { at: number; count: number }>();
+
+/** 清空注入账本（测试隔离用）。 */
+export function resetInjectionLedgerForTest(): void {
+  injectionLedger.clear();
+}
 
 export interface RefineInput {
   /** 原始轨迹（来自 VerifyCritiqueLoop） */
@@ -264,8 +297,8 @@ export class RefinedMemoryStore {
       );
     }
 
-    // 写入
-    writeFileSync(this.filePath, serialized, 'utf-8');
+    // 写入（包C 缺陷4：原子写——tmp + rename，崩溃不留半截文件）
+    atomicWriteFileSync(this.filePath, serialized);
     this.cache = file;
     this.invalidateProjection(); // save() 写入 → 重建
 
@@ -277,6 +310,11 @@ export class RefinedMemoryStore {
 
   /**
    * 加载
+   * 包C 缺陷3：load 后校验 Array.isArray(parsed.cards) + 逐卡 id/summary；
+   * 不合格 → quarantine（原文件改名 <原名>.corrupt-<时间戳> 留证）+ 从空库
+   * 启动 + console.error 一条告警。旧实现 JSON.parse 后直接 cast：cards 非数组
+   * 时下游 .map 抛 TypeError 被上层 catch 吞 → 静默零注入；撕裂 JSON → catch
+   * 后返回空库缓存 → 下次 save 静默清库。
    */
   load(): RefinedMemoryFile {
     if (this.cache) return this.cache;
@@ -284,15 +322,38 @@ export class RefinedMemoryStore {
       this.cache = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
       return this.cache;
     }
+    let parsed: RefinedMemoryFile;
     try {
       const raw = readFileSync(this.filePath, 'utf-8');
-      const parsed = JSON.parse(raw) as RefinedMemoryFile;
-      this.cache = parsed;
-      return parsed;
+      parsed = JSON.parse(raw) as RefinedMemoryFile;
     } catch {
-      this.cache = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
-      return this.cache;
+      return this.quarantineCorruptFile('JSON 解析失败（撕裂/损坏）');
     }
+    if (!isValidMemoryFile(parsed)) {
+      return this.quarantineCorruptFile('结构校验失败（cards 非数组或卡片缺 id/summary）');
+    }
+    this.cache = parsed;
+    return parsed;
+  }
+
+  /**
+   * 损坏隔离（quarantine）：原文件改名 `<原名>.corrupt-<时间戳>` 留证供人工恢复，
+   * 从空库启动。改名失败也要给出可见告警（绝不静默吞）。
+   */
+  private quarantineCorruptFile(reason: string): RefinedMemoryFile {
+    try {
+      const stamped = `${this.filePath}.corrupt-${Date.now()}`;
+      renameSync(this.filePath, stamped);
+      console.error(
+        `[memory] 记忆文件损坏已隔离：${this.filePath} → ${stamped}（${reason}）。` +
+        `已从空库启动；原文件保留在 .corrupt-* 可人工恢复。`
+      );
+    } catch (qerr: any) {
+      console.error(`[memory] 记忆文件损坏且隔离失败：${this.filePath}（${reason}）：${qerr?.message || qerr}`);
+    }
+    const empty: RefinedMemoryFile = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
+    this.cache = empty;
+    return empty;
   }
 
   /**
@@ -478,22 +539,32 @@ export class RefinedMemoryStore {
 
   /**
    * markInjected（接口契约 v3 · 二态之一）：注入即记账。
-   * - 仅记录内存账本（lastInjectedAt），不写盘、不改 count/lastUsedAt；
+   * - 仅记录内存账本（进程级 injectionLedger），不写盘、不改 count/lastUsedAt；
    * - 事件（memory_injected）由调用方经 rollout 'context'/'agent' 事件落盘；
    * - 有意不影响衰减：count 驱动维持现状（refine/merge/refineCompactSignals），
    *   避免"注入≠使用"的自激励循环（对抗评审 A1/攻击1.1 的结论）。
+   * 包C 缺陷8：账本从实例级升级为进程级（模块级 Map）——runAgentTask 每步
+   * `new RefinedMemoryStore(...)` 的短命实例旧账本记账即弃（只写不读）；
+   * /memory stats 的一次性 CLI 实例也永远查不到。进程级共享后同进程任意实例
+   * 记账可查（仍不写盘，契约不变）。
    */
-  private lastInjectedAt = new Map<string, number>();
   markInjected(cardIds: string[], now = Date.now()): { injected: number; cardIds: string[] } {
     for (const id of cardIds) {
-      if (id) this.lastInjectedAt.set(id, now);
+      if (!id) continue;
+      const prev = injectionLedger.get(id);
+      injectionLedger.set(id, { at: now, count: (prev?.count ?? 0) + 1 });
     }
     return { injected: cardIds.filter(Boolean).length, cardIds: cardIds.filter(Boolean) };
   }
 
-  /** 查询注入账本（/memory stats 与 ContextSnapshot 事件可用）。 */
+  /** 查询注入账本：最近注入时间（/memory stats 与 ContextSnapshot 事件可用）。 */
   injectedAtOf(cardId: string): number | undefined {
-    return this.lastInjectedAt.get(cardId);
+    return injectionLedger.get(cardId)?.at;
+  }
+
+  /** 查询注入账本：累计注入次数（进程级，包C 缺陷7 stats 视图用）。 */
+  injectedCountOf(cardId: string): number | undefined {
+    return injectionLedger.get(cardId)?.count;
   }
 
   /**
@@ -529,7 +600,7 @@ export class RefinedMemoryStore {
     // 注意：不能走 save()——mergeAndCap 会把传入卡与已有卡按 count 累加（同一批
     // 对象 → 翻倍）。markVerified 是原位刷新，直写持久化。
     file.meta.lastUpdated = now;
-    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+    atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
     this.cache = file;
     this.invalidateProjection();
     return { updated, path: this.filePath };
@@ -564,7 +635,7 @@ export class RefinedMemoryStore {
     const removed = before - existing.cards.length;
     existing.meta.totalCards = existing.cards.length;
     existing.meta.lastUpdated = Date.now();
-    writeFileSync(this.filePath, JSON.stringify(existing, null, 2), 'utf-8');
+    atomicWriteFileSync(this.filePath, JSON.stringify(existing, null, 2));
     this.cache = existing;
     this.invalidateProjection(); // clear() 写入
     return { removed };
@@ -579,6 +650,10 @@ export class RefinedMemoryStore {
 
   /**
    * 导入
+   * 包C 缺陷10：旧实现把 parsed.cards 原样写盘（非数组/畸形卡直接污染持久化层，
+   * 下游 .map 抛 TypeError）。现校验：形状（复用 load 的 isValidMemoryFile）+
+   * 大小上限（沿用 save 的 200KiB）；不合格 throw（CLI 捕获后显示导入失败），
+   * 盘上文件保持不变。
    */
   import(jsonString: string, merge = true): { imported: number; total: number } {
     let parsed: RefinedMemoryFile;
@@ -587,7 +662,15 @@ export class RefinedMemoryStore {
     } catch {
       return { imported: 0, total: 0 };
     }
-    if (!parsed.cards) return { imported: 0, total: 0 };
+    if (!isValidMemoryFile(parsed)) {
+      throw new Error('✗ 导入被拒绝：文件结构不合格（cards 必须是数组，且每张卡含字符串 id/summary）');
+    }
+    const sizeBytes = Buffer.byteLength(jsonString, 'utf-8');
+    if (sizeBytes > MEMORY_LIMITS.MAX_FILE_SIZE_BYTES) {
+      const sizeKiB = (sizeBytes / 1024).toFixed(1);
+      const capKiB = Math.round(MEMORY_LIMITS.MAX_FILE_SIZE_BYTES / 1024);
+      throw new Error(`✗ 导入被拒绝：文件 ${sizeKiB}KiB 超过上限 ${capKiB}KiB（MEMORY_LIMITS.MAX_FILE_SIZE_BYTES）`);
+    }
 
     if (merge) {
       this.save(parsed.cards);
@@ -596,7 +679,7 @@ export class RefinedMemoryStore {
         meta: { version: parsed.meta?.version ?? '1.0.0', lastUpdated: Date.now(), totalCards: parsed.cards.length },
         cards: parsed.cards,
       };
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
       this.cache = file;
       this.invalidateProjection(); // import 写入
     }
@@ -816,7 +899,7 @@ export class RefinedMemoryStore {
     if (removed) {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = Date.now();
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
       this.cache = file;
       this.invalidateProjection(); // forget 写入
     }
@@ -859,7 +942,7 @@ export class RefinedMemoryStore {
     if (changed) {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = Date.now();
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
       this.cache = file;
       this.invalidateProjection(); // refineCompactSignals 写入
     }
@@ -880,7 +963,17 @@ export class RefinedMemoryStore {
     if (candidates.length < 2) return [];
 
     // 2-gram 词元
-    const stopWords = new Set('的了是在与和或及对用要可以中之不有没很也都被把将使如因为但而'.split(''));
+    // 包C 缺陷11：停用词表改 ≥2 字词表——旧单字集合与 w.length>=2 过滤矛盾
+    // （词元恒 ≥2 字，单字词永远匹配不上，恒不过滤的死逻辑）。
+    const stopWords = new Set([
+      // 中文双字虚词（tokenize 以空白切词，中文需成词才可停用）
+      '这个', '那个', '我们', '你们', '他们', '自己', '什么', '一个', '没有',
+      '还是', '只是', '都是', '也是', '就是', '不是', '可以', '以及', '或者',
+      '但是', '所以', '如果', '对于', '之后', '然后',
+      // 英文高频虚词（≥2 字符，可被 length>=2 过滤命中）
+      'the', 'and', 'for', 'with', 'this', 'that', 'was', 'were', 'are',
+      'you', 'your', 'our', 'not', 'but', 'its', 'from',
+    ]);
     const tokenize = (s: string): string[] => {
       const norm = String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
       const words = norm.split(' ').filter(w => w.length >= 2 && !stopWords.has(w));
@@ -923,11 +1016,13 @@ export class RefinedMemoryStore {
         category: 'OTHER',
         memoryCategory: g[0].memoryCategory ?? 'general',
         summary,
-        weight: Math.max(...g.map(c => c.weight)),
+        // 包C 缺陷11：legacy 卡数值字段缺失 → ?? 0 / 回退链，防 Math.min/求和
+        // 产 NaN（合并卡出生即 near-death：effectiveWeight=NaN 永不过注入线）。
+        weight: Math.max(...g.map(c => c.weight ?? 0)),
         taskStyle: 'all',
-        count: g.reduce((a, c) => a + c.count, 0),
+        count: g.reduce((a, c) => a + (c.count ?? 0), 0),
         lastSeen: now,
-        firstSeen: Math.min(...g.map(c => c.firstSeen)),
+        firstSeen: g.reduce((min, c) => Math.min(min, c.firstSeen ?? c.lastSeen ?? now), now),
         applicableTiers: [],
         sourceContext: `合并自 ${sourceIds.join(', ')}`,
         decayWeight: 1.0, // 按 now 起算，不继承源卡衰减
@@ -946,7 +1041,7 @@ export class RefinedMemoryStore {
     if (results.length > 0) {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = now;
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
       this.cache = file;
       this.invalidateProjection(); // 合并后缓存重建
     }
@@ -970,21 +1065,68 @@ export class RefinedMemoryStore {
   }
 
   private applyCapacityLimits(cards: RefinedMemoryCard[]): RefinedMemoryCard[] {
-    // 按类别分组，每类别保留最新且权重高的
-    const byCategory = new Map<string, RefinedMemoryCard[]>();
+    // 包C 缺陷1（2026-09-13）：分桶改按 kind 治理。旧实现按 category 分桶各留
+    // MAX_PER_CATEGORY=10，而 success / preference(/remember) / merged / chat-fact
+    // 卡全部 category:'OTHER' → 三类挤一个 10 张桶，第 11 张起静默截断最旧；
+    // chat-fact 的 80 帽（chatFactMemory MAX_TOTAL_CARDS）与全局 200 帽不可达。
+    // 新语义：
+    //   - 每 kind 一桶，桶帽 MEMORY_LIMITS.MAX_PER_KIND
+    //     （failure 40 / success 10 / preference 80——chat-fact 卡 kind 即
+    //      'preference'，其 80 帽以该桶承载；未知 kind 回退 MAX_PER_CATEGORY）；
+    //   - failure 桶内每 category 再细分 MAX_PER_KIND_PER_CATEGORY=10、类总 40；
+    //   - 无 kind 旧卡归 'failure'（对齐 loadFiltered 的归一化）；
+    //   - 桶内排序沿用现有：lastSeen 倒序 + weight 降序；
+    //   - 全局 MAX_TOTAL_CARDS=200 不变。
+    const byKind = new Map<string, RefinedMemoryCard[]>();
     for (const c of cards) {
-      if (!byCategory.has(c.category)) byCategory.set(c.category, []);
-      byCategory.get(c.category)!.push(c);
+      const kind = (c as any).kind ?? 'failure';
+      if (!byKind.has(kind)) byKind.set(kind, []);
+      byKind.get(kind)!.push(c);
     }
+    const capOf = (kind: string): number => MEMORY_LIMITS.MAX_PER_KIND[kind] ?? MEMORY_LIMITS.MAX_PER_CATEGORY;
+    const recencyDesc = (a: RefinedMemoryCard, b: RefinedMemoryCard): number =>
+      (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || (b.weight ?? 0) - (a.weight ?? 0);
+    // 审查 CONCERN-7（2026-09-13）：pinned 卡（/memory remember --pin 的用户显式
+    // 意图）免容量淘汰——preference 桶由 chat-fact 与手工偏好共享，chat 洪流每轮
+    // 刷新 lastSeen，按近期优先淘汰必然把 pinned 偏好挤出。规则：pinned 全保，
+    // 非 pinned 竞争剩余名额（pinned 可超帽——用户显式意图高于容量治理）。
+    const isPinned = (c: RefinedMemoryCard): boolean => (c as any).pinned === true;
+    const keepWithPinned = (arr: RefinedMemoryCard[], cap: number): RefinedMemoryCard[] => {
+      const pinned = arr.filter(isPinned);
+      const rest = arr.filter((c) => !isPinned(c));
+      return [...pinned, ...rest.slice(0, Math.max(0, cap - pinned.length))];
+    };
+
     const limited: RefinedMemoryCard[] = [];
-    for (const [, arr] of byCategory) {
-      arr.sort((a, b) => b.lastSeen - a.lastSeen);
-      limited.push(...arr.slice(0, MEMORY_LIMITS.MAX_PER_CATEGORY));
+    for (const [kind, arr] of byKind) {
+      arr.sort(recencyDesc);
+      const cap = capOf(kind);
+      if (kind === 'failure') {
+        // failure 类内每 category 10 张、类总 40
+        const byCategory = new Map<string, RefinedMemoryCard[]>();
+        for (const c of arr) {
+          const cat = c.category || 'OTHER';
+          if (!byCategory.has(cat)) byCategory.set(cat, []);
+          byCategory.get(cat)!.push(c);
+        }
+        const kept: RefinedMemoryCard[] = [];
+        for (const [, catArr] of byCategory) {
+          catArr.sort(recencyDesc);
+          kept.push(...keepWithPinned(catArr, MEMORY_LIMITS.MAX_PER_KIND_PER_CATEGORY));
+        }
+        kept.sort(recencyDesc);
+        limited.push(...keepWithPinned(kept, cap));
+      } else {
+        arr.sort(recencyDesc);
+        limited.push(...keepWithPinned(arr, cap));
+      }
     }
-    // 全局硬上限
+    // 全局硬上限（pinned 同样免淘汰）
     if (limited.length > MEMORY_LIMITS.MAX_TOTAL_CARDS) {
-      limited.sort((a, b) => b.weight * b.count - a.weight * a.count);
-      return limited.slice(0, MEMORY_LIMITS.MAX_TOTAL_CARDS);
+      const pinned = limited.filter(isPinned);
+      const rest = limited.filter((c) => !isPinned(c));
+      rest.sort((a, b) => (b.weight ?? 0) * (b.count ?? 0) - (a.weight ?? 0) * (a.count ?? 0));
+      return [...pinned, ...rest.slice(0, Math.max(0, MEMORY_LIMITS.MAX_TOTAL_CARDS - pinned.length))];
     }
     return limited;
   }

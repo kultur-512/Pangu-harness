@@ -31,11 +31,22 @@ const isFactSentence = (x: string): boolean => {
   const t = x.trim();
   if (t.length < 12 || t.length > 240) return false;
   if (/\d/.test(t)) return true;                          // 数字/日期/度量
-  if (/[一-龥]/.test(t)) return true;             // 中文句整体保留
-  if (/(my|i|we|our)/i.test(t) && /[A-Z]/.test(t)) return true; // 第一人称专名句
+  // 包C 缺陷6b：[一-龥]（URO 4E00-9FA5）过窄 → 与包 B 对齐的 CJK 范围：
+  // CJK 符号标音 3000-9FFF + Ext-A 3400-4DBF + 全角形式 FF00-FFEF。
+  if (/[\u3000-\u9fff\u3400-\u4dbf\uff00-\uffef]/.test(t)) return true;
+  // 包C 缺陷6a：加 \b 词界——旧 /(my|i|we|our)/i 无词界，任何含字母 i 的
+  // 英文句（unit/testing/nice…）都误判为第一人称专名句。
+  if (/\b(?:my|i|we|our)\b/i.test(t) && /[A-Z]/.test(t)) return true; // 第一人称专名句
   if (/\p{Lu}{2,}/u.test(t)) return true;                  // 全大写缩写
   return false;
 };
+
+/**
+ * 去重键 = 剥离【…】前缀后的句子内容（包C 缺陷6c）：turnTag 是分钟级时间戳，
+ * 拼进 summary 且去重键取 summary 全等 → 跨分钟同一句被当成新卡重复落盘。
+ * summary 仍带时间戳供展示，仅去重键剥离。
+ */
+const stripTurnTag = (s: string): string => String(s ?? '').replace(/^【[^】]*】/, '');
 
 /** 切分器（第三轮修正）：先按行、再按句、超长硬切——无句号结尾的长轮
  *  此前被整段丢弃（真机 18 题实证：12 轮只落 10 张，bike 轮缺席）。 */
@@ -135,8 +146,16 @@ export async function recordFactLines(
       });
       existing.add(line);
     }
-    if (cards.length > 0) store.save(cards as any);
-    return { recorded: cards.length, total: lines.length };
+    // 包C 缺陷2：返回真实 save 后落盘数——旧实现返回 recorded=cards.length
+    // （save() 容量截断前的候选数），save() 的 {written, capped} 被丢弃，返回值
+    // 谎报。现按本批 id 在盘上的实际存活数计（容量淘汰后与磁盘一致）。
+    let recorded = 0;
+    if (cards.length > 0) {
+      store.save(cards as any);
+      const ids = new Set(cards.map((c) => c.id));
+      recorded = store.load().cards.filter((c) => ids.has(c.id)).length;
+    }
+    return { recorded, total: lines.length };
   } catch {
     return { recorded: 0, total: lines.length };
   }
@@ -202,9 +221,10 @@ export async function recordConversationTurn(
     }
     if (candidates.length === 0) return { recorded: 0, reason: 'too-short' };
 
-    // 去重（summary 全等 → 跳过）
-    const existingSummaries = new Set(file.cards.filter((c) => c.kind === 'preference').map((c) => c.summary));
-    const fresh = candidates.filter((c) => !existingSummaries.has(c));
+    // 去重（包C 缺陷6c：键 = 剥离【…】时间戳前缀后的句子内容——旧键取 summary
+    // 全等，跨分钟同句因 turnTag 不同而漏判 → 重复落卡）
+    const existingSummaries = new Set(file.cards.filter((c) => c.kind === 'preference').map((c) => stripTurnTag(c.summary)));
+    const fresh = candidates.filter((c) => !existingSummaries.has(stripTurnTag(c)));
     if (fresh.length === 0) return { recorded: 0, reason: 'duplicate' };
 
     const cards = fresh.map((summary) => ({

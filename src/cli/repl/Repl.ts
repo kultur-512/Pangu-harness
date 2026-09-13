@@ -542,6 +542,20 @@ export class Repl {
         });
       } catch {}
 
+      // 对话事实记忆（chat 直答沉淀）——与 runAgentTask server 路径同款：
+      // answered 正文 + chat 意图才落卡。classic 行模式 REPL 此前静默零沉淀
+      // （对抗审查 F16）。best-effort：记忆沉淀失败绝不影响对话返回。
+      if ((result as any)?.bestTrajectory?.stopReason === 'answered' && this.session.workspace) {
+        try {
+          const ansTraj = (result as any).bestTrajectory;
+          const chatAnswer = String(ansTraj?.steps?.[ansTraj.steps.length - 1]?.result ?? '');
+          if (chatAnswer.trim() && classifyTaskIntent(issue) === 'chat') {
+            const { recordChatFact } = await import('../../memory/chatFactMemory.js');
+            await recordChatFact(this.session.workspace, issue, chatAnswer);
+          }
+        } catch { /* 记忆沉淀失败不影响对话 */ }
+      }
+
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = (result as any)?.bestTrajectory?.stopReason;
       const summary = stopReason === 'completed' ? '已通过验证'

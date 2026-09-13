@@ -96,7 +96,7 @@ describe('P1-D MemoryCommand submode (v2)', () => {
 
     // Menu header
     assert.ok(joined.includes('烛龙（Zhulong）Memory Manager'), 'should show submode header');
-    assert.ok(joined.includes('list / clear'), 'should show menu options');
+    assert.ok(joined.includes('list / stats / clear'), 'should show menu options（含 stats，包C 缺陷7）');
 
     // After "list", runMemoryCommand should have been called (even if no cards)
     // The submode prints the result of runMemoryCommand

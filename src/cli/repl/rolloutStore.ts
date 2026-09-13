@@ -166,16 +166,70 @@ export function readContextSnapshots(sessionId: string): ContextSnapshotPayload[
 /** 有界读取：派生查询（事件/快照）最多返回的条数（防全量重放拖垮交互路径；resume 不受限）。 */
 const MAX_DERIVED_EVENTS = 5000;
 
-/** 读取某 session 的全部业务语义事件（损坏行跳过；有界）。 */
+/** 尾部反向扫描的单块字节数（256KiB——从文件尾向前凑满 MAX_DERIVED_EVENTS 条）。 */
+const TAIL_SCAN_CHUNK_BYTES = 256 * 1024;
+
+/**
+ * 读取某 session 的全部业务语义事件（损坏行跳过；有界）。
+ *
+ * 包C 缺陷9（头重脚轻）：旧实现从头顺序读满 MAX_DERIVED_EVENTS 即 break——
+ * 超 5000 条后最新事件永不可见。现从文件尾部按块反向扫描凑满上限再正序化，
+ * 最新事件恒可见；块的半行（行首在更早块）以原始字节结转拼接后再解码，
+ * 多字节 UTF-8 字符跨块不损坏。
+ */
 export function readAgentEvents(sessionId: string): AgentEvent[] {
-  const out: AgentEvent[] = [];
-  for (const ev of readEvents(sessionId)) {
-    if (ev.type === 'agent' && ev.event) {
-      out.push(ev.event);
-      if (out.length >= MAX_DERIVED_EVENTS) break;
+  const p = fileFor(sessionId);
+  let size = 0;
+  try { size = fs.statSync(p).size; } catch { return []; }
+  let fd: number;
+  try { fd = fs.openSync(p, 'r'); } catch { return []; }
+  // 按块反向扫描；每块解出升序事件组，组间按"更早块插到前面"重组为整体升序。
+  const groups: AgentEvent[][] = []; // groups[0] = 最旧块 … 组内各自升序
+  let total = 0;
+  let carry: Buffer = Buffer.alloc(0); // 后块残留的半行原始字节（行首在更早块）
+  let end = size;
+  try {
+    while (end > 0 && total < MAX_DERIVED_EVENTS) {
+      const start = Math.max(0, end - TAIL_SCAN_CHUNK_BYTES);
+      const chunk = Buffer.alloc(end - start);
+      fs.readSync(fd, chunk, 0, chunk.length, start);
+      const full = Buffer.concat([chunk, carry]);
+      let processable = full;
+      if (start > 0) {
+        const firstNl = full.indexOf(0x0a); // 0x0a = '\n'
+        if (firstNl === -1) {
+          carry = full; // 整块无换行 → 全是半行，继续向前结转
+          processable = Buffer.alloc(0);
+        } else {
+          carry = full.subarray(0, firstNl);
+          processable = full.subarray(firstNl + 1);
+        }
+      } else {
+        carry = Buffer.alloc(0); // 已到文件头，全部为完整行
+      }
+      const evs: AgentEvent[] = [];
+      for (const line of processable.toString('utf-8').split('\n')) {
+        const s = line.trim();
+        if (!s) continue;
+        try {
+          const ev = JSON.parse(s) as RolloutEvent;
+          if (ev.type === 'agent' && (ev as any).event) evs.push((ev as any).event);
+        } catch { /* skip torn/corrupt line */ }
+      }
+      if (evs.length > 0) {
+        groups.unshift(evs); // 更早（更旧）的块插到前面 → groups 整体保持升序
+        total += evs.length;
+      }
+      end = start;
     }
+  } catch {
+    // 读取中途失败：已凑齐的部分照常返回（宽松解析纪律）
+  } finally {
+    try { fs.closeSync(fd); } catch {}
   }
-  return out;
+  let flat = groups.flat();
+  if (flat.length > MAX_DERIVED_EVENTS) flat = flat.slice(flat.length - MAX_DERIVED_EVENTS);
+  return flat;
 }
 
 function readEvents(sessionId: string): RolloutEvent[] {

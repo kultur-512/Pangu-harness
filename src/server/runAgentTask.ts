@@ -155,6 +155,10 @@ export async function runAgentTask(
   // 评测由此回答"模型当时到底看见了什么"；lastBuildMeta 在此消费（不改变 buildForTask 的 string 返回契约）。
   // 供 finalizeTaskMemory 消费的注入卡账本。
   let injectedCardIds: string[] = [];
+  // 包C 缺陷8：作用域内长命记忆实例——旧实现 `new RefinedMemoryStore(...).markInjected(...)`
+  // 实例即弃（账本只写不读还每步重例化）。现挂到本作用域唯一实例上（账本已升级
+  // 进程级，跨实例可读；实例复用消除逐任务重例化），finalizeTaskMemory 复用同一实例。
+  let auditMemoryStore: import('../memory/RefinedMemoryStore.js').RefinedMemoryStore | null = null;
   try {
     const meta = pb.lastBuildMeta;
     const injected = meta?.injectedCardIds ?? [];
@@ -172,7 +176,8 @@ export async function runAgentTask(
       try {
         const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
         if (session.workspace) {
-          new RefinedMemoryStore(session.workspace).markInjected(injected);
+          auditMemoryStore ??= new RefinedMemoryStore(session.workspace);
+          auditMemoryStore.markInjected(injected);
         }
       } catch {}
       appendAgentEvent(session.id, {
@@ -268,7 +273,8 @@ export async function runAgentTask(
     // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不
     // 影响任务成功返回（本模块 console-silent，错误以事件透出）。
     try {
-      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start);
+      // 包C 缺陷8：复用作用域内长命实例（markInjected 与 refine/markVerified 同一实例）
+      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start, auditMemoryStore ?? undefined);
     } catch (memErr: any) {
       ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
     }
@@ -361,13 +367,16 @@ export async function finalizeTaskMemory(
   injectedCardIds: string[],
   onEvent: (event: any) => void,
   taskText?: string,
-  startedAt = Date.now()
+  startedAt = Date.now(),
+  // 包C 缺陷8：可选复用调用方作用域内的长命实例（runAgentTask 传入）；
+  // 缺省时照旧自建（Repl.ts 等既有调用方零改动）。
+  reuseStore?: import('../memory/RefinedMemoryStore.js').RefinedMemoryStore
 ): Promise<void> {
   const traj = result?.bestTrajectory;
   if (!traj || traj.stopReason !== 'completed' || !session.workspace) return;
 
   const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
-  const store = new RefinedMemoryStore(session.workspace);
+  const store = reuseStore ?? new RefinedMemoryStore(session.workspace);
   const writtenFiles = extractWrittenFilePaths(traj);
 
   // R1：completed = 真实验证通过 → 提炼 success 卡并持久化（触发红线：写盘

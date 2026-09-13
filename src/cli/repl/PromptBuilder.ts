@@ -643,9 +643,14 @@ export class PromptBuilder {
           }),
           ghost,
         ], lines);
-        if (added) this.memoryNumberSeq += cards.length;
-        // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
-        this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        if (added) {
+          this.memoryNumberSeq += cards.length;
+          // 包C 缺陷12：concat 必须在 if 内——tryInject 因 key 去重跳过时块未
+          // 渲染，先行 concat 会产出没有 [M*] 行对应的孤儿 id（下游 markInjected /
+          // ContextSnapshot 审计到"注入了看不见的卡"）。
+          // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
+          this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        }
         // 0.8.2：独立记忆块文本（chat 直答干净组装用——chat 的 user 应是
         // "记忆块 + 用户原话"，而不是整段 enriched prompt 外壳，否则 1B 被
         // 结构块噪音拖垮、元话语复发）。非 chat 也存，无副作用。
