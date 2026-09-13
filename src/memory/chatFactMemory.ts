@@ -18,8 +18,39 @@ import { RefinedMemoryStore } from './RefinedMemoryStore.js';
 const hashId = (seed: string): string => createHash('sha1').update(seed).digest('hex').slice(0, 12);
 
 const MIN_INPUT_CHARS = 8;
-const INPUT_SLICE = 80;
-const ANSWER_SLICE = 80;
+const INPUT_SLICE = 120;
+const ANSWER_SLICE = 240;
+
+/**
+ * 截断保留策略（0.8.2 真机修正）：LongMemEval 的 gold 多为数字/日期/专名，
+ * 常在答复中后段——朴素截 80 字符会把关键事实截掉（真机实证：PB 成绩卡
+ * "Congratulations on your personal best time in the 5K run! T..." 数字被截，
+ * 模型看到卡也答不出）。策略：按句切分，含数字的句子优先保留，超预算再截。
+ */
+function smartSlice(text: string, budget: number): string {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (t.length <= budget) return t;
+  const sentences = t.match(/[^.!??]*[.!??]+|[^.!??]+$/g) ?? [t];
+  const hasDigit = sentences.map((x) => /\d/.test(x));
+  const picked: string[] = [];
+  let len = 0;
+  // 第一遍：含数字的句子优先
+  for (let i = 0; i < sentences.length; i++) {
+    if (!hasDigit[i]) continue;
+    if (len + sentences[i].length > budget) break;
+    picked.push(sentences[i]);
+    len += sentences[i].length;
+  }
+  // 第二遍：按序补齐
+  for (let i = 0; i < sentences.length && len < budget; i++) {
+    if (picked.includes(sentences[i])) continue;
+    if (len + sentences[i].length > budget) break;
+    picked.push(sentences[i]);
+    len += sentences[i].length;
+  }
+  const out = picked.join(' ').trim();
+  return out.length > budget ? out.slice(0, budget) : out;
+}
 
 /** 问候/纯噪音/元命令——不入卡（防"1"/"你好"刷屏容量）。 */
 const NOISE_RE = /^(你好|您好|嗨|hi|hello|hey|在吗|谢谢|thanks?|再见|拜拜|好的?|ok|嗯+)[\s!！。.,，]*$|^\d+$/i;
@@ -49,7 +80,7 @@ export async function recordChatFact(
     if (NOISE_RE.test(input)) return { recorded: false, reason: 'noise' };
 
     const store = new RefinedMemoryStore(workspace);
-    const summary = `用户提到：${input.slice(0, INPUT_SLICE)}｜答复要点：${reply.slice(0, ANSWER_SLICE)}`;
+    const summary = `用户提到：${smartSlice(input, INPUT_SLICE)}｜答复要点：${smartSlice(reply, ANSWER_SLICE)}`;
 
     // 去重：同 summary 的活跃卡已存在 → 只刷 lastSeen（不叠 count 防自增）
     const existing = store.load().cards.find((c) => c.kind === 'preference' && c.summary === summary);

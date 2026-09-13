@@ -199,11 +199,19 @@ export async function runAgentTask(
   let success = false;
 
   try {
-    const result = await chaser.solveIssue(enriched, session.workspace, {
+    // 0.8.2 chat 净化（真机 1B 元话语根因修复）：chat 直答的 user 必须是
+    // "记忆块 + 用户原话"，绝不能是整段 enriched（stable 外壳 + 结构块会把
+    // 1B 拖回工程框架、记忆卡与当前输入混淆）。记忆块由宿主从 lastBuildMeta
+    // 侧通道传出，任务原文原样传 chaser。
+    const solveIssueInput = intent === 'chat' ? req.task : enriched;
+    const chatMemoryBlock = intent === 'chat' ? pb.getChatMemoryBlock() : undefined;
+    const result = await chaser.solveIssue(solveIssueInput, session.workspace, {
       tier: session.tier as any,
       yes: true,
       dryRun: !!req.simulate,
       memoryPreInjected: true,
+      // 0.8.2：chat 直答的独立记忆块（与原文分离——chaser 组装干净 user）
+      chatMemoryBlock,
       // 入口前移的意图显式传入（chaser 不再对富化文本兜底分类）
       intent,
       // 审批透传

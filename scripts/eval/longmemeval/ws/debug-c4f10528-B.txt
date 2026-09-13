@@ -1,0 +1,15 @@
+exit=0 error=null
+RAW STDOUT (935):
+@path 已展开: 1 项
+• 开始执行: I'm planning to visit Bandung again and I was wondering if you could remind me of the name of that restaurant in Cihampelas Walk that serves a great Nasi Goreng?
+[memory] injectedCardIds=[44af7681fb1e,6dae90d0dfcd,78ca1a7dec5a,0463ea115b85,9935a0628164,370b4575940e,29e2519ae967,1941050ef3bc]
+✓ 完成 (6962ms) · 已回复
+Honestly, I don't have reliable information about which specific restaurant in Cihampelas Walk is most famous for Nasi Goreng. I don't want to make up a name and have you go out of your way only to be disappointed!
+
+That said, here are a few suggestions:
+
+1. **Explore in person** — Cihampelas Walk has quite a few food stalls and restaurants, so wandering around and checking menus is often the best way to find a great Nasi Goreng.
+2. **Ask locals** — Once you're there, the staff at any shop or even fellow visitors can usually point you to the best spots.
+3. **Check recent reviews** — Apps li…
+
+STDERR (0):

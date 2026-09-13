@@ -73,16 +73,38 @@ function spawnWithTimeout(command, args, opts = {}) {
 }
 
 const normalize = (s) => String(s || '').toLowerCase().replace(/[\s\p{P}]/gu, '');
-const grade = (gold, response) => {
-  const g = normalize(gold);
-  const r = normalize(response);
-  if (!g) return null;
-  if (g.length <= 2) {
-    // 短 gold（纯数字/单词）：子串匹配会被列表编号/正文数字误命中
-    // （1B 真机实证：gold="3" 被回答的列表编号 "3." 判对）→ 词边界匹配
-    return new RegExp(`\b${g}\b`).test(r) ? 1 : 0;
+/** gold 多形式拆分："25 minutes and 50 seconds (or 25:50)" → 两个候选。
+ *  整串匹配会把紧凑正确答案（"25:50"）误判 0（真机 MiniMax 实证）。 */
+function goldCandidates(gold) {
+  const raw = String(gold || '');
+  const parts = raw.split(/[()]/).map((x) => x.trim()).filter(Boolean);
+  const cands = [];
+  for (const p of parts) {
+    for (const x of p.split(/or|或/i)) {
+      if (x.trim()) cands.push(x.trim());
+    }
   }
-  return r.includes(g) ? 1 : 0;
+  return cands.length ? cands : [raw];
+}
+const grade = (gold, response, question) => {
+  if (!gold) return null;
+  const r = normalize(response);
+  const q = normalize(question);
+  for (const cand of goldCandidates(gold)) {
+    const g = normalize(cand);
+    if (!g) continue;
+    // gold 候选若整体来自问题原文（复述问题），命中无效——拒答句会复述
+    // 问题中的实体而被误判（真机 12 题批：temporal 拒答句含 "workshop" 判 1）。
+    if (q.includes(g)) continue;
+    if (g.length <= 2) {
+      // 短 gold（纯数字/单词）：子串匹配会被列表编号/正文数字误命中
+      // （1B 真机实证：gold="3" 被回答的列表编号 "3." 判对）→ 词边界匹配
+      if (new RegExp(`\b${g}\b`).test(r)) return 1;
+    } else if (r.includes(g)) {
+      return 1;
+    }
+  }
+  return 0;
 };
 
 function extractAnswer(stdout) {
@@ -189,7 +211,7 @@ async function main() {
         await writeFile(join(WS_ROOT, `debug-${q.question_id}-${tier}.txt`),
           `exit=${exitCode} error=${error ?? 'null'}\nRAW STDOUT (${raw.length}):\n${raw.slice(-1200)}\nSTDERR (${stderr.length}):\n${stderr.slice(-800)}`, 'utf8');
       } catch {}
-      const score = grade(q.answer, answer);
+      const score = grade(q.answer, answer, q.question);
       rows.push({
         question_id: q.question_id,
         question_type: q.question_type,

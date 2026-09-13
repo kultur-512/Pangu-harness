@@ -59,6 +59,9 @@ export interface ChaserConfig {
    * into the prompt. Core should skip its own memory injection to avoid duplication.
    */
   memoryPreInjected?: boolean;
+  /** 0.8.2：chat 直答的独立记忆块（宿主从 PromptBuilder 传出；chat 的 user =
+   *  "此块 + 用户原话"——绝不整段 enriched 塞 user，1B 元话语根因）。 */
+  chatMemoryBlock?: string;
   // ---- 真实执行审批透传（全部可选） ----
   /** Session approval mode (default: readonly — safe floor). */
   approvalMode?: 'readonly' | 'default' | 'full';
@@ -258,9 +261,17 @@ export class PanshalachChaser {
       };
       // messages 通道形态：system 承载对话指令（不含用户输入），user 承载原文
       // （buildChatDirective 整段内嵌会让输入在 payload 里出现两次）。
+      // 0.8.2 chat 净化：user = "记忆块 + 用户原话"。宿主传 chatMemoryBlock 时
+      // issueDescription 已是原文（runAgentTask chat 分离传递）；记忆块拼在前，
+      // 与 system 的对话指令配对——不再整段 enriched 塞 user（1B 元话语根因）。
+      const chatUserContent = config.chatMemoryBlock
+        ? `${config.chatMemoryBlock}
+
+${issueDescription}`
+        : issueDescription;
       const chatMessages = [
         { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
-        { role: 'user' as const, content: issueDescription },
+        { role: 'user' as const, content: chatUserContent },
       ];
 
       // 直答失败的合成返回（R2 空回答 / R3 异常）——照用 syntheticFailureTrajectory

@@ -150,6 +150,15 @@ export class PromptBuilder {
     private tierConfig: TierConfig
   ) {}
 
+  // 0.8.2：最近一次 build 注入的记忆块独立文本（chat 直答干净组装用）
+  private lastMemoryBlockText = '';
+
+  /** 最近一次注入的【相关记忆】块（无注入 → 空串）。chat 直答的 user 应为
+   *  "此块 + 用户原话"——绝不能整段 enriched 塞进 user（1B 元话语根因）。 */
+  getChatMemoryBlock(): string {
+    return this.lastMemoryBlockText;
+  }
+
   // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
   private duplicatesSkipped = 0;
@@ -599,6 +608,15 @@ export class PromptBuilder {
         if (added) this.memoryNumberSeq += cards.length;
         // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
         this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        // 0.8.2：独立记忆块文本（chat 直答干净组装用——chat 的 user 应是
+        // "记忆块 + 用户原话"，而不是整段 enriched prompt 外壳，否则 1B 被
+        // 结构块噪音拖垮、元话语复发）。非 chat 也存，无副作用。
+        const memStart = lines.findIndex((l) => l.includes('【相关记忆】'));
+        if (memStart >= 0) {
+          this.lastMemoryBlockText = lines.slice(memStart)
+            .filter((l) => l.includes('【相关记忆】') || l.startsWith('  - [M') || l.startsWith('（另有'))
+            .join('\n');
+        }
         return added;
       }
       this.lastInjectedCardIds = [];
