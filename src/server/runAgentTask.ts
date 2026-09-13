@@ -283,6 +283,16 @@ export async function runAgentTask(
       ? lastStepResult
       : undefined;
 
+    // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
+    // 此前产卡门只认 completed（工程任务）——纯对话的事实永远不入记忆，
+    // 跨会话个人化（LongMemEval 场景）结构性失忆。best-effort：绝不影响对话。
+    if (intent === 'chat' && answerText) {
+      try {
+        const { recordChatFact } = await import('../memory/chatFactMemory.js');
+        await recordChatFact(session.workspace, req.task, answerText);
+      } catch { /* 记忆沉淀失败不影响对话 */ }
+    }
+
     ctx.onEvent({
       type: 'result',
       success,
