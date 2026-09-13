@@ -81,6 +81,61 @@ describe('A4 buildHistoryPrompt：裁剪复查与单步封顶', () => {
   });
 });
 
+describe('C1 messages 巨结果封顶与迭代收缩', () => {
+  afterEach(() => {
+    const o = process.env.PANSHA_NO_BUDGET_TRIM;
+    if (o === undefined) delete process.env.PANSHA_NO_BUDGET_TRIM;
+    else process.env.PANSHA_NO_BUDGET_TRIM = o;
+  });
+
+  it('pushToolMessages：单条工具结果超 20% 窗口预算 → 头 60% + 尾 25% 截断', () => {
+    const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
+    (loop as any).windowTokens = 1000; // per-message budget = 800 chars
+    (loop as any).pushToolMessages(
+      [{ toolName: 'read_file', params: [] }],
+      null,
+      'HEAD-MARK ' + 'X'.repeat(1200) + ' TAIL-MARK',
+    );
+    const msgs = (loop as any).messages;
+    assert.equal(msgs.length, 1);
+    const c = msgs[0].content;
+    assert.ok(c.startsWith('HEAD-MARK'), '保留头段');
+    assert.ok(c.endsWith('TAIL-MARK'), '保留尾段');
+    assert.ok(c.includes('工具输出过长已截断'), '带显式截断标记');
+    assert.ok(c.length < 1200, `截断后必须显著短于原文：${c.length}`);
+  });
+
+  it('enforceMessagesBudget：组数到底后对最大 tool 消息二级截断（防残余超窗）', () => {
+    const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
+    (loop as any).windowTokens = 1000; // cap = 700 tokens
+    // 巨型首条 user（不可裁）+ 1 个组（trimMessages 无组可丢）+ 巨 tool 结果
+    (loop as any).messages = [
+      { role: 'system', content: 'SYS' },
+      { role: 'user', content: 'GIANT-SEED ' + 'S'.repeat(1000) },
+      { role: 'assistant', content: 'A1', toolCalls: [{ id: 'c1' }] },
+      { role: 'tool', toolCallId: 'c1', content: 'BIG ' + 'T'.repeat(3000) },
+    ];
+    const acted = (loop as any).enforceMessagesBudget(700);
+    assert.equal(acted, true, '必须做过裁剪');
+    const msgs = (loop as any).messages;
+    assert.equal(msgs.length, 4, '组数不足时不丢组');
+    assert.ok(msgs[3].content.includes('工具输出过长已截断'), '最大 tool 消息被二级截断');
+    assert.ok((loop as any).messagesTokens() <= 700 + 400, `收缩后逼近预算（种子除外）：${(loop as any).messagesTokens()}`);
+  });
+
+  it('PANSHA_NO_BUDGET_TRIM=1 → 发送前稳态预算检查跳过', () => {
+    process.env.PANSHA_NO_BUDGET_TRIM = '1';
+    const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
+    (loop as any).windowTokens = 1000;
+    (loop as any).messages = [
+      { role: 'system', content: 'SYS' },
+      { role: 'user', content: 'SEED ' + 'S'.repeat(2000) },
+    ];
+    const acted = (loop as any).enforceMessagesBudget(700);
+    assert.equal(acted, false, '逃生门下不做任何裁剪');
+  });
+});
+
 describe('A5 messages 模式：trimMessages', () => {
   afterEach(restoreEnv);
 

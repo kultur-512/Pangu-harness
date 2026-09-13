@@ -317,6 +317,48 @@ export class VerifyCritiqueLoop {
     return t;
   }
 
+  /**
+   * C1：把 messages 栈收缩到 capTokens 以内，返回是否做过任何裁剪。
+   * 两级策略：组级 trimMessages（丢最旧交换组）→ 仍超则对栈内最大 tool
+   * 消息做二级内容截断（防"trim 后组数已到底、巨结果仍在"的残余超窗）。
+   * 巨型首条 user（种子）不可裁——到它为止，交溢出应急。
+   */
+  private enforceMessagesBudget(capTokens: number): boolean {
+    let acted = false;
+    for (;;) {
+      if (this.messagesTokens() <= capTokens) return acted;
+      const before = this.messages.length;
+      this.trimMessages();
+      if (this.messages.length < before) { acted = true; continue; }
+      if (this.shrinkLargestToolMessage()) { acted = true; continue; }
+      return acted;
+    }
+  }
+
+  /** C1 二级裁剪：栈内 estTokens 最大的 tool 消息 >20% 窗口预算 → 头 60% + 尾 25%。 */
+  private shrinkLargestToolMessage(): boolean {
+    if (!this.windowTokens || this.windowTokens <= 0) return false;
+    const capTokens = this.windowTokens * 0.7 * 0.2;
+    let bi = -1; let bt = 0;
+    this.messages.forEach((m, i) => {
+      if (m.role === 'tool') {
+        const t = estTokens(typeof m.content === 'string' ? m.content : '');
+        if (t > bt) { bt = t; bi = i; }
+      }
+    });
+    if (bi === -1 || bt <= capTokens) return false;
+    const content = String(this.messages[bi].content ?? '');
+    const headChars = Math.floor(capTokens * 4 * 0.6);
+    const tailChars = Math.floor(capTokens * 4 * 0.25);
+    this.messages[bi] = {
+      ...this.messages[bi],
+      content: content.slice(0, headChars)
+        + '\n[...工具输出过长已截断（窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件...]'
+        + (tailChars > 0 ? content.slice(-tailChars) : ''),
+    };
+    return true;
+  }
+
   /** 0.8 P2：剥离工具调用原文块，剩余面向模型的"文本部分"（assistant 消息 content）。 */
   private stripToolBlocks(rawContent: string, toolCalls: ToolCall[]): string {
     let out = String(rawContent ?? '');
@@ -363,17 +405,31 @@ export class VerifyCritiqueLoop {
   /**
    * 0.8 P2：工具结果回灌 messages 栈（chat 通道）。结果按 '\n---\n' 分段数
    * 与调用数匹配时逐 call 切分；否则整段回灌每个 tool 消息（配对完整优先）。
+   * C1（0.8.2 审查）：per-message 封顶——read_file 上限 20K 字符/次，两个大
+   * 结果 ≈ 2×13K tokens 即破 32K 窗口；工具消息超 20% 窗口预算时保留头 60% +
+   * 尾 25%，中段换显式标记（对齐文本路径 capStepPart 语义）。
    */
   private pushToolMessages(toolCalls: ToolCall[], wireCalls: unknown[] | null, resultText: string): void {
     const segments = String(resultText ?? '').split('\n---\n');
     const perCall = segments.length === toolCalls.length ? segments : null;
+    const budgetChars = this.windowTokens && this.windowTokens > 0
+      ? this.windowTokens * 4 * 0.2
+      : 0;
     toolCalls.forEach((c, i) => {
       const wireId = wireCalls ? (wireCalls[i] as any)?.id : undefined;
+      let content = perCall ? perCall[i] : (resultText || '');
+      if (budgetChars > 0 && content.length > budgetChars) {
+        const headChars = Math.floor(budgetChars * 0.6);
+        const tailChars = Math.floor(budgetChars * 0.25);
+        content = content.slice(0, headChars)
+          + '\n[...工具输出过长已截断（单条窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件（输出中会给出 offset 续读位置）。]'
+          + (tailChars > 0 ? content.slice(-tailChars) : '');
+      }
       this.messages.push({
         role: 'tool',
         toolCallId: wireId ? String(wireId) : `call_${++this.toolCallSeq}`,
         name: c.toolName,
-        content: perCall ? perCall[i] : (resultText || ''),
+        content,
       });
     });
   }
@@ -605,12 +661,12 @@ export class VerifyCritiqueLoop {
         ? this.verificationEngine.toolSchemas()
         : undefined;
 
-      // A5：messages 发送前稳态预算——栈 >70% 窗口即截断（与文本路径的
-      // buildHistoryPrompt 70% 预算线对等）。windowTokens 未提供时不裁。
-      // PANSHA_NO_BUDGET_TRIM=1 → 禁用主动裁剪（评测 A 档逃生门：让"窗口
-      // 装不下"可达网关，真溢出可测）；溢出应急档不受此开关影响。
+      // A5：messages 发送前稳态预算——栈 >70% 窗口即迭代收缩（C1：组级 trim
+      // 到底后对巨 tool 消息二级截断，防单条巨结果残余超窗）。与文本路径的
+      // buildHistoryPrompt 70% 预算线对等。windowTokens 未提供或
+      // PANSHA_NO_BUDGET_TRIM=1（评测逃生门）时不裁。
       if (messagesMode && !this.budgetTrimDisabled && this.windowTokens && this.windowTokens > 0) {
-        if (this.messagesTokens() > this.windowTokens * 0.7) this.trimMessages();
+        this.enforceMessagesBudget(this.windowTokens * 0.7);
       }
 
       // M2-5：模型调用包裹 overflow 捕获——context_overflow 时通知外层、
@@ -640,8 +696,11 @@ export class VerifyCritiqueLoop {
             this.pendingOverflowNotice = true;
             // A5：messages 模式的实际裁剪在这里——旧实现只置 flag 就重试，
             // 而 forcedCompactApplied 只作用于文本路径的 buildHistoryPrompt，
-            // messages 栈原样重发必然再次溢出（修：重试必败）。
-            if (messagesMode) this.trimMessages();
+            // messages 栈原样重发必然再次溢出（修：重试必败）。C1：迭代收缩。
+            if (messagesMode) {
+              if (this.windowTokens && this.windowTokens > 0) this.enforceMessagesBudget(this.windowTokens * 0.7);
+              else this.trimMessages();
+            }
             stepNum--; // 重试本步（不消耗新步数）
             continue;
           }
