@@ -1,0 +1,18 @@
+exit=0 error=null
+RAW STDOUT (812):
+@path 已展开: 1 项
+• 开始执行: Can you recommend some resources where I can learn more about video editing?
+[memory] injectedCardIds=[f8a9d36babba,b6a939e35315,9200973697b2,18b566ce3277,49dfa6845053]
+✓ 完成 (14364ms) · 已回复
+Here are some solid resources for learning video editing, organized by category:
+
+## Online Courses
+- **Skillshare** – Lots of project-based classes on Premiere Pro, Final Cut Pro, DaVinci Resolve
+- **Udemy** – Comprehensive tutorials for nearly every NLE (Non-Linear Editor); look for highly-rated courses by Phil Ebiner, Jordy Vandeput, etc.
+- **LinkedIn Learning** – Clean, professional tutorials if you have a subscription
+- **MasterClass** – Classes from directors and editors like Werner Herzog, Martin Scorsese
+
+## YouTube Channels
+- **Justin Brown / Primal Video** – Great Premiere Pro and…
+
+STDERR (0):

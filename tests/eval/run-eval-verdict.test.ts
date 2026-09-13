@@ -66,7 +66,9 @@ describe('defaultSeedMemory (R6 follow-up #1)', () => {
     const seed = defaultSeedMemory(1700000000000);
     for (const c of seed.cards) {
       assert.ok(typeof c.id === 'string' && c.id.length > 0, 'id 非空');
-      assert.ok(['success', 'lesson', 'constraint'].includes(c.kind), `kind 合法: ${c.kind}`);
+      // 0.8.2 业务化 seed：kind 收敛到真实 schema 枚举（旧 'lesson' 不在
+      // failure/success/preference 三类内——曾是占位卡的 schema 违规）
+      assert.ok(['success', 'failure', 'preference'].includes(c.kind), `kind 合法: ${c.kind}`);
       assert.ok(typeof c.summary === 'string' && c.summary.length > 0, 'summary 非空');
       assert.equal(typeof c.weight, 'number');
       assert.equal(typeof c.decayWeight, 'number');
@@ -83,14 +85,28 @@ describe('defaultSeedMemory (R6 follow-up #1)', () => {
     const s2 = defaultSeedMemory(1700000000001);  // 不同 now
     assert.equal(s1.cards[0].id, s2.cards[0].id, 'id 跨调用稳定');
     assert.equal(s1.cards[1].id, s2.cards[1].id);
-    assert.equal(s1.cards[0].id, 'seed-success-001');
-    assert.equal(s1.cards[1].id, 'seed-lesson-001');
+    assert.equal(s1.cards[0].id, 'seed-t1-checklist');
+    assert.equal(s1.cards[1].id, 'seed-t1-format');
   });
 
-  it('种子卡 summary 含【seed】前缀,提醒用户传 --seed-memory 覆盖', () => {
+  it('种子卡 summary 为业务方法论（【经验】前缀），非占位符', () => {
     const seed = defaultSeedMemory(1700000000000);
     for (const c of seed.cards) {
-      assert.ok(c.summary.startsWith('【seed】'), `summary 含 seed 标记: ${c.summary}`);
+      // 0.8.2 真机 A/B 曲线实证：占位 seed（"请传 --seed-memory 覆盖"）对任务
+      // 零价值 → B 档无增益反拖累（T1: A 40% vs B 20%）。业务化后 B 3/3 全过。
+      assert.ok(c.summary.startsWith('【经验】'), `summary 含业务标记: ${c.summary}`);
+    }
+  });
+
+  it('按任务族定制：T2 的 seed 与 T1 不同（业务相关性）', () => {
+    const t1 = defaultSeedMemory(1700000000000, 'T1');
+    const t2 = defaultSeedMemory(1700000000000, 'T2');
+    assert.equal(t2.cards[0].id, 'seed-t2-refactor');
+    assert.notEqual(t1.cards[0].id, t2.cards[0].id, '不同任务族 seed 不同');
+    // memoryCategory 必须过 high 档可见性（failure|implementation|insight）
+    for (const c of t2.cards) {
+      assert.ok(['failure', 'implementation', 'insight'].includes(c.memoryCategory),
+        `T2 卡 ${c.id} memoryCategory=${c.memoryCategory} 应在 high 档可见`);
     }
   });
 });
