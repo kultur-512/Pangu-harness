@@ -589,6 +589,21 @@ async function runOne(fixture, ablation, opts) {
     console.warn(`  [eval] 任务语料拷贝失败（${e.message}）——回退 ROOT cwd`);
   }
   const cwd = existsSync(wsDir) ? wsDir : (fixture.workspace ? resolve(ROOT, fixture.workspace) : ROOT);
+  // 0.8.2：fixture repo 带 devDependencies（tsx/typescript）但 node_modules 不入库
+  // ——副本里不装依赖，T2 verify.sh 的 tsc/npm test 检查结构性必挂（exit 2 假阴性）。
+  let repoDepsReady = false;
+  if (existsSync(join(wsDir, 'repo', 'package.json'))) {
+    try {
+      const isWinNpm = process.platform === 'win32';
+      const dr = await spawnWithTimeout(isWinNpm ? 'npm.cmd' : 'npm',
+        ['install', '--no-audit', '--no-fund', '--loglevel=error'],
+        { cwd: join(wsDir, 'repo'), timeoutMs: 180_000 });
+      repoDepsReady = dr.exitCode === 0;
+      console.log(`  [eval] repo deps install exit=${dr.exitCode}`);
+    } catch (e) {
+      console.warn(`  [eval] repo deps install 失败: ${e.message}`);
+    }
+  }
   const memFileAbs = join(cwd, memFileRel);
   let memSeeded = false;
   let memCleaned = false;

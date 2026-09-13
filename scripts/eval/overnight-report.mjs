@@ -12,7 +12,7 @@ async function main() {
   /** @type {Array<{task:string,tier:string,round:string,verdict:string,stop:string,dur:number,inj:number,ver:number}>} */
   const rows = [];
   for (const f of files) {
-    const m = f.match(/^(T\d)-(A|B)(?:-bizseed)?(?:-r(\d+))?\.json$/);
+    const m = f.match(/^(T\d)-(A|B)(?:-bizseed)?(?:-r(\d+))?(?:-final)?\.json$/);
     if (!m) continue;
     try {
       const d = JSON.parse(await readFile(join(DIR, f), 'utf8'));
@@ -20,6 +20,7 @@ async function main() {
       rows.push({
         task: m[1], tier: m[2], round: m[3] || '1',
         bizseed: f.includes('-bizseed-'),
+        final: f.endsWith('-final.json'),
         verdict: r.verdict, stop: r.stopReason,
         dur: r.durationMs ?? 0,
         inj: (r.memory?.injectedCardIds ?? []).length,
@@ -30,7 +31,7 @@ async function main() {
 
   const cells = {};
   for (const r of rows) {
-    const k = `${r.task}-${r.tier}${r.bizseed ? '-bizseed' : ''}`;
+    const k = `${r.task}-${r.tier}${r.bizseed ? '-bizseed' : ''}${r.final ? '-final' : ''}`;
     (cells[k] ??= []).push(r);
   }
   const pass = (v) => v === 'completed';
