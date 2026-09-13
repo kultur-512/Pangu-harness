@@ -16,6 +16,7 @@ describe('PromptBuilder', () => {
     assert.ok(prompt.includes('<file_path>src/utils/math.ts</file_path>'));
     assert.ok(prompt.includes('不要输出“好的”、分析、步骤列表'));
     assert.ok(prompt.includes('禁止只回复说明'));
+    assert.ok(prompt.includes('下一条回复必须从 <> 开始、以 </> 结束'));
     assert.ok(!prompt.includes('```'));
   });
 
