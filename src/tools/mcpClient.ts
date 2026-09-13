@@ -121,12 +121,29 @@ export class McpClient {
     }
   }
 
-  /** Kill the child and settle everything (must be called on session exit). */
+  /**
+   * Kill the child (WHOLE process tree) and settle everything (session exit).
+   * P2: 对齐 bash.ts 的树杀——MCP server 常会再拉起孙进程，只杀直接子进程
+   * 会留下孤儿。Windows taskkill /T /F；POSIX kill(-pid) 进程组击杀。
+   */
   async close(): Promise<void> {
     this.closing = true;
     this.rejectAll(new Error('MCP_CLOSED'));
     if (this.child) {
-      try { this.child.kill(); } catch {}
+      const pid = this.child.pid;
+      try {
+        if (pid) {
+          if (process.platform === 'win32') {
+            spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+          } else {
+            try { process.kill(-pid, 'SIGKILL'); } catch { this.child.kill('SIGKILL'); }
+          }
+        } else {
+          this.child.kill();
+        }
+      } catch {
+        try { this.child.kill(); } catch {}
+      }
       this.child = null;
     }
     this.initialized = false;

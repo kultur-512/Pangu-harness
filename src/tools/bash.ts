@@ -28,11 +28,16 @@ export function bashTimeoutForTier(tier: string | undefined): number {
 }
 
 const DANGER_PATTERNS: RegExp[] = [
-  /rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)/i, // rm -rf variants
+  /rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)/i, // rm -rf variants (joined flags)
+  // rm 分离 flag：`-r` 与 `-f`（或长形态 `--recursive`/`--force`）分开写，
+  // 任意顺序、允许夹带其他参数（`rm build -r -f` 同样命中）
+  /\brm\b(?=[^\n;|&]*\s-{1,2}r(?:ecursive)?\b)(?=[^\n;|&]*\s-{1,2}f(?:orce)?\b)/i,
   /\bdel\s+\/[rsq]\b/i,
   /\bformat\s+\w:/i,
   /\breg\s+(add|delete)\b/i,
   /\bgit\s+push\b.*--force/i,
+  /\bgit\s+push\b[^\n;|&]*\s-f\b/i, // git push -f（独立短 flag）
+  /\bremove-item\b(?=[^\n;|&]*\s-recurse\b)(?=[^\n;|&]*\s-force\b)/i, // PowerShell Remove-Item -Recurse -Force
   /\bmkfs\b/i,
   /\bshutdown\b/i,
 ];

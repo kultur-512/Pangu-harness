@@ -4,6 +4,7 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { McpClient } from '../../src/tools/mcpClient.js';
 import { createToolExecutor } from '../../src/tools/executor.js';
 import type { ToolContext } from '../../src/tools/types.js';
@@ -151,6 +152,35 @@ describe('McpClient', () => {
     await client.close();
     await p;
     assert.equal(client.isAlive, false);
+  });
+
+  it('close() tree-kills the whole process tree (taskkill /T /F on Windows, group kill on POSIX)', { timeout: 20000 }, async () => {
+    // A REAL descendant process makes the tree-kill observable behaviorally:
+    // pre-fix close() only killed the (fake) direct child → sleeper stays alive.
+    const sleeper = process.platform === 'win32'
+      ? spawn('node', ['-e', 'setTimeout(()=>{}, 30000)'], { stdio: 'ignore', windowsHide: true })
+      : spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+    const pid = sleeper.pid;
+    assert.ok(pid, 'sleeper must have a pid');
+
+    const child = makeFakeChild();
+    (child as any).pid = pid;
+    client = new McpClient({ command: 'fake' });
+    client.setSpawnImpl(() => child as any);
+
+    const alive = () => { try { return process.kill(pid!, 0); } catch { return false; } };
+    assert.ok(alive(), 'sleeper must be alive before close()');
+    const initStarted = client.initialize().catch(() => {}); // no responder → rejected by close()
+    await client.close(); // close() must run FIRST — it is what rejects the in-flight initialize
+    await initStarted;
+
+    let dead = !alive();
+    for (let i = 0; i < 40 && !dead; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      dead = !alive();
+    }
+    try { sleeper.kill('SIGKILL'); } catch {} // reap safety net
+    assert.ok(dead, `descendant process ${pid} must be killed by close() tree-kill`);
   });
 
   it('executor integration: mcp_<server>_<tool> namespaced, built-in wins on clash', async () => {
