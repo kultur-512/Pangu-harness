@@ -127,6 +127,8 @@ export class PanshalachChaser {
     tierConfig?: TierConfig;
     error?: string;
     message?: string;
+    /** 本任务触发过溢出截断重试（RunResult 透传 → RunCommand 溢出证据行）。 */
+    contextOverflowCompacted?: boolean;
   }> {
     // 解析 tier（必须在任何客户端校验前完成，因为 dryRun/确认等返回需要 tierConfig）
     let effectiveTier: Tier;
@@ -461,6 +463,9 @@ ${issueDescription}`
 
     // M2-4：真实 usage 计量——loop 每次模型调用经 wrapper 传 onUsage 累加；
     // usage 缺失（网关无 usage 字段）时回落 len/4 估算（budgetReport 标注实测/估算）。
+    // overflowCompacted：loop 触发过溢出截断重试（评测 A 档正源，经 RunResult
+    // 透传到 RunCommand 证据行——stdout 正则误判多，机器可读标记是权威）。
+    let overflowCompacted = false;
     // lastPrompt：最近一次请求的实测 prompt_tokens——上下文占用的最佳锚点
     // （累计值跨步重复计入历史，见 BudgetReport.lastPromptTokens 注释）。
     const usageAccum = { prompt: 0, completion: 0, lastPrompt: 0 };
@@ -687,6 +692,7 @@ ${issueDescription}`
         budgetNotes.push('usage 估算（网关未返回 usage 字段，按字符长度 /4 估算）');
       }
       if (loopResult.contextOverflowCompacted) {
+        overflowCompacted = true;
         budgetNotes.push('context_overflow 触发溢出截断并重试本步');
       }
       stepsExecuted = loopResult.steps.length;
@@ -760,6 +766,6 @@ ${issueDescription}`
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, message: !success ? best.lastError : undefined };
+    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
   }
 }

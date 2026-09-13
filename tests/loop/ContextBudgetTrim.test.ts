@@ -27,6 +27,29 @@ function mkStep(i: number, resultChars: number): any {
 }
 
 describe('A4 buildHistoryPrompt：裁剪复查与单步封顶', () => {
+  const ORIG_NO_BUDGET_TRIM = process.env.PANSHA_NO_BUDGET_TRIM;
+  afterEach(() => {
+    if (ORIG_NO_BUDGET_TRIM === undefined) delete process.env.PANSHA_NO_BUDGET_TRIM;
+    else process.env.PANSHA_NO_BUDGET_TRIM = ORIG_NO_BUDGET_TRIM;
+  });
+
+  it('PANSHA_NO_BUDGET_TRIM=1 → 禁用主动窗口裁剪（评测 A 档逃生门），溢出应急档不受影响', () => {
+    process.env.PANSHA_NO_BUDGET_TRIM = '1';
+    const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
+    (loop as any).windowTokens = 1000; // budgetChars = 2800
+    (loop as any).steps = [mkStep(1, 950), mkStep(2, 950), mkStep(3, 950), mkStep(4, 950), mkStep(5, 950), mkStep(6, 950)];
+    const full = (loop as any).buildHistoryPrompt() as string;
+    assert.ok(full.length > 2800, '逃生门下超预算也不裁（让真溢出可达网关）');
+    assert.ok(full.includes('STEP-3-RESULT'), '全部步骤保留');
+
+    // 溢出应急档不受逃生门影响——它是溢出后的恢复路径
+    (loop as any).forcedCompactApplied = true;
+    const trimmed = (loop as any).buildHistoryPrompt() as string;
+    assert.ok(trimmed.includes('context_overflow 溢出应急'), '应急档仍生效');
+    assert.ok(!trimmed.includes('STEP-3-RESULT'), '应急档仍裁中段');
+    delete process.env.PANSHA_NO_BUDGET_TRIM;
+  });
+
   it('裁剪后复查：保下的首尾步仍超预算时继续迭代收缩（旧实现切一刀就返回）', () => {
     const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
     (loop as any).windowTokens = 1000; // budgetChars = 2800

@@ -244,6 +244,15 @@ export class VerifyCritiqueLoop {
   /** 上下文窗口预算（tokens）。>0 时 buildHistoryPrompt 超 70% 裁中段。 */
   private windowTokens?: number;
 
+  /**
+   * PANSHA_NO_BUDGET_TRIM=1 → 禁用主动窗口预算裁剪（评测 A 档逃生门：
+   * 让"窗口装不下"可达网关，真溢出可测）。溢出应急档（forcedCompactApplied）
+   * 是溢出后的恢复路径，不受此开关影响。
+   */
+  private get budgetTrimDisabled(): boolean {
+    return process.env.PANSHA_NO_BUDGET_TRIM === '1';
+  }
+
   private filesReadThisTrajectory = new Set<string>();
   private filesWrittenThisTrajectory = new Set<string>();
   private readBeforeWriteViolations = 0;
@@ -598,7 +607,9 @@ export class VerifyCritiqueLoop {
 
       // A5：messages 发送前稳态预算——栈 >70% 窗口即截断（与文本路径的
       // buildHistoryPrompt 70% 预算线对等）。windowTokens 未提供时不裁。
-      if (messagesMode && this.windowTokens && this.windowTokens > 0) {
+      // PANSHA_NO_BUDGET_TRIM=1 → 禁用主动裁剪（评测 A 档逃生门：让"窗口
+      // 装不下"可达网关，真溢出可测）；溢出应急档不受此开关影响。
+      if (messagesMode && !this.budgetTrimDisabled && this.windowTokens && this.windowTokens > 0) {
         if (this.messagesTokens() > this.windowTokens * 0.7) this.trimMessages();
       }
 
@@ -1047,8 +1058,9 @@ Critique: ${critique}`;
     // 窗口预算——组装后若超窗口 70%，先做单步封顶，再迭代裁中段。
     // 裁剪后复查（A4）：旧实现切一刀就返回，保下的首尾步本身可超预算，
     // 重试仍溢出；这里循环收缩直到满足预算或只剩首尾步。
-    //（windowTokens 未提供时保持旧行为，不裁。）
-    if (this.windowTokens && this.windowTokens > 0) {
+    //（windowTokens 未提供时保持旧行为，不裁；PANSHA_NO_BUDGET_TRIM=1
+    // 评测逃生门禁用主动裁剪，溢出应急档不受影响。）
+    if (this.windowTokens && this.windowTokens > 0 && !this.budgetTrimDisabled) {
       const budgetChars = this.windowTokens * 4 * 0.7;
       const capped = parts.map((p) => this.capStepPart(p, budgetChars));
       if (capped.length <= 2 || join(capped).length <= budgetChars) return join(capped);

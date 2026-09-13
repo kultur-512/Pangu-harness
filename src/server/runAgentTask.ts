@@ -56,6 +56,12 @@ export interface RunResult {
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
   verifyCmd?: string[];
+  /**
+   * 本任务触发过溢出截断重试（loop context_overflow → trim → retry）。
+   * 评测 A 档的机器可读正源——RunCommand 打 `[ctx] contextOverflowCompacted=1`
+   * 证据行，run-eval 据此判"真溢出"，替代易误判的 stdout 正则。
+   */
+  contextOverflowCompacted?: boolean;
   /** 0.8.2 证据链：本任务实际注入的记忆卡号（lastBuildMeta 透出；headless 宿主打印证据行用） */
   injectedCardIds?: string[];
 }
@@ -308,6 +314,7 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      contextOverflowCompacted: (result as any).contextOverflowCompacted === true,
       // 0.8.2 证据链透出：headless/one-shot 宿主（RunCommand/eval runner）可从此
       // 读取逐任务注入账本——此前注入审计只在 rollout context 事件里，stdout 不可见。
       injectedCardIds,
