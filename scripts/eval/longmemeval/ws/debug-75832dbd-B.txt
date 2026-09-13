@@ -1,0 +1,29 @@
+exit=0 error=null
+RAW STDOUT (889):
+@path 已展开: 1 项
+• 开始执行: Can you recommend some recent publications or conferences that I might find interesting?
+[memory] injectedCardIds=[67fee3414df5,f9d7fdb826db,df72ea003c5f,f2c7864afe0a,186b9f2ee0ee,2729678429bc,d31dae7c7447,cd249f510fc3,27385ec73d73,a05b210ba7e9]
+✓ 完成 (21907ms) · 已回复
+当然可以！基于你之前对**医疗影像分析中的可解释 AI**的兴趣，这里有一些值得关注的会议、期刊和近期热点方向。
+
+## 📅 核心会议（按相关性排序）
+
+**医学影像方向（最对口）**
+- **MICCAI** — 医疗影像计算领域的旗舰会议，每年秋季举办（约 9–10 月），涵盖 XAI、foundation models、多模态等前沿议题
+- **MIDL** (Medical Imaging with Deep Learning) — 更聚焦深度学习方法，通常 4 月左右召开
+- **IEEE ISBI** — 生物医学成像研讨会，偏向方法与系统
+
+**AI/ML 顶会（关注医疗应用专题）**
+- **CVPR / ICCV / ECCV** — 有专门的 Medical Imaging workshop 和越来越多医疗影像论文
+- **NeurIPS / ICML / ICLR** — 通用 ML 顶会，关注可解释性、因果推理、foundation models 主题
+
+**AI 安全与可解释性专题**
+- **FAccT** — 公平性、可问责性、透明度
+- **ACM CHI** — 偏人机交互视角的可解释性
+
+## 📚 推荐期刊
+
+- **Medical Image Analysis** (Elsevier) — 该领域最权威期刊之一
+- **IEEE Tr…
+
+STDERR (0):

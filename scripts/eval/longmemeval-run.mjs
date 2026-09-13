@@ -147,9 +147,13 @@ function sampleQuestions(data, n, types) {
   return picked;
 }
 
-/** 重放：会话历史 → 产品自身的 recordChatFact（确定性落卡，零模型调用）。 */
+/** 重放：会话历史 → 产品自身的 recordChatFact（确定性落卡，零模型调用）。
+ *  同源纪律（0.8.2 终极根因）：import src 而非 dist——此前重放用 dist 构建、
+ *  QA spawn 用 tsx src，两边代码不同代（dist 落后 → 事实池残缺），
+ *  "注入了卡却没有答案"的假象源于此。运行须带 tsx loader：
+ *  node --import tsx scripts/eval/longmemeval-run.mjs */
 async function replaySessions(q, wsDir) {
-  const { recordChatFact } = await import('../../dist/memory/chatFactMemory.js');
+  const { recordChatFact } = await import('../../src/memory/chatFactMemory.js');
   const prevEnv = process.env.PANSHA_MEMORY_FILE;
   process.env.PANSHA_MEMORY_FILE = 'memory.json';
   let facts = 0;

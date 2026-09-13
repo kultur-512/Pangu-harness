@@ -2,26 +2,21 @@ exit=0 error=null
 RAW STDOUT (877):
 @path 已展开: 1 项
 • 开始执行: Can you recommend some resources where I can learn more about video editing?
-[memory] injectedCardIds=[5b2ef09f0fc5,a056bed076e8,cee7639c5846,cdb07a1cc07a,b312470b28cd,3c5a4c1e92a9,79adc087f45f,16c558ad8cea,24fb8b7905c9,72ca958a1b22]
-✓ 完成 (11963ms) · 已回复
-当然可以！以下是一些涵盖不同层次和方向的视频剪辑学习资源：
+[memory] injectedCardIds=[9200973697b2,18b566ce3277,49dfa6845053,09aa85a131e8,f8a9d36babba,b6a939e35315,80a9e80b32f5,4b559cdc4deb,8292bed8a25c,2767cd0c77b0]
+✓ 完成 (12615ms) · 已回复
+# 🎬 Video Editing Learning Resources
 
-## 📚 在线课程平台
-- **LinkedIn Learning**（原 Lynda.com）：系统化课程，适合从入门到进阶，涵盖 Premiere Pro、Final Cut Pro、DaVinci Resolve 等主流软件
-- **Skillshare**：以项目为导向的剪辑课程，适合边学边练
-- **Domestika**：有许多专业剪辑师分享的精品课程，审美导向强
-- **Udemy**：性价比高，常有折扣；推荐搜索 Casey Faris、Phil Ebiner 等讲师的课
+Here's a comprehensive list of resources organized by type and skill level:
 
-## 🎬 YouTube 频道
-- **Casey Faris**：DaVinci Resolve 教程非常系统
-- **Justin Brown — Primal Video**：Premiere Pro 和剪辑思维都讲
-- **Peter McKinnon**：剪辑节奏感和镜头语言的灵感来源
-- **Ben Marriott**：适合新手，节奏轻松易懂
-- **JR Alli**：偏向创意剪辑和短片制作
+## 📚 Online Courses (Structured Learning)
 
-## 🛠 软件官方与社区
-- **Adobe Learn（Premiere Pro）**：官方文档和教程，权威且免费
-- **DaVinci Resolve 官方培训**：Resolve 自带的免费教程非常完整
-- …
+**Beginner-Friendly:**
+- **LinkedIn Learning** – Wide range of courses on Premiere Pro, Final Cut Pro, DaVinci Resolve
+- **Skillshare** – Project-based classes (great for hands-on learners)
+- **Udemy** – Affordable courses; look for instructors like Jordy Vandeput or Phil Ebiner
+- **Coursera** – University-level programs, including some free options
+
+**Professional/Advanced:**
+- **FXPHD** – High-end training for VFX, color grading, a…
 
 STDERR (0):

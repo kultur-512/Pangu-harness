@@ -14,14 +14,18 @@ describe('recordChatFact', () => {
   let ws: string;
   beforeEach(() => { ws = tmpWs(); });
 
-  it('正常对话 → 落卡（preference/insight，summary 带双方内容）', async () => {
+  it('正常对话 → 句级拆卡（user/assistant 事实句各一张）', async () => {
     const r = await recordChatFact(ws, '我今天买了一辆红色的特斯拉', '好的，已记录你的新车信息');
     assert.equal(r.recorded, true);
     const file = JSON.parse(fs.readFileSync(path.join(ws, '.panshalach-memory.json'), 'utf8'));
-    assert.equal(file.cards.length, 1);
-    assert.equal(file.cards[0].kind, 'preference');
-    assert.equal(file.cards[0].memoryCategory, 'insight', 'insight 才在 high 档可见');
-    assert.ok(file.cards[0].summary.includes('特斯拉'));
+    // 0.8.2 句级拆卡：user 事实句 + assistant 事实句各成一张卡
+    assert.equal(file.cards.length, 2);
+    for (const c of file.cards) {
+      assert.equal(c.kind, 'preference');
+      assert.equal(c.memoryCategory, 'insight', 'insight 才在 high 档可见');
+      assert.ok(c.summary.startsWith('【对话事实'), '句级卡带来源标记');
+    }
+    assert.ok(file.cards.some((c: any) => c.summary.includes('特斯拉')));
   });
 
   it('短输入 / 问候噪音 → 不落卡', async () => {

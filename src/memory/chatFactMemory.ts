@@ -18,8 +18,46 @@ import { RefinedMemoryStore } from './RefinedMemoryStore.js';
 const hashId = (seed: string): string => createHash('sha1').update(seed).digest('hex').slice(0, 12);
 
 const MIN_INPUT_CHARS = 8;
-const INPUT_SLICE = 120;
-const ANSWER_SLICE = 240;
+const MAX_CARDS_PER_TURN = 3;
+const MAX_TOTAL_CARDS = 80;
+
+/**
+ * 句级拆卡（0.8.2 第二轮修正）：18 题 B 档错题归因——15 错中 11 错是
+ * "gold 不在截断后的卡里"（整轮截 120/240 字符的摘要形态覆盖率不足，
+ * 事实藏在对话任意位置）。改为按句拆分：含数字/专名的句子独立成卡
+ * （事实粒度 = 句，检索关键词更精准），确定性规则、零 LLM。 */
+const SENTENCE_HAS_FACT = (x: string): boolean =>
+  /\d/.test(x) || /[A-Z][a-z]+/i.test(x) === false && /[A-Z]/.test(x) || /\d|n|\$/.test(x) || false;
+const isFactSentence = (x: string): boolean => {
+  const t = x.trim();
+  if (t.length < 12 || t.length > 240) return false;
+  if (/\d/.test(t)) return true;                          // 数字/日期/度量
+  if (/[一-龥]/.test(t)) return true;             // 中文句整体保留
+  if (/(my|i|we|our)/i.test(t) && /[A-Z]/.test(t)) return true; // 第一人称专名句
+  if (/\p{Lu}{2,}/u.test(t)) return true;                  // 全大写缩写
+  return false;
+};
+
+/** 切分器（第三轮修正）：先按行、再按句、超长硬切——无句号结尾的长轮
+ *  此前被整段丢弃（真机 18 题实证：12 轮只落 10 张，bike 轮缺席）。 */
+function splitSentences(text: string): string[] {
+  const out: string[] = [];
+  for (const line of String(text ?? '').split(/\n+/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.match(/[^.!?]*[.!?]+|[^.!?]+$/g) ?? [trimmed];
+    for (const part of parts) {
+      let p = part.trim();
+      if (!p) continue;
+      while (p.length > 240) {
+        out.push(p.slice(0, 240));
+        p = p.slice(240);
+      }
+      if (p) out.push(p);
+    }
+  }
+  return out;
+}
 
 /**
  * 截断保留策略（0.8.2 真机修正）：LongMemEval 的 gold 多为数字/日期/专名，
@@ -61,6 +99,12 @@ export interface ChatFactResult {
   cardId?: string;
 }
 
+export interface ConversationTurnResult {
+  recorded: number;
+  reason?: 'disabled' | 'too-short' | 'noise' | 'duplicate';
+  cardIds?: string[];
+}
+
 /**
  * 记录一条对话事实卡。任何失败都不抛出（记忆写入绝不影响对话主流程）。
  * @param workspace 工作区（记忆文件所在）
@@ -72,24 +116,53 @@ export async function recordChatFact(
   userInput: string,
   answer: string
 ): Promise<ChatFactResult> {
+  const r = await recordConversationTurn(workspace, userInput, answer);
+  return { recorded: r.recorded > 0, reason: r.reason, cardId: r.cardIds?.[0] };
+}
+
+/**
+ * 记录一轮对话（句级拆卡版）：user/assistant 轮各拆句，事实句独立成卡。
+ * 多卡原子落盘（一次 save）；总卡数 80 封顶（新卡让位旧卡由容量淘汰管）。
+ */
+export async function recordConversationTurn(
+  workspace: string,
+  userInput: string,
+  answer: string
+): Promise<ConversationTurnResult> {
   try {
-    if (process.env.PANSHA_CHAT_MEMORY === '0') return { recorded: false, reason: 'disabled' };
+    if (process.env.PANSHA_CHAT_MEMORY === '0') return { recorded: 0, reason: 'disabled' };
     const input = String(userInput ?? '').trim();
     const reply = String(answer ?? '').replace(/\s+/g, ' ').trim();
-    if (input.length < MIN_INPUT_CHARS) return { recorded: false, reason: 'too-short' };
-    if (NOISE_RE.test(input)) return { recorded: false, reason: 'noise' };
+    if (input.length < MIN_INPUT_CHARS) return { recorded: 0, reason: 'too-short' };
+    if (NOISE_RE.test(input)) return { recorded: 0, reason: 'noise' };
 
     const store = new RefinedMemoryStore(workspace);
-    const summary = `用户提到：${smartSlice(input, INPUT_SLICE)}｜答复要点：${smartSlice(reply, ANSWER_SLICE)}`;
+    const file = store.load();
+    if (file.cards.length >= MAX_TOTAL_CARDS) return { recorded: 0, reason: 'duplicate' };
 
-    // 去重：同 summary 的活跃卡已存在 → 只刷 lastSeen（不叠 count 防自增）
-    const existing = store.load().cards.find((c) => c.kind === 'preference' && c.summary === summary);
-    if (existing) {
-      return { recorded: false, reason: 'duplicate', cardId: existing.id };
-    }
-
+    // 句级拆分：user 轮 + assistant 轮的事实句（每轮各限 3 张防刷屏）
     const now = Date.now();
-    const card = {
+    const turnTag = new Date(now).toISOString().slice(0, 16).replace('T', ' ');
+    const candidates: string[] = [];
+    for (const [src, text] of [['用户', input], ['助手', reply]] as const) {
+      const sentences = text.match(/[^.!?\n]*[.!?]+|[^.!?\n]+$/g) ?? [];
+      let picked = 0;
+      for (const raw of sentences) {
+        if (picked >= MAX_CARDS_PER_TURN) break;
+        const sent = raw.trim();
+        if (!isFactSentence(sent)) continue;
+        candidates.push(`【对话事实·${src}·${turnTag}】${sent}`);
+        picked++;
+      }
+    }
+    if (candidates.length === 0) return { recorded: 0, reason: 'too-short' };
+
+    // 去重（summary 全等 → 跳过）
+    const existingSummaries = new Set(file.cards.filter((c) => c.kind === 'preference').map((c) => c.summary));
+    const fresh = candidates.filter((c) => !existingSummaries.has(c));
+    if (fresh.length === 0) return { recorded: 0, reason: 'duplicate' };
+
+    const cards = fresh.map((summary) => ({
       id: hashId(`chatfact-${summary}`),
       kind: 'preference' as const,
       category: 'OTHER' as const,
@@ -101,14 +174,14 @@ export async function recordChatFact(
       lastSeen: now,
       firstSeen: now,
       applicableTiers: [],
-      sourceContext: '对话事实沉淀（chat fact memory）',
+      sourceContext: '对话事实沉淀（句级拆卡）',
       decayWeight: 1.0,
       lastUsedAt: now,
-    };
-    store.save([card as any]);
-    return { recorded: true, cardId: card.id };
+    }));
+    store.save(cards as any);
+    return { recorded: cards.length, cardIds: cards.map((c) => c.id) };
   } catch {
     // 静默：记忆沉淀是 best-effort，绝不影响对话
-    return { recorded: false, reason: 'duplicate' };
+    return { recorded: 0, reason: 'duplicate' };
   }
 }

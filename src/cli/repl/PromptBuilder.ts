@@ -582,7 +582,17 @@ export class PromptBuilder {
       // use pre-collected relevant files (from caller) for reference filtering
       const currentFiles = currentWorkspaceFiles && currentWorkspaceFiles.length ? currentWorkspaceFiles : undefined;
       // 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
-      const keywords = (issue ?? '').split(/\s+/).map(w => w.replace(/^[/@#]/, '')).filter(w => w.length >= 2);
+      // 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
+      // 停用词占满相关性命中，区分度归零）；中文 2 字词保留。
+      const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
+      const keywords = (issue ?? '')
+        .split(/\s+/)
+        .map(w => w.replace(/^[/@#]/, ''))
+        .filter(w => {
+          const lw = w.toLowerCase();
+          if (/[一-龥]/.test(w)) return w.length >= 2;
+          return w.length >= 2 && !STOPWORDS.has(lw);
+        });
       this.lastKeywords = keywords;
       const allCards = memStore.loadFiltered({
         tier: this.session.tier,
