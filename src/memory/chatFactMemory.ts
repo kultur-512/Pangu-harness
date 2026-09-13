@@ -99,6 +99,50 @@ export interface ChatFactResult {
   cardId?: string;
 }
 
+/**
+ * 评测直落卡（0.8.2）：LME memory 文件的浓缩事实行逐行落卡——跳过噪音门/
+ * 最短长度门（浓缩行非自然对话），保留去重与 schema。评测专用，产品路径
+ * 仍走 recordConversationTurn 的保守门。
+ */
+export async function recordFactLines(
+  workspace: string,
+  lines: string[]
+): Promise<{ recorded: number; total: number }> {
+  try {
+    if (process.env.PANSHA_CHAT_MEMORY === '0') return { recorded: 0, total: lines.length };
+    const store = new RefinedMemoryStore(workspace);
+    const file = store.load();
+    const now = Date.now();
+    const existing = new Set(file.cards.map((c) => c.summary));
+    const cards = [];
+    for (const raw of lines) {
+      const line = String(raw ?? '').trim();
+      if (line.length < 4 || existing.has(line)) continue;
+      cards.push({
+        id: hashId(`chatfact-${line}`),
+        kind: 'preference' as const,
+        category: 'OTHER' as const,
+        memoryCategory: 'insight' as const,
+        summary: line,
+        weight: 0.7,
+        taskStyle: 'all',
+        count: 1,
+        lastSeen: now,
+        firstSeen: now,
+        applicableTiers: [],
+        sourceContext: '评测记忆文件事实行（LME）',
+        decayWeight: 1.0,
+        lastUsedAt: now,
+      });
+      existing.add(line);
+    }
+    if (cards.length > 0) store.save(cards as any);
+    return { recorded: cards.length, total: lines.length };
+  } catch {
+    return { recorded: 0, total: lines.length };
+  }
+}
+
 export interface ConversationTurnResult {
   recorded: number;
   reason?: 'disabled' | 'too-short' | 'noise' | 'duplicate';

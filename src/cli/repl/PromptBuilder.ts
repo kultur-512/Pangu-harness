@@ -677,6 +677,10 @@ export class PromptBuilder {
   }
 
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
+    // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
+    // （Pi/CC 实验把整个 memory 文件塞进上下文）。产品默认不受影响。
+    const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
+    if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
     if (level === 'light') return 3;
     if (level === 'medium') return 6;
     if (level === 'high') return 8;
