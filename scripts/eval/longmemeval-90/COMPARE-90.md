@@ -117,3 +117,14 @@ node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repair
 **MiniMax-M3 通道（2026-09-14，grader v2 重算）**：改进后 ZL 产品管线 × M3（同 runner 同播种，`--model minimax:MiniMax-M3`）——strict **31/90 (34.4%)** · lenient **34/90** · 0 超时 · 平均 11.1s/题。对照：ZL×1B final 17/90（模型规模 +14）；CC×M3 45/90（同模型下 ZL 产品管线差 14——v1 口径差 6，判分伪影修复后差距反而放大，见结论 4）。分题型 strict（v2）：knowledge-update 6 · multi-session 7 · assistant 6 · preference 0（判分盲区） · user 4 · **temporal 8/15（反超 CC×M3 的 7/15）**——时间锚定在强模型上的收益随 v2 判分放大（v1 口径 temporal 3 vs CC 2 已反超，v2 8 vs 7 保持）。
 
 诚实备注：v2 口径下 strict 增益方向与机制证据一致（句子子候选切分/数字 token 匹配让"答对了但措辞连写"的题不再被误杀）；single-session-user 的跨轮波动属 1B 方差级。对卡写入使 A 侧保留了 smartSlice 数字句优先的裁剪（该轮为 400 字符；2026-09-14 迭代已升至 800 并同步渲染侧），注入 token 成本上升由预算门兜底。
+
+---
+
+## 附录（2026-09-14）：ZL-compact-90 时间锚定口径补全（B11）——成绩行隔离声明
+
+run-cells.mjs 的 ZL-compact-90 格完成"时间锚定口径补全"：(1) 播种由 facts 数组跨会话累积一次调用，改为**逐会话调用** recordFactLines（每会话传 sessionDate → 卡带 factDate/factDateText，渲染带 [事实时间:…]）；(2) QA spawn 补 **PANSHA_TODAY**（question_date 经 oracle 全量 json 富化，与 run-product.mjs 同模式）。这改变该格的记忆内容与 QA prompt——**成绩会移动**。
+
+**口径声明**：
+- 旧口径成绩：**strict 26/90**（v1 grader；v2 grader 重算 32/90）在旧口径（播种无 sessionDate + QA 无 PANSHA_TODAY）取得，保留于上方总表，**不再与新数字混排**；
+- 补全后重跑成绩一律以 **ZL-compact-v2 新行**登记（本表不回填、不覆写旧行）；
+- 澄清：7B 模型升级轮的 **31/90 对应格为 ZL-product 管线**（run-product.mjs，recordChatFact 播种 + 产品注入），并非 ZL-compact 格——不得与 ZL-compact-v2 混作对照。

@@ -16,6 +16,11 @@ import { atomicWriteFileSync } from '../utils/atomicFile.js';
 // 现有调用方行为逐字节不变是硬约束，改成 async 会破坏全部同步消费方），import()
 // 是异步的，故降为静态 import + 惰性实例化（provider 仅在 semantic 激活时创建）。
 import { cosineSimilarity, embedCards, embedQuery, createDefaultProvider } from './embed.js';
+// B9 相对时间检索信号（ROADMAP B9）：查询时间表达 → [start,end) 区间，卡
+// factDate 落入则 relevance+1。"今天"经 resolveToday()（尊重 PANSHA_TODAY，
+// 与评测锚定同源）；解析器零依赖纯函数，异常由接线处 try/catch 兜底。
+import { parseRelativeTimeRanges, RelTimeRange } from './relTime.js';
+import { resolveToday } from './timeAnchor.js';
 
 // ==================== 持久化文件校验（包C 缺陷3/10 共用） ====================
 
@@ -197,6 +202,87 @@ function computeSemanticScores(cards: RefinedMemoryCard[], queryText: string): M
     out.set(c.id, v ? cosineSimilarity(v, qv) : 0);
   }
   return out;
+}
+
+// ==================== B8 MMR 近重复惩罚（2026-09-14 ROADMAP B8） ====================
+
+/** 重叠判定阈值：|A∩B|/min(|A|,|B|) ≥ 0.6 视为近重复。 */
+export const MMR_OVERLAP_THRESHOLD = 0.6;
+/** 近重复惩罚因子（ROADMAP 口径）：被罚卡 score ×0.6 后放回队列重比。 */
+export const MMR_DUPLICATE_PENALTY = 0.6;
+
+/** 停用词（与 mergeSimilarCards 的 tokenize 停用表同值——两处用途不同：
+ *  2-gram 分组 vs 3-gram 近重复，各自独立维护防互相牵连）。 */
+const TRIGRAM_STOP_WORDS = new Set([
+  '这个', '那个', '我们', '你们', '他们', '自己', '什么', '一个', '没有',
+  '还是', '只是', '都是', '也是', '就是', '不是', '可以', '以及', '或者',
+  '但是', '所以', '如果', '对于', '之后', '然后',
+  'the', 'and', 'for', 'with', 'this', 'that', 'was', 'were', 'are',
+  'you', 'your', 'our', 'not', 'but', 'its', 'from',
+]);
+
+/**
+ * summary 归一化后按词内字符 3-gram 建 Set（与 mergeSimilarCards 的 tokenize
+ * 风格对齐：小写、去标点折空白、≥2 字符词且非停用词；词长 <3 整词入集，
+ * 否则取全部字符 3-gram）。
+ */
+export function summaryTrigramSet(summary: string): Set<string> {
+  const norm = String(summary || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const grams = new Set<string>();
+  for (const w of norm.split(' ')) {
+    if (w.length < 2 || TRIGRAM_STOP_WORDS.has(w)) continue;
+    if (w.length <= 3) { grams.add(w); continue; }
+    for (let i = 0; i <= w.length - 3; i++) grams.add(w.slice(i, i + 3));
+  }
+  return grams;
+}
+
+/** 重叠率 = |A∩B| / min(|A|,|B|)；任一空集 → 0（无重叠语义，不惩罚）。 */
+export function trigramOverlapRatio(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const g of small) if (large.has(g)) inter++;
+  return inter / small.size;
+}
+
+/**
+ * B8 贪心 MMR：按分序遍历，候选与任一已选卡 3-gram 重叠率 ≥0.6 → 该卡
+ * score ×0.6 放回队列重比（二选一实现申报：选「×0.6 重比」而非「直接跳过」——
+ * 跳过会塌缩 maxCards 名额/注入预算，重比让被罚卡在无更好候选时回填末位）。
+ * 每卡至多惩罚一次（二次弹出时即使仍近重复也照常入选）→ 至多 2N 次弹出，
+ * 保证终止；200 卡规模 grams 惰性建 Set 一次、重叠比对走较小集，开销 <5ms。
+ */
+export function mmrDiversify<T>(scored: Array<{ c: T; score: number }>, summaryOf: (c: T) => string): T[] {
+  const gramsCache = new Map<T, Set<string>>();
+  const gramsOf = (c: T): Set<string> => {
+    let g = gramsCache.get(c);
+    if (!g) { g = summaryTrigramSet(summaryOf(c)); gramsCache.set(c, g); }
+    return g;
+  };
+  const queue = [...scored];
+  const picked: T[] = [];
+  const penalized = new Set<T>();
+  while (queue.length > 0) {
+    const top = queue.shift()!;
+    const g = gramsOf(top.c);
+    let nearDup = false;
+    if (g.size > 0) {
+      for (const sel of picked) {
+        if (trigramOverlapRatio(g, gramsOf(sel)) >= MMR_OVERLAP_THRESHOLD) { nearDup = true; break; }
+      }
+    }
+    if (nearDup && !penalized.has(top.c)) {
+      penalized.add(top.c);
+      top.score *= MMR_DUPLICATE_PENALTY;
+      let i = 0;
+      while (i < queue.length && queue[i].score >= top.score) i++;
+      queue.splice(i, 0, top);
+      continue;
+    }
+    picked.push(top.c);
+  }
+  return picked;
 }
 
 export class RefinedMemoryStore {
@@ -602,9 +688,34 @@ export class RefinedMemoryStore {
       })
       .filter(c => ((c as any)._effectiveBase ?? (c as any)._effective) >= 0.3);
 
-    // 相关性（任务关键词命中 summary → +1，cap 3）
+    // 相关性关键词归一（B2/B9/排序共用）
     const kws = (filter.keywords ?? []).map(k => String(k).toLowerCase()).filter(Boolean);
-    if (kws.length > 0) {
+
+    // B3 语义闸（提前到相关性段——B9 与语义同门）：semantic 且 queryText 且候选
+    // 关键词 ≥2 才激活语义通道；任一异常（embed 不可用等）回退纯词面（旧公式），
+    // 绝不影响加载主流程。
+    // 【2】语义闸放宽（2026-09-13 迭代包）：纯中文查询（queryText 含 CJK）哪怕
+    // 只抽出 1 个关键词也激活语义——中文无空格，改写查询常只切出 1 个短句级
+    // 关键词，kws>=2 对中文恒闭 → 排序退化纯新近度。英文查询不含 CJK，闸门
+    // 行为逐字节不变（1 关键词仍不激活）。
+    const semanticActive = filter.semantic === true && !!filter.queryText &&
+      (kws.length >= 2 || /[\u3000-\u9fff]/.test(String(filter.queryText ?? '')));
+
+    // B9（ROADMAP B9）：查询文本里的时间表达（"3月/上个月/two months ago"）→
+    // [start,end) 区间（UTC ms，与 factDate 同锚）。仅 semantic 激活时解析
+    // （与语义同门，纯词面路径不解析零开销）；"今天"经 resolveToday()——
+    // 尊重 PANSHA_TODAY，评测锚定与产品一致。解析失败/无表达 → 空 → 不加分。
+    let timeRanges: RelTimeRange[] = [];
+    if (semanticActive) {
+      try {
+        timeRanges = parseRelativeTimeRanges(String(filter.queryText), resolveToday());
+      } catch {
+        timeRanges = []; // 解析器任何异常不影响加载主流程
+      }
+    }
+
+    // 相关性（任务关键词命中 summary → +1；B9 时间命中 factDate 落 range → +1；cap 3）
+    if (kws.length > 0 || timeRanges.length > 0) {
       filtered = filtered.map(c => {
         const s = (c.summary || '').toLowerCase();
         let rel = 0;
@@ -617,18 +728,16 @@ export class RefinedMemoryStore {
           for (const k of kws) if (qSide.includes(k)) qRel++;
           rel += qRel;
         }
+        // B9：卡 factDate（"记的是何时的事"，chatFactMemory 0.8.3 起携带）落入
+        // 查询解析出的任一时间区间 → +1；老卡无 factDate → Number(undefined)=NaN
+        // → 天然不加分（行为不变）。cap 3 总帽不变。
+        if (timeRanges.length > 0) {
+          const fd = Number((c as any).factDate);
+          if (Number.isFinite(fd) && timeRanges.some(r => fd >= r.start && fd < r.end)) rel++;
+        }
         return { ...c, _relevance: Math.min(3, rel) } as any;
       });
     }
-
-    // B3：混合排序——semantic 且 queryText 且候选关键词 ≥2 才激活语义通道；
-    // 任一异常（embed 不可用等）回退纯词面（旧公式），绝不影响加载主流程。
-    // 【2】语义闸放宽（2026-09-13 迭代包）：纯中文查询（queryText 含 CJK）哪怕
-    // 只抽出 1 个关键词也激活语义——中文无空格，改写查询常只切出 1 个短句级
-    // 关键词，kws>=2 对中文恒闭 → 排序退化纯新近度。英文查询不含 CJK，闸门
-    // 行为逐字节不变（1 关键词仍不激活）。
-    const semanticActive = filter.semantic === true && !!filter.queryText &&
-      (kws.length >= 2 || /[\u3000-\u9fff]/.test(String(filter.queryText ?? '')));
     let semScores: Map<string, number> | null = null;
     const alpha = filter.semanticWeight ?? 0.5;
     if (semanticActive) {
@@ -646,22 +755,28 @@ export class RefinedMemoryStore {
     const maxEff = semScores
       ? filtered.reduce((m, c) => Math.max(m, (c as any)._effective ?? 0), 0)
       : 0;
-    filtered.sort((a, b) => {
-      const ea = (a as any)._effective ?? 0;
-      const eb = (b as any)._effective ?? 0;
-      const ra = (a as any)._relevance ?? 0;
-      const rb = (b as any)._relevance ?? 0;
-      let sa: number;
-      let sb: number;
-      if (semScores) {
-        sa = hybridScore(ea, maxEff, ra, semScores.get(a.id) ?? 0, alpha);
-        sb = hybridScore(eb, maxEff, rb, semScores.get(b.id) ?? 0, alpha);
-      } else {
-        sa = 0.7 * ea + 0.3 * ra;
-        sb = 0.7 * eb + 0.3 * rb;
-      }
-      return sb - sa || (b as any).count - (a as any).count || (b.lastSeen ?? 0) - (a.lastSeen ?? 0);
-    });
+    const scoreOf = (c: RefinedMemoryCard): number => {
+      const eff = (c as any)._effective ?? 0;
+      const rel = (c as any)._relevance ?? 0;
+      return semScores
+        ? hybridScore(eff, maxEff, rel, semScores.get(c.id) ?? 0, alpha)
+        : 0.7 * eff + 0.3 * rel;
+    };
+    const scored = filtered
+      .map(c => ({ c, score: scoreOf(c) }))
+      .sort((A, B) =>
+        B.score - A.score ||
+        ((B.c as any).count ?? 0) - ((A.c as any).count ?? 0) ||
+        (B.c.lastSeen ?? 0) - (A.c.lastSeen ?? 0));
+
+    // B8：MMR 近重复惩罚——排序后、maxCards 切片前；仅 semanticActive 执行
+    // （与语义同门，纯词面路径行为不变）。×0.6 重比实现（非直接跳过）申报：
+    // 保持 maxCards 名额不塌缩（近重复降权后仍可在末位回填，注入预算不缩水）。
+    if (semanticActive && scored.length >= 2) {
+      filtered = mmrDiversify(scored, (c) => String(c.summary ?? ''));
+    } else {
+      filtered = scored.map(s => s.c);
+    }
 
     if (filter.maxCards && filter.maxCards > 0) {
       // preference 保留 1 席位（排序靠后也保留，其余按 top-N）
