@@ -60,5 +60,7 @@ node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repair
 
 **终验（2026-09-14，a99ab77 文档提交后代码复跑）**：strict **16/90** · lenient **22/90** · 0 超时 · 平均 3.1s/题——与 optimized2 双样本一致（16/90 稳定复现），lenient 新高；temporal 2/15、preference 1/15 连续两轮保持非零。分题型 strict：knowledge-update 5 · multi-session 2 · assistant 3 · preference 1 · user 3 · temporal 2。完整轨迹：baseline 9 → repaired 13 → optimized 15 → optimized2 16 → **final 16**（lenient 16→18→18→20→22）。
 
+**MiniMax-M3 通道（2026-09-14）**：改进后 ZL 产品管线 × M3（同 runner 同播种，`--model minimax:MiniMax-M3`）——strict **25/90 (27.8%)** · lenient **34/90** · 0 超时 · 平均 11.1s/题。对照：ZL×1B final 16/90（模型规模 +9，相对 +56%）；CC×M3 31/90（同模型下 ZL 产品管线差 6——CC 用 phase-1 人工级蒸馏卡 100% 覆盖，ZL 走 recordChatFact 门控播种，写路径信息量仍是主差距，与 1B 侧结论一致）。分题型亮点：multi-session **6/15 反超 CC（4/15）**——检索注入对多会话聚合题的优势随模型规模放大；temporal lenient 4→9（时间锚定在强模型上收益放大）。分题型 strict：knowledge-update 6 · multi-session 6 · assistant 6 · preference 0（判分盲区） · user 4 · temporal 3。
+
 诚实备注：+2 strict 中 temporal/assistant/knowledge-update 的增益方向与机制证据一致，single-session-user 的 -2 属方差级波动；对卡写入使 A 侧保留了 smartSlice 数字句优先的 400 字符（渲染同源 400，review 返工对齐），注入 token 成本上升由预算门兜底。
 
