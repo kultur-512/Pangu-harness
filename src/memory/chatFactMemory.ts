@@ -28,15 +28,37 @@ import { resolveToday } from './timeAnchor.js';
 const hashId = (seed: string): string => createHash('sha1').update(seed).digest('hex').slice(0, 12);
 
 const MIN_INPUT_CHARS = 8;
+/**
+ * 句切分/渲染共享硬切上限（字符）——splitSentences 超长句硬切与 PromptBuilder
+ * 普通卡渲染帽（renderMemoryCardLines 的 truncateAtSentence）对齐此值。
+ * 上一轮 review 揪过"写侧 240 / 渲侧 120"的失配：gold 数字/专名常在卡的
+ * 第 120-400 字符段，渲染帽 120 把已在写侧成卡的事实腰斩（ZL vs CC 差距
+ * 头号杀手）。两处必须同源。
+ */
+export const SENTENCE_HARD_CUT_CHARS = 240;
+/** 对卡 Q 侧字符上限（buildPairSummary 与 PromptBuilder 渲染 A 行同源）。 */
+export const PAIR_Q_CHARS = 160;
+/** 对卡 A 侧字符上限（smartSlice 预算；渲染侧 A 行同步此值，防写 800/渲 400 失配）。 */
+export const PAIR_A_CHARS = 800;
 // 写路径"宽进严排"（2026-09-13 裁决）：旧 MAX_CARDS_PER_TURN=3 分侧帽与
-// MAX_TOTAL_CARDS=80 硬拒绝删除——每侧句级补充 ≤2、整轮总帽 8；溢出治理交给
+// MAX_TOTAL_CARDS=80 硬拒绝删除——每侧句级补充 ≤4、整轮总帽 8；溢出治理交给
 // RefinedMemoryStore.applyCapacityLimits 的 kind 分桶淘汰（新进旧出）。
-const MAX_SUPPLEMENT_PER_SIDE = 2;
+// 2026-09-14 迭代：每侧补充帽 2→4（写侧 2 句/400 帽把长答复清单尾部挤掉，
+// CC 差距第二来源）。列表项句豁免每侧帽（见 isListItemSentence），仅受
+// confidenceOf≥0.7 门 + 整轮总帽 8 约束。
+const MAX_SUPPLEMENT_PER_SIDE = 4;
 const MAX_CARDS_PER_TURN_TOTAL = 8;
 /** 句级补充卡的置信阈值（A2）：低于此值的句子不再单独成卡，但不阻断对卡。 */
 const SUPPLEMENT_CONFIDENCE = 0.7;
 /** 句级补充卡的最短句长（确定无信息量的碎片仍拦在写入侧）。 */
 const MIN_SENTENCE_CHARS = 12;
+
+/**
+ * 列表项句判定（2026-09-14 迭代）：以 markdown 列表标记开头
+ * （`- ` / `* ` / `+ ` / `1. ` / `2) ` 等）的句子不计入每侧补充帽。
+ * 仅豁免"每侧帽"，不豁免 confidenceOf≥0.7 门与整轮总帽 8。
+ */
+export const isListItemSentence = (s: string): boolean => /^\s*(?:[-*+]|\d+[.)])\s/.test(String(s ?? ''));
 
 /**
  * 句置信分类器（0.8.2 句级拆卡 → 2026-09-13 宽进严排改造）：
@@ -120,9 +142,9 @@ export function splitSentences(text: string): string[] {
     for (const part of parts) {
       let p = part.trim();
       if (!p) continue;
-      while (p.length > 240) {
-        out.push(restoreAbbrDot(p.slice(0, 240)));
-        p = p.slice(240);
+      while (p.length > SENTENCE_HARD_CUT_CHARS) {
+        out.push(restoreAbbrDot(p.slice(0, SENTENCE_HARD_CUT_CHARS)));
+        p = p.slice(SENTENCE_HARD_CUT_CHARS);
       }
       if (p) out.push(restoreAbbrDot(p));
     }
@@ -260,13 +282,15 @@ export async function recordChatFact(
 const normalizeTurnText = (s: string): string => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 /**
- * 对卡摘要（A1）：`Q: <user 归一化后前 160 字>\nA: <assistant smartSlice 400 字>`。
+ * 对卡摘要（A1）：`Q: <user 归一化后前 160 字>\nA: <assistant smartSlice 800 字>`。
  * assistant 侧用 smartSlice 做数字句优先裁剪（该函数由死代码转为写路径主力——
  * LongMemEval 的 gold 多为数字/日期，常在答复中后段，朴素截断会把关键事实截掉）。
+ * 2026-09-14 迭代：A 侧预算 400→800（PAIR_A_CHARS）——长答复清单尾部
+ * （品牌/研究/场次）此前被 400 帽挤掉；渲染侧 A 行同步 800（同常量）。
  */
 function buildPairSummary(input: string, reply: string): { summary: string; confidence: number } {
-  const q = normalizeTurnText(input).slice(0, 160);
-  const a = smartSlice(normalizeTurnText(reply), 400);
+  const q = normalizeTurnText(input).slice(0, PAIR_Q_CHARS);
+  const a = smartSlice(normalizeTurnText(reply), PAIR_A_CHARS);
   // 【5】A 侧主导置信（2026-09-13 迭代包）：旧实现取轮内两侧各句的全局 max——
   // Q 侧一个数字就把纯客套 A 拉满 1.0，检索端 (0.5+0.5×confidence) 软惩罚几乎
   // 永不生效。改为 confidence = 0.7×max(A 侧各句) + 0.3×max(Q 侧各句)：
@@ -330,12 +354,17 @@ export async function recordConversationTurn(
       if (gated) continue;
       let picked = 0;
       for (const raw of splitSentences(text)) {
-        if (picked >= MAX_SUPPLEMENT_PER_SIDE || candidates.length >= MAX_CARDS_PER_TURN_TOTAL) break;
+        if (candidates.length >= MAX_CARDS_PER_TURN_TOTAL) break; // 整轮总帽恒生效（含列表项）
         const sent = raw.trim();
         if (sent.length < MIN_SENTENCE_CHARS) continue; // 确定无信息量的碎片仍拦在写入侧
-        if (confidenceOf(sent) < SUPPLEMENT_CONFIDENCE) continue;
+        if (confidenceOf(sent) < SUPPLEMENT_CONFIDENCE) continue; // 置信门恒生效（含列表项）
+        // 2026-09-14 迭代：列表项句（markdown 列表标记开头）豁免"每侧补充帽"——
+        // 长答复的清单尾部（品牌/研究/场次）不再被每侧 4 句帽挤掉；仍受
+        // confidence≥0.7 门与整轮总帽 8 约束（不豁免置信门与总帽）。
+        const exempt = isListItemSentence(sent);
+        if (!exempt && picked >= MAX_SUPPLEMENT_PER_SIDE) break;
         candidates.push({ summary: `【对话事实·${src}·${turnTag}】${sent}`, sourceContext: '对话事实沉淀（句级拆卡）' });
-        picked++;
+        if (!exempt) picked++;
       }
     }
 

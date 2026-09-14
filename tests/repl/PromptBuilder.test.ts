@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { PromptBuilder, TierConstraintRegistry } from '../../src/cli/repl/PromptBuilder.js';
 import { Session } from '../../src/cli/repl/Session.js';
 import { TierRegistry, Tier } from '../../src/tiers/TierConfig.js';
+import { SENTENCE_HARD_CUT_CHARS, PAIR_A_CHARS } from '../../src/memory/chatFactMemory.js';
 
 describe('PromptBuilder', () => {
   it('includes tier contract and recent context', async () => {
@@ -587,6 +588,144 @@ describe('chat/execution 出口一致性（2026-09-13 迭代包）', () => {
       assert.ok(prompt.includes('【额外记忆】'), '非 chat 溢出块照常注入');
       const ids = pb.lastBuildMeta?.injectedCardIds ?? [];
       assert.equal(ids.length, 3, '非 chat 审计账本含 L1+溢出共 3 张');
+    });
+  });
+});
+
+// ==================== 2026-09-14 ZL vs CC 差距修复：注入面扩容 ====================
+const withIsoMemFile = async (fn: (wsRoot: string, memFile: string) => Promise<void>): Promise<void> => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-inject-scale-'));
+  const memFile = path.join(wsRoot, 'mem.json');
+  const prevMemFile = process.env.PANSHA_MEMORY_FILE;
+  process.env.PANSHA_MEMORY_FILE = memFile;
+  try {
+    await fn(wsRoot, memFile);
+  } finally {
+    if (prevMemFile === undefined) delete process.env.PANSHA_MEMORY_FILE;
+    else process.env.PANSHA_MEMORY_FILE = prevMemFile;
+    fs.rmSync(wsRoot, { recursive: true, force: true });
+  }
+};
+
+describe('#1 普通卡渲染帽 240（与写侧句切分硬切同源）', () => {
+  it('长 summary 第 120-240 字符段的数字在渲染后存活', async () => {
+    assert.equal(SENTENCE_HARD_CUT_CHARS, 240, '共享常量 = 240（渲染帽与 splitSentences 硬切同源）');
+    await withIsoMemFile(async (wsRoot) => {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const now = Date.now();
+      // 无句末标点的长 summary：'42' 位于第 ~162 字符（120 帽会截掉、240 帽存活）
+      const summary = `render240kw ${'Y'.repeat(150)} 42 ${'Z'.repeat(200)}`;
+      const store = new RefinedMemoryStore(wsRoot);
+      store.save([{
+        id: 'r240-1', kind: 'failure', category: 'COMMAND_FAILED', memoryCategory: 'failure',
+        summary, weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now,
+        applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now,
+      }] as any[]);
+
+      const sess = new Session({ tier: 'high' });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, 'render240kw task');
+      assert.equal(added, true, '前置：注入成功');
+      const mLines = lines.filter((l) => l.includes('  - [M'));
+      assert.equal(mLines.length, 1);
+      assert.ok(mLines[0].includes(' 42 '), '第 120-240 字符段的数字存活（旧 120 渲染帽会截掉）');
+    });
+  });
+});
+
+describe('#3 对卡 A 行渲染帽同步 800（写 800/渲 400 失配修复）', () => {
+  it('对卡 A 行第 400-800 字符段的内容在渲染后存活', async () => {
+    assert.equal(PAIR_A_CHARS, 800, '写侧 A 行预算 = 800');
+    await withIsoMemFile(async (wsRoot) => {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const now = Date.now();
+      const aBody = 'p'.repeat(500) + 'AMARK800' + 'q'.repeat(100);
+      const store = new RefinedMemoryStore(wsRoot);
+      store.save([{
+        id: 'pair-800', kind: 'preference', category: 'OTHER', memoryCategory: 'insight',
+        source: 'dialogue-pair', summary: `Q: 渲染帽同步测试\nA: ${aBody}`,
+        weight: 0.8, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now,
+        applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now, confidence: 1.0,
+      }] as any[]);
+
+      const sess = new Session({ tier: 'high' });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, '渲染帽同步测试');
+      assert.equal(added, true, '前置：注入成功');
+      const aLine = lines.find((l) => l.startsWith('    A: '));
+      assert.ok(aLine, '对卡渲染 A 行');
+      assert.ok(aLine.includes('AMARK800'), 'A 行第 400-800 字符段内容存活（旧 400 渲染帽会截掉）');
+    });
+  });
+});
+
+describe('#2 注入预算随窗口放大（memoryBudgetTokens / memoryCardLimitForLevel）', () => {
+  const withCtx = async (w: string, fn: () => void): Promise<void> => {
+    const prev = process.env.PANSHA_CTX_WINDOW;
+    process.env.PANSHA_CTX_WINDOW = w;
+    try { fn(); } finally {
+      if (prev === undefined) delete process.env.PANSHA_CTX_WINDOW;
+      else process.env.PANSHA_CTX_WINDOW = prev;
+    }
+  };
+
+  it('memoryBudgetTokens：8K→819、32K→1600 小窗不变；1M→15625 放大', async () => {
+    const sess = new Session({ tier: 'high' });
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    await withCtx('8192', () => assert.equal((pb as any).memoryBudgetTokens(), 819, '8K 窗预算不变'));
+    await withCtx('32768', () => assert.equal((pb as any).memoryBudgetTokens(), 1600, '32K 窗预算不变'));
+    await withCtx('1000000', () => assert.equal((pb as any).memoryBudgetTokens(), 15625, '1M 窗预算放大'));
+  });
+
+  it('memoryCardLimitForLevel：32K→39 不变、1M→200；PANSHA_MEMORY_LIMIT 逃生门优先', async () => {
+    const sess = new Session({ tier: 'high' });
+    const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    await withCtx('32768', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 39, '32K 窗张数帽不变'));
+    await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 200, '1M 窗张数帽 200'));
+    const prevLimit = process.env.PANSHA_MEMORY_LIMIT;
+    process.env.PANSHA_MEMORY_LIMIT = '5';
+    try {
+      await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 5, '显式逃生门优先（1M 窗也尊重）'));
+    } finally {
+      if (prevLimit === undefined) delete process.env.PANSHA_MEMORY_LIMIT;
+      else process.env.PANSHA_MEMORY_LIMIT = prevLimit;
+    }
+  });
+
+  it('73 卡库：1M 窗全注；32K 窗同库仍 39 张（张数帽）', async () => {
+    await withIsoMemFile(async (wsRoot) => {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const now = Date.now();
+      const store = new RefinedMemoryStore(wsRoot);
+      store.save(Array.from({ length: 73 }, (_, i) => ({
+        id: `s3-${i}`, kind: 'preference', category: 'OTHER', memoryCategory: 'insight',
+        summary: `seventy3 记忆卡第${i}条`, weight: 0.8, taskStyle: 'all', count: 1,
+        lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '',
+        decayWeight: 1.0, lastUsedAt: now,
+      })) as any[]);
+
+      const inject = async (w: string): Promise<number> => {
+        const prev = process.env.PANSHA_CTX_WINDOW;
+        process.env.PANSHA_CTX_WINDOW = w;
+        try {
+          const sess = new Session({ tier: 'high' });
+          const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+          const lines: string[] = [];
+          await (pb as any).appendMemoryCardsDedup(lines, undefined, 'seventy3 相关任务');
+          return lines.filter((l) => l.includes('  - [M')).length;
+        } finally {
+          if (prev === undefined) delete process.env.PANSHA_CTX_WINDOW;
+          else process.env.PANSHA_CTX_WINDOW = prev;
+        }
+      };
+
+      assert.equal(await inject('1000000'), 73, '1M 窗：73 卡库全注（旧 40 帽只放 40）');
+      assert.equal(await inject('32768'), 39, '32K 窗：张数帽仍 39（小窗行为不变）');
     });
   });
 });

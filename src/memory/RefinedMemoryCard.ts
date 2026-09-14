@@ -119,8 +119,12 @@ export const MEMORY_LIMITS = {
   DECAY_HALF_LIFE_DAYS: 30,
   /** 最小权重（衰减后低于此值会被清理） */
   MIN_WEIGHT: 0.5,
-  /** 文件大小软上限（字节） */
-  MAX_FILE_SIZE_BYTES: 200 * 1024,
+  /** 文件大小软上限（字节）。
+   *  2026-09-14 容量复查：A 侧 smartSlice 400→800（PAIR_A_CHARS）后，80 张
+   *  preference 桶满载（对卡 Q160+A800，CJK 3 字节/字 ≈ 3.3KiB/张）≈ 262KiB，
+   *  超旧帽 200KiB → save() 会 reject（写侧静默丢数据）。上调至 512KiB 给
+   *  桶满载留 ~2 倍余量；只上调、不引入新截断。 */
+  MAX_FILE_SIZE_BYTES: 512 * 1024,
   /** 默认持久化文件名 */
   DEFAULT_FILENAME: '.panshalach-memory.json',
   /** 默认 .gitignore 追加行 */

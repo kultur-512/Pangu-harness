@@ -25,11 +25,27 @@ function goldCandidates(gold) {
   const parts = raw.split(/[()]/).map((x) => x.trim()).filter(Boolean);
   const cands = [];
   for (const p of parts) {
-    for (const x of p.split(/or|或/i)) {
+    // review FAIL-1：or 拆分必须词界——旧 /or|或/i 把词内 or 切开
+    // （information→inf+mation、transportation→transp+tation）产出词碎片候选，
+    // 任意答案含同串即记 1 分（CC 4 个翻转由此虚高）。
+    for (const x of p.split(/\s+or\s+|或/i)) {
       if (x.trim()) cands.push(x.trim());
     }
   }
   return cands.length ? cands : [raw];
+}
+
+/**
+ * grader v2（#4a）：句子子候选切分。gold 候选拆分后（括号/or/或），对每个候选
+ * 再按句末标点（[.!?;] 后接空白）拆成子候选——"30 days. 31 days (…) is also
+ * acceptable." 能拆出 "30 days" 与 "31 days" 两个独立候选，任一字串命中即过
+ * （对齐 compare-48 的 gradeStrict 语义）。十进制/缩写（"3.5"/"e.g."）因点后
+ * 无空白不被误切。
+ */
+function sentenceSubCandidates(cand) {
+  const raw = String(cand || '');
+  const parts = raw.split(/[.!?;]\s+/).map((x) => x.trim()).filter(Boolean);
+  return parts.length > 1 ? parts : [raw];
 }
 
 function gradeStrict(gold, resp, question) {
@@ -37,12 +53,36 @@ function gradeStrict(gold, resp, question) {
   const r = normalize(resp);
   const q = normalize(question);
   if (!r) return 0;
-  for (const cand of goldCandidates(gold)) {
+  const cands = [];
+  for (const cand of goldCandidates(gold)) cands.push(...sentenceSubCandidates(cand));
+  for (const cand of cands) {
     const g = normalize(cand);
     if (!g) continue;
     if (q && q.includes(g)) continue; // 复述豁免
     if (g.length <= 2) {
-      if (new RegExp(`\\b${g}\\b`).test(r)) return 1;
+      // grader v2（#4b）：短数字 gold 用响应数字 token 集合相等替代 \b 词界——
+      // 英文连写（"3 months ago"→归一化"3months"）里 "3" 不再是孤词、\b3\b 永不
+      // 命中；而中文答案数字两侧是 CJK 反而命中（系统性偏袒数字+CJK 书写风格）。
+      // review FAIL-3：token 相等只防连写/进位形态（gold=3 不命中 13/30/123）；
+      // 列表项编号（"2. National Geographic" 的 2）等于 gold 时旧实现仍会命中——
+      // 先排除行首编号形态的 token 再比（1a8a66a6 答"5 份订阅"错答被 "2." 编号
+      // 误记 1 分的防回归）。注意 r 是归一化串（标点空白已剥光），行首编号的
+      // 残留形态 = 该 token 前是行首/非数字字符（"2nationalgeographic"），且
+      // 该 token 后紧邻字母（编号后必跟内容词）——连写数字（"2magazines"）也
+      // 是此形态，故改为：仅排除"后随字母且前为行首或非数字"的 token（连写
+      // 数字是本路径要命中的正确形态，不可一并排除）。
+      if (/^\d+$/.test(g)) {
+        // 排除"列表编号"位置的数字 token（1a8a66a6 答"5 份订阅"被 "2." 编号误记
+        // 1 分的防回归）。编号形态须在**原始响应**（resp，未归一化）上识别：
+        // \d+ 后跟 . 或 ) 再跟空白；归一化串标点已剥，无法区分编号与连写。
+        const listItemNums = new Set(
+          (String(resp).match(/\d+[.)]\s/g) || []).map((m) => m.replace(/[.)]\s$/, ''))
+        );
+        const numericTokens = (r.match(/\d+/g) || []).filter((t) => !listItemNums.has(t));
+        if (numericTokens.some((t) => t === g)) return 1;
+      } else if (new RegExp(`\\b${g}\\b`).test(r)) {
+        return 1;
+      }
     } else if (r.includes(g)) return 1;
   }
   return 0;
@@ -184,4 +224,16 @@ function main() {
   console.log('Written: graded.jsonl + GRADE.md');
 }
 
-main();
+export { normalize, goldCandidates, sentenceSubCandidates, gradeStrict, gradeLenient, extractAnswer };
+
+// 仅当作为入口直接执行时跑 main()；被 import 时（测试场景）跳过。
+// 守卫 import.meta.url 等于当前 argv[1] 路径（对齐 run-eval.mjs 的入口检测惯例）。
+const isDirectRun = (() => {
+  try {
+    const arg1 = process.argv[1];
+    if (!arg1) return false;
+    const url = new URL(import.meta.url).pathname.replace(/\\/g, '/');
+    return url.endsWith(arg1.replace(/\\/g, '/')) || arg1.replace(/\\/g, '/').endsWith(url.split('/').pop() ?? '');
+  } catch { return false; }
+})();
+if (isDirectRun) main();

@@ -153,4 +153,15 @@ describe('消费者今天感知：StructuredReasoner chat 指令', () => {
     assert.ok(d.includes('今天是 2023-01-19。'), 'chat system 指令带今天');
     assert.ok(d.includes('事实日期'), '指明与记忆卡事实日期做差');
   });
+
+  it('buildChatSystemDirective 含语言跟随指令（#5，2026-09-14）', () => {
+    const d = StructuredReasoner.buildChatSystemDirective();
+    assert.ok(d.includes('用用户提问的语言作答'), '回答语言跟随提问（中文提问答中文，英文提问答英文）');
+    assert.ok(d.includes('中文提问答中文'), '显式中文分支');
+    assert.ok(d.includes('英文提问答英文'), '显式英文分支');
+    // 与"今天是"行相邻（语言跟随指令紧随其后）
+    const todayIdx = d.indexOf('今天是 ');
+    const langIdx = d.indexOf('用用户提问的语言作答');
+    assert.ok(todayIdx >= 0 && langIdx > todayIdx, '语言跟随指令在"今天是"行之后');
+  });
 });

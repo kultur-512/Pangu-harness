@@ -5,7 +5,8 @@
 //      source='dialogue-pair' 对卡（summary='Q: <user 前160>\nA: <smartSlice 400>'，
 //      kind 沿用 'preference'，confidence=分类器值）。
 //   A2 isFactSentence → confidenceOf 分类器（数字 1.0 / CJK 0.8 / 第一人称+大写
-//      开头 0.7 / 全大写缩写 0.7 / 其余 0.4）；句级补充卡只在 ≥0.7 发射（每侧 ≤2）。
+//      开头 0.7 / 全大写缩写 0.7 / 其余 0.4）；句级补充卡只在 ≥0.7 发射（每侧 ≤4，
+//      2026-09-14 由 2 上调；列表项句豁免每侧帽，见 A7）。
 //   A3 整轮总帽 8（旧 MAX_CARDS_PER_TURN=3 分侧帽删除，user/assistant 不分侧设帽）。
 //   A4 配对牵连修复：user 命中 too-short/noise 只跳过 user 侧，assistant 事实仍落卡。
 //   A5 80 帽硬拒绝移除：溢出交给 RefinedMemoryStore.applyCapacityLimits 的 kind
@@ -21,6 +22,8 @@ import {
   recordConversationTurn,
   confidenceOf,
   splitSentences,
+  isListItemSentence,
+  SENTENCE_HARD_CUT_CHARS,
 } from '../../src/memory/chatFactMemory.js';
 import { RefinedMemoryStore } from '../../src/memory/RefinedMemoryStore.js';
 
@@ -58,15 +61,27 @@ describe('A1：对卡无条件落卡（source=dialogue-pair）', () => {
     assert.ok(pair.summary.includes('柏林'), 'A 侧带 assistant 事实');
   });
 
-  it('Q 侧截 160 字、A 侧 smartSlice ≤400 字（数字句优先裁剪）', async () => {
+  it('Q 侧截 160 字、A 侧 smartSlice ≤800 字（数字句优先裁剪）', async () => {
     const longUser = '很长的用户输入'.repeat(60); // 420 字
-    const longAnswer = '回答内容甲。'.repeat(100); // 600 字（无数字句）
+    // 填充句须互异（smartSlice 用 picked.includes 去重，相同句会塌缩为 1 句）；
+    // 用 a-z/aa-ab… 字母编码 140 个无数字互异句，数字句置于末段 → 数字句优先仍保留、
+    // 总长 ≤800。
+    const letter = (i: number): string => {
+      let s = '';
+      let n = i;
+      do { s = String.fromCharCode(97 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+      return s;
+    };
+    const filler = Array.from({ length: 140 }, (_, i) => `内容${letter(i)}。`).join('');
+    const longAnswer = filler + '总价 42 万元。'; // 840 + 数字句
     await recordConversationTurn(ws, longUser, longAnswer);
     const pair = cards(ws).find((c) => c.source === 'dialogue-pair');
     assert.ok(pair, '前置：对卡落盘');
     const [q, a] = pair.summary.split('\n');
     assert.ok(q.length <= 'Q: '.length + 160, `Q 侧 ≤160 字，got ${q.length - 'Q: '.length}`);
-    assert.ok(a.length <= 'A: '.length + 400, `A 侧 ≤400 字，got ${a.length - 'A: '.length}`);
+    assert.ok(a.length <= 'A: '.length + 800, `A 侧 ≤800 字，got ${a.length - 'A: '.length}`);
+    assert.ok(a.includes('42 万'), '数字句在 800 帽内优先保留（旧 400 帽会挤掉）');
+    assert.ok(a.length - 'A: '.length > 400, 'A 侧内容超过旧 400 帽（锁定扩容生效）');
   });
 });
 
@@ -89,13 +104,13 @@ describe('A2：isFactSentence → confidenceOf 分类器', () => {
   });
 });
 
-describe('A3：整轮总帽 8（分侧 3 帽删除）', () => {
-  it('对卡 1 + 每侧句级补充 ≤2 = 5 张，且整轮 ≤8', async () => {
+describe('A3：整轮总帽 8（每侧补充帽 4，2026-09-14 2→4）', () => {
+  it('对卡 1 + 每侧句级补充 ≤4，整轮 ≤8', async () => {
     const user = Array.from({ length: 5 }, (_, i) => `用户事实第${i}条发生在2023年5月${i + 1}日的记录。`).join('');
     const asst = Array.from({ length: 5 }, (_, i) => `助手确认第${i}条在6月${i + 1}日已完成归档。`).join('');
     const r = await recordConversationTurn(ws, user, asst);
     assert.ok((r.recorded ?? 0) <= 8, `整轮总帽 8，got ${r.recorded}`);
-    assert.equal(r.recorded, 5, '对卡 1 + user 句级 2 + assistant 句级 2');
+    assert.equal(r.recorded, 8, '对卡 1 + user 句级 4 + assistant 句级 3（整轮总帽 8 截断）');
   });
 });
 
@@ -128,6 +143,44 @@ describe('A6：分句器缩写保护（Dr. Smith 不被切碎）', () => {
     await recordConversationTurn(ws, 'Dr. Smith is my doctor. I will run 5K on May 3rd.', 'noted');
     const sent = cards(ws).find((c) => c.summary.includes('Dr. Smith is my doctor'));
     assert.ok(sent, '缩写句作为完整事实句入卡');
+  });
+});
+
+describe('A7：列表项句豁免每侧补充帽（2026-09-14 迭代）', () => {
+  it('含 3 个列表项的长答复：3 项都成卡（不受每侧帽约束），整轮仍受总帽 8', async () => {
+    // user '好的' 命中噪音门 → 只跳 user 侧；assistant = 4 普通句 + 3 列表项 + 1 普通句
+    const asst = [
+      '助手确认第0条在6月1日已完成归档。',
+      '助手确认第1条在6月2日已完成归档。',
+      '助手确认第2条在6月3日已完成归档。',
+      '助手确认第3条在6月4日已完成归档。',
+      '- 预订了 2023 年 3 月 14 日的东京机票。',
+      '- 收藏了 5 家研究机构的联系方式。',
+      '- 报名了 3 场设计工作坊。',
+      '助手确认第4条在6月5日已完成归档。',
+    ].join('');
+    const r = await recordConversationTurn(ws, '好的', asst);
+    assert.equal(r.recorded, 8, '对卡 1 + 普通句 4 + 列表项 3 = 8（总帽截断第 5 个普通句）');
+    const stripTag = (s: string) => s.replace(/^【[^】]*】/, '');
+    const sents = cards(ws).filter((c) => c.summary.startsWith('【对话事实·助手'));
+    const listCards = sents.filter((c) => isListItemSentence(stripTag(c.summary)));
+    assert.equal(listCards.length, 3, '3 个列表项句都成卡（旧每侧帽会全丢）');
+  });
+
+  it('isListItemSentence 判定：markdown 列表标记开头命中；普通数字句不命中', () => {
+    assert.equal(isListItemSentence('- 预订了机票'), true);
+    assert.equal(isListItemSentence('* 收藏了机构'), true);
+    assert.equal(isListItemSentence('+ 报名了工作坊'), true);
+    assert.equal(isListItemSentence('1. 第一项'), true);
+    assert.equal(isListItemSentence('2) 第二项'), true);
+    assert.equal(isListItemSentence('30 days had passed.'), false, '数字开头但无列表标记不命中');
+    assert.equal(isListItemSentence('2023 年 3 月预订'), false, '纯数字日期开头不命中');
+  });
+});
+
+describe('共享渲染/切分常量（2026-09-14 #1）', () => {
+  it('SENTENCE_HARD_CUT_CHARS = 240（渲染帽与 splitSentences 硬切同源）', () => {
+    assert.equal(SENTENCE_HARD_CUT_CHARS, 240);
   });
 });
 

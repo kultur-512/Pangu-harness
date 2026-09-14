@@ -198,10 +198,10 @@ describe('包C 缺陷10：/memory import 校验（形状 + 大小）', () => {
     assert.equal(fs.readFileSync(memPath(), 'utf-8'), before);
   });
 
-  it('超 200KiB → 拒绝（沿用 save 的 MAX_FILE_SIZE_BYTES）', () => {
+  it('超 512KiB → 拒绝（沿用 save 的 MAX_FILE_SIZE_BYTES）', () => {
     mkWs();
     const store = new RefinedMemoryStore(ws);
-    const big = { meta: { version: '1.0.0' }, cards: [{ ...card(1), summary: 'x'.repeat(220 * 1024) }] };
+    const big = { meta: { version: '1.0.0' }, cards: [{ ...card(1), summary: 'x'.repeat(520 * 1024) }] };
     assert.throws(() => store.import(JSON.stringify(big)), /导入被拒绝/);
   });
 

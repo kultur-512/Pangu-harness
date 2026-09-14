@@ -8,6 +8,10 @@ import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierCo
 import type { TaskIntent } from '../taskIntent.js';
 import { estTokens, resolveWindowTokens } from './tokenEstimate.js';
 import { resolveToday } from '../../memory/timeAnchor.js';
+// 写侧/渲染侧共享字符帽（SENTENCE_HARD_CUT_CHARS=普通卡渲染帽=句切分硬切；
+// PAIR_Q/A_CHARS=对卡 Q/A 行上限）——渲染侧与 chatFactMemory 写侧同源，
+// 防"写 800/渲 400"或"写 240/渲 120"的失配（上一轮 review 揪过的复发现象）。
+import { SENTENCE_HARD_CUT_CHARS, PAIR_Q_CHARS, PAIR_A_CHARS } from '../../memory/chatFactMemory.js';
 
 // estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
 // 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
@@ -28,9 +32,12 @@ export function truncateAtSentence(text: string, budget: number): string {
 }
 
 /**
- * C1（2026-09-13 对卡渲染）：source==='dialogue-pair' 的卡不走 truncateAtSentence(120)
- * （句边界截断曾把已落卡事实腰斩），改为分行渲染——Q 行 ≤160 字 + A 行 ≤240 字，
+ * C1（2026-09-13 对卡渲染）：source==='dialogue-pair' 的卡不走 truncateAtSentence
+ * （句边界截断曾把已落卡事实腰斩），改为分行渲染——Q 行 ≤160 字 + A 行 ≤800 字，
  * label 用 [对话记忆]。其他卡渲染不变（单行、句边界截断）。
+ * 2026-09-14：普通卡渲染帽 120→SENTENCE_HARD_CUT_CHARS(240)（ZL vs CC 头号杀手
+ * ——gold 数字/专名在第 120-400 字符段被 120 切线截掉）；对卡 Q/A 行改用
+ * PAIR_Q_CHARS/PAIR_A_CHARS（写侧 smartSlice 800 同步，防写 800/渲 400 失配）。
  * 返回行数组（对卡 1-2 行，普通卡 1 行）。
  */
 function renderMemoryCardLines(
@@ -43,11 +50,11 @@ function renderMemoryCardLines(
   if (card?.source === 'dialogue-pair') {
     const s = String(card.summary ?? '');
     const nl = s.indexOf('\n');
-    const q = (nl >= 0 ? s.slice(0, nl) : s).replace(/^Q:\s*/i, '').slice(0, 160);
-    const a = (nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, '').slice(0, 400);
+    const q = (nl >= 0 ? s.slice(0, nl) : s).replace(/^Q:\s*/i, '').slice(0, PAIR_Q_CHARS);
+    const a = (nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, '').slice(0, PAIR_A_CHARS);
     return a ? [`${head}Q: ${q}`, `    A: ${a}`] : [`${head}Q: ${q}`];
   }
-  return [`${head}${truncateAtSentence(card?.summary, 120)}`];
+  return [`${head}${truncateAtSentence(card?.summary, SENTENCE_HARD_CUT_CHARS)}`];
 }
 
 // ==================== L0 硬约束（≤3 条，非整段注入） ====================
@@ -793,7 +800,7 @@ export class PromptBuilder {
           // 无任何路径产出 [S日期] 前缀（grep 证实）。替换为事实时间差值规则，
           // 与今天（身份行）+ [事实时间:…] 标注配套，"多久之前/多少周"可计算。
           '（规则：记忆卡【】内的日期与[事实时间:...]标注的是事实发生时间；计算"多久之前/多少周"时用它与今天的差值，不要用其他时间戳。）',
-          // C1：对卡分行渲染（Q ≤160 / A ≤400，与写侧 smartSlice 同源），普通卡单行截 120；
+          // C1：对卡分行渲染（Q ≤160 / A ≤800，与写侧 smartSlice 同源），普通卡单行截 240；
           // 行集已在 token 门按预算贪心生成（rendered），此处只拼接
           ...rendered.flat(),
           ghost,
@@ -855,7 +862,7 @@ export class PromptBuilder {
       if (cards.length > 0) {
         lines.push('\n【提炼后的教训（来自历史项目记忆）】');
         for (const c of cards) {
-          const one = truncateAtSentence(c.summary, 120);
+          const one = truncateAtSentence(c.summary, SENTENCE_HARD_CUT_CHARS);
           lines.push(`  - [${c.category}] ${one}`);
         }
       }
@@ -865,15 +872,19 @@ export class PromptBuilder {
   }
 
   /**
-   * C2（2026-09-13 注入预算 token 化）：注入预算 tokens = min(floor(window×比例), 1600)，
-   * window ≤8192 取 10%、更大窗口取 15%（固定卡数帽不随窗口伸缩是错的——8K 与
-   * 128K 窗口给同样的 8 张，要么撑爆小窗要么浪费大窗）。窗口未知/异常回退 700
-   * （旧溢出块常量，语义=保守小预算）。
+   * C2（2026-09-13 注入预算 token 化）+ 2026-09-14 随窗口放大：
+   * 注入预算 tokens = min(floor(window×比例), max(1600, floor(window/64)))。
+   *   - window ≤8192 取 10%、更大窗口取 15%（固定卡数帽不随窗口伸缩是错的——
+   *     8K 与 128K 窗口给同样的 8 张，要么撑爆小窗要么浪费大窗）。
+   *   - 上限由固定 1600 改为 max(1600, floor(w/64))：1M 窗→15625（多会话大库
+   *     73-80 卡可全注，旧帽只放进 ~15%）；32K 窗→floor(32768/64)=512→仍 1600、
+   *     8K 窗→128→仍 819（小窗行为逐字节不变）。
+   * 窗口未知/异常回退 700（旧溢出块常量，语义=保守小预算）。
    */
   private memoryBudgetTokens(): number {
     try {
       const w = resolveWindowTokens((this.session as any).provider, this.session.model);
-      return Math.min(Math.floor(w * (w <= 8192 ? 0.10 : 0.15)), 1600);
+      return Math.min(Math.floor(w * (w <= 8192 ? 0.10 : 0.15)), Math.max(1600, Math.floor(w / 64)));
     } catch {
       return 700;
     }
@@ -882,16 +893,19 @@ export class PromptBuilder {
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
     // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
     // （Pi/CC 实验把整个 memory 文件塞进上下文）。评测格依赖它——env 显式
-    // 设置时完全维持现状（不走窗口感知）。
+    // 设置时张数帽完全维持现状；注意 >100K 窗口下 token 门预算仍随窗口放大
+    // （memoryBudgetTokens 的 max(1600, w/64)），env 仅覆盖张数帽（review 申报）。
     const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
     if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
-    // C2：窗口感知张数——budget/41（每卡 ~41 token 经验值：标签+事实时间+摘要 120 字），
-    // clamp 到 [6, 40]：下限 6 保证轻量档最小可见性，上限 40 防大窗刷屏。
+    // C2：窗口感知张数——budget/41（41 为混合短卡经验值；对卡/Q/A 双行由渲染后
+    // estTokens 门实际约束，张数帽仅作上限），
+    // clamp 到 [6, 200]：下限 6 保证轻量档最小可见性，上限 200 让 1M 窗下大库
+    // （73-80 卡）可全注（旧 40 帽 32K 窗仍 39 不变；1M 窗 381→cap 200）。
     // level 参数保留（'none' 档在调用方已拦截；light/medium/high/full 的旧固定
     // 帽 3/6/8/10 由窗口预算取代）。
     void level;
     const budget = this.memoryBudgetTokens();
-    return Math.max(6, Math.min(Math.floor(budget / 41), 40));
+    return Math.max(6, Math.min(Math.floor(budget / 41), 200));
   }
 
   /**
