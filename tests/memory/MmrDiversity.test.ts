@@ -62,10 +62,13 @@ describe('B8b：loadFiltered MMR 近重复惩罚（排序后、maxCards 切片�
    *  MMR 后 dupB ×0.6=0.6 < 0.75 → 序变 [dupA, divC, dupB]。 */
   const makeStore = (): RefinedMemoryStore => {
     const store = new RefinedMemoryStore(ws, 'mem.json');
+    // review 去 flake：loadFiltered 同分回退是 lastSeen desc，显式错开消除
+    // Date.now() 同毫秒假设（全量并发负载下曾致 B8b 偶发翻转）
+    const t0 = Date.now();
     store.save([
-      mkCard('dup-a', 'banana split dessert recipe with cream topping'),
-      mkCard('dup-b', 'banana split dessert recipe with cream topping plus nuts'),
-      mkCard('div-c', 'grafting scion technique for orchard trees'),
+      mkCard('dup-a', 'banana split dessert recipe with cream topping', { lastSeen: t0 + 3000 }),
+      mkCard('dup-b', 'banana split dessert recipe with cream topping plus nuts', { lastSeen: t0 + 2000 }),
+      mkCard('div-c', 'grafting scion technique for orchard trees', { lastSeen: t0 + 1000 }),
     ]);
     setSemanticEmbedderForTest((texts) => texts.map(() => [1, 0])); // 语义等权：只看词面 rel
     return store;
