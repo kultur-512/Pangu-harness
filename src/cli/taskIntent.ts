@@ -12,8 +12,13 @@ export type TaskIntent = 'execution' | 'search' | 'chat' | 'meta';
 const EXECUTION_WORDS =
   /(read_file|write_file|edit_file|\bbash\b|\bglob\b|\bgrep\b|\bgit\b|\bnpm\b|\bnpx\b|\bnode\b|\btsc\b|\bpython\b|\bpytest\b|\bcargo\b|\bgo\b|\bmake\b)/i;
 
+// T6（openPangu 配合度修复）：补检索/枚举类动词——实证"列出 src 文件"/"搜 TODO"
+// 被误判 chat → 零动作记 success（假完成）。疑问/文创否定启发在前，chat 类提问
+// （"什么是查找算法"/"how do I find..."）不受影响。
+// 英文动词段加 \b 词边界（消除 researching(list⊂)/listening(search⊂) 过捕）；
+// 中文段不加（CJK 相邻处无词边界，加了会使"列出文件"失配）。
 const EXECUTION_VERBS =
-  /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|完成|继续|接着|处理|搞定|收尾|补全|改|写|建|加|删|跑|测|build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update|continue|finish|resume)/i;
+  /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|完成|继续|接着|处理|搞定|收尾|补全|列出|列举|搜索|查找|查看|改|写|建|加|删|跑|测)|(\b(?:build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update|continue|finish|resume|list|search|find)\b)/i;
 
 /** 文件后缀 token（无执行动词时触发 search）。 */
 const FILE_EXT_RE = /\b[A-Za-z0-9_.\-/\\]+\.(?:ts|tsx|js|jsx|json|md|py|go|rs|java|cpp|c|h|txt|yaml|yml|toml|sh|css|html|sql)\b/i;

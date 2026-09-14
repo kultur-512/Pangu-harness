@@ -13,6 +13,7 @@
 // - Provide format detection + hints so the loop can coach the model
 
 import { ToolCall, ToolCallParam, ParseResult, ParseOptions, inferToolCategory } from '../types/toolCall.js';
+import { normalizeToolName } from '../tools/executor.js';
 
 export type ToolCallFormat =
   | 'xml-strict'
@@ -38,6 +39,23 @@ export interface UniversalParseOptions extends ParseOptions {
   tolerant?: boolean;
 }
 
+/** T3 C13/属性式识别用核心工具清单（normalizeToolName 归一后对照；
+ *  MCP/扩展工具不在此列——首标签不命中清单时保持原解析行为，不误伤）。 */
+const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'bash',
+]);
+
+/** T6：NO_NAMED_PARAMS 兜底参数名按工具映射（旧实现硬编码 content——bash 的裸
+ *  命令体落到 content 后执行必败）。未知工具保持 content。 */
+const FALLBACK_PARAM_BY_TOOL: Record<string, string> = {
+  bash: 'command',
+  read_file: 'file_path',
+  glob: 'pattern',
+  grep: 'pattern',
+  edit_file: 'old_string',
+  write_file: 'content',
+};
+
 export class UniversalToolCallAdapter {
   private static readonly ROOT_OPEN = '<>';
   private static readonly ROOT_CLOSE = '</>';
@@ -52,6 +70,13 @@ export class UniversalToolCallAdapter {
 
     if (!content || typeof content !== 'string') {
       return { toolCalls: [], remainingText: '', warnings: ['EMPTY_INPUT'] };
+    }
+
+    // T3 C06 全角归一：弱模型会输出全角尖括号（＜＞＜/＞）——入参含全角时
+    // 替换为半角再走原逻辑（仅在确有全角时做替换，零开销热路径）。
+    if (content.includes('＜') || content.includes('＞')) {
+      content = content.replace(/＜/g, '<').replace(/＞/g, '>');
+      warnings.push('FULLWIDTH_ANGLE_NORMALIZED');
     }
 
     const trimmed = content.trim();
@@ -107,6 +132,42 @@ export class UniversalToolCallAdapter {
       };
     }
 
+    // Strategy 4 (T3 C08/C09): 属性式标签 <tool_name param="value"> ——弱模型把
+    // 参数写成属性（如 <read_file path="a.txt">），此前 100% 丢失。只在其余
+    // 策略一无所获时尝试，且工具名必须命中核心清单（归一化后）——散文里的
+    // <a href="..."> 等 HTML 形态零误伤。
+    attempts.push('attribute-tag');
+    const attrCalls = this.parseAttributeTagCalls(trimmed, warnings);
+    if (attrCalls.length > 0) {
+      return {
+        toolCalls: attrCalls,
+        remainingText: this.extractRemaining(trimmed, attrCalls),
+        warnings,
+        detectedFormat: 'xml-strict',
+        diagnostics: { attempts, warnings: [...warnings] },
+      };
+    }
+
+    // review 建议落地（rootless 兜底，三重防误报）：弱模型常丢 `<>` 外壳直接以
+    // `<read_file>` 开头输出（实测任务4/5 各丢 2 步调用意图）。仅当——
+    // (a) 其余策略零产出、(b) trimmed 以核心工具开标签**开头**（散文中段提及
+    // 工具名不误伤）、(c) 工具名命中核心清单——才补壳按 XML 解析。
+    const trimmedStart = trimmed.trimStart();
+    const rootlessMatch = /^<([A-Za-z_][A-Za-z0-9_-]*)>\s*[\s\S]*$/.exec(trimmedStart);
+    if (rootlessMatch && CORE_TOOL_NAMES.has(normalizeToolName(rootlessMatch[1]))) {
+      const wrapped = `<>${trimmedStart}</>`;
+      const retry = this.parse(wrapped, options);
+      if (retry.toolCalls.length > 0) {
+        return {
+          toolCalls: retry.toolCalls,
+          remainingText: this.extractRemaining(trimmedStart, retry.toolCalls),
+          warnings: [...warnings, 'ROOTLESS_TOOL_BLOCK_RESCUED', ...retry.warnings],
+          detectedFormat: 'xml-strict',
+          diagnostics: { attempts: [...attempts, 'rootless-rescue'], warnings: [...warnings] },
+        };
+      }
+    }
+
     return {
       toolCalls: [],
       remainingText: trimmed,
@@ -160,63 +221,167 @@ export class UniversalToolCallAdapter {
       ).trim();
       if (!inner) continue;
 
+      // T3 C13 首标签错配修补：弱模型会把 <plan>/<thinking> 等推理标签写进
+      // 工具块（如 <plan>…</plan><read_file>…</read_file>）——旧逻辑把 plan
+      // 当工具名，真调用被整块吞掉。首标签（归一化后）不在核心工具清单时，
+      // 在 inner 内继续扫描下一个已知工具标签作为工具名；找不到才保持旧行为。
       let toolMatch = /^<([A-Za-z_][A-Za-z0-9_-]*)>/.exec(inner);
       if (!toolMatch) toolMatch = /<([A-Za-z_][A-Za-z0-9_-]*)>/.exec(inner);
-      if (!toolMatch) {
+      let toolName = toolMatch ? toolMatch[1] : '';
+      if (toolName && !CORE_TOOL_NAMES.has(normalizeToolName(toolName))) {
+        const rescued = this.findNextKnownToolTag(inner);
+        if (rescued) {
+          warnings.push(`FIRST_TAG_NOT_A_TOOL:${toolName}->${rescued}`);
+          toolName = rescued;
+        }
+      }
+      if (!toolName) {
         warnings.push('NO_TOOL_NAME_IN_XML_BLOCK');
         continue;
       }
 
-      const toolName = toolMatch[1];
       const toolOpen = `<${toolName}>`;
       const toolClose = `</${toolName}>`;
 
-      let body = inner;
-      const s = inner.indexOf(toolOpen);
-      const e = inner.lastIndexOf(toolClose);
-      if (s !== -1 && e > s) {
-        body = inner.slice(s + toolOpen.length, e).trim();
+      // T3 C19 双调用合并修补：同一块内同名工具开标签出现 >1 次 = 两次调用被
+      // 粘进一个块（旧逻辑参数互相覆盖，第二个调用静默丢失）。按开标签拆组，
+      // 每组独立提参、独立成 call；同名标签收集 >1 记 DUPLICATE_PARAM 诊断。
+      const groups: string[] = [];
+      if (inner.indexOf(toolOpen) !== -1) {
+        const parts = inner.split(toolOpen);
+        parts.shift(); // 丢弃首个开标签之前的前缀（散文/推理标签）
+        for (const part of parts) {
+          const closeIdx = part.indexOf(toolClose);
+          groups.push((closeIdx !== -1 ? part.slice(0, closeIdx) : part).trim());
+        }
+        if (groups.length > 1) {
+          warnings.push(`DUPLICATE_PARAM:${toolName}x${groups.length}`);
+        }
       } else {
-        warnings.push(`TOOL_TAG_IMBALANCE:${toolName}`);
+        // 开标签带属性或写法变体（如 <bash >）——保持旧的整块 body 提取。
+        let body = inner;
+        const s = inner.indexOf(toolOpen);
+        const e = inner.lastIndexOf(toolClose);
+        if (s !== -1 && e > s) {
+          body = inner.slice(s + toolOpen.length, e).trim();
+        } else {
+          warnings.push(`TOOL_TAG_IMBALANCE:${toolName}`);
+        }
+        groups.push(body);
       }
 
-      const params: ToolCallParam[] = [];
-      const re = /<([A-Za-z_][A-Za-z0-9_-]*)>([\s\S]*?)<\/\1>/g;
-      const closedRanges: Array<[number, number]> = [];
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) {
-        closedRanges.push([m.index, m.index + m[0].length]);
-        params.push({ name: m[1], value: this.unescape(m[2]).trim() });
-      }
+      for (const body of groups) {
+        const params: ToolCallParam[] = [];
+        const re = /<([A-Za-z_][A-Za-z0-9_-]*)>([\s\S]*?)<\/\1>/g;
+        const closedRanges: Array<[number, number]> = [];
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(body)) !== null) {
+          closedRanges.push([m.index, m.index + m[0].length]);
+          params.push({ name: m[1], value: this.unescape(m[2]).trim() });
+        }
 
-      // 包D 修复（残缺闭合标签 best-effort）：弱模型连参数闭合标签都写残
-      // （`<content>x</cont`）时，上面的正则要求完整闭合会静默丢参——对
-      // 已开未闭的标签把值 best-effort 取到 body 末尾（剥掉尾部残缺的闭合
-      // 前缀），并跳过已被完整配对消费的区间，避免重复提取。
-      const openRe = /<([A-Za-z_][A-Za-z0-9_-]*)>/g;
-      let om: RegExpExecArray | null;
-      while ((om = openRe.exec(body)) !== null) {
-        if (om[1] === toolName) continue; // 工具自身的开标签不是参数
-        if (closedRanges.some(([s, e]) => om!.index >= s && om!.index < e)) continue;
-        const valStart = om.index + om[0].length;
-        const val = this.unescape(
-          body.slice(valStart).replace(/<\/(?:[A-Za-z_][A-Za-z0-9_-]*)?$/, '').trim()
-        ).trim();
-        if (val) params.push({ name: om[1], value: val });
-      }
+        // 包D 修复（残缺闭合标签 best-effort）：弱模型连参数闭合标签都写残
+        // （`<content>x</cont`）时，上面的正则要求完整闭合会静默丢参——对
+        // 已开未闭的标签把值 best-effort 取到 body 末尾（剥掉尾部残缺的闭合
+        // 前缀），并跳过已被完整配对消费的区间，避免重复提取。
+        const openRe = /<([A-Za-z_][A-Za-z0-9_-]*)>/g;
+        let om: RegExpExecArray | null;
+        while ((om = openRe.exec(body)) !== null) {
+          if (om[1] === toolName) continue; // 工具自身的开标签不是参数
+          if (closedRanges.some(([s, e]) => om!.index >= s && om!.index < e)) continue;
+          const valStart = om.index + om[0].length;
+          const val = this.unescape(
+            body.slice(valStart).replace(/<\/(?:[A-Za-z_][A-Za-z0-9_-]*)?$/, '').trim()
+          ).trim();
+          if (val) params.push({ name: om[1], value: val });
+        }
 
-      if (params.length === 0 && body.length > 0) {
-        warnings.push(`NO_NAMED_PARAMS:${toolName}`);
-        if (options.strict !== true) {
-          params.push({ name: 'content', value: body.trim() });
+        // T3 C19：同名参数收集 >1 → DUPLICATE_PARAM 告警并拆为多 call
+        // （每对开闭标签一个 call——旧逻辑同一参数互相覆盖，先到者静默丢失）。
+        const dupCounts = new Map<string, number>();
+        for (const p of params) dupCounts.set(p.name, (dupCounts.get(p.name) ?? 0) + 1);
+        const dupNames = [...dupCounts.entries()].filter(([, cnt]) => cnt > 1).map(([n]) => n);
+
+        let paramGroups: ToolCallParam[][];
+        if (dupNames.length > 0) {
+          warnings.push(`DUPLICATE_PARAM:${dupNames.join(',')}`);
+          const maxCount = Math.max(...dupNames.map((n) => dupCounts.get(n)!));
+          paramGroups = Array.from({ length: maxCount }, () => [] as ToolCallParam[]);
+          const seen = new Map<string, number>();
+          for (const p of params) {
+            if ((dupCounts.get(p.name) ?? 0) > 1) {
+              const k = seen.get(p.name) ?? 0;
+              seen.set(p.name, k + 1);
+              if (k < maxCount) paramGroups[k].push(p);
+            } else {
+              // 非重复参数随首个 call 走（保持信息不丢）
+              paramGroups[0].push(p);
+            }
+          }
+        } else {
+          paramGroups = [params];
+        }
+
+        // T6：NO_NAMED_PARAMS 兜底参数名按工具映射（bash→command、
+        // read_file→file_path、glob/grep→pattern、edit_file→old_string、
+        // write_file→content）；未知工具保持 content。
+        if (params.length === 0 && body.length > 0) {
+          warnings.push(`NO_NAMED_PARAMS:${toolName}`);
+          if (options.strict !== true) {
+            const fallbackParam = FALLBACK_PARAM_BY_TOOL[normalizeToolName(toolName)] ?? 'content';
+            paramGroups = [[{ name: fallbackParam, value: body.trim() }]];
+          }
+        }
+
+        for (const group of paramGroups) {
+          if (group.length > 0 || options.tolerant) {
+            const call: ToolCall = { toolName, params: group, rawBlock: block };
+            call.category = inferToolCategory(toolName);
+            calls.push(call);
+          }
         }
       }
+    }
+    return calls;
+  }
 
-      if (params.length > 0 || options.tolerant) {
-        const call: ToolCall = { toolName, params, rawBlock: block };
-        call.category = inferToolCategory(toolName);
-        calls.push(call);
-      }
+  /** T3 C13：在 inner 内扫描下一个已知工具标签名（跳过参数标签——只有核心
+   *  工具名才命中）。找不到返回 undefined（保持旧行为）。 */
+  private findNextKnownToolTag(inner: string): string | undefined {
+    // review 必须返工-1：救援只认"首标签闭合之后的兄弟工具块"。嵌在未闭合
+    // 推理标签内部的工具文本（<plan>先运行 <bash>rm -rf build</bash> 清理
+    // </plan>）是对动作的"描述"，救出来就成了"执行"——安全边界回退（探针
+    // 实证会产出真实 rm -rf 调用）。因此：先定位首标签的闭合，只在其后扫描。
+    const first = /<([A-Za-z_][A-Za-z0-9_-]*)/.exec(inner);
+    if (!first) return undefined;
+    const closeIdx = inner.indexOf(`</${first[1]}>`, first.index);
+    const scanFrom = closeIdx === -1 ? inner.length : closeIdx + first[1].length + 3;
+    const re = /<([A-Za-z_][A-Za-z0-9_-]*)/g;
+    re.lastIndex = scanFrom;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(inner)) !== null) {
+      if (CORE_TOOL_NAMES.has(normalizeToolName(m[1]))) return m[1];
+    }
+    return undefined;
+  }
+
+  /** T3 C08/C09：属性式标签扫描 `<tool param="value">`（工具名须命中核心清单；
+   *  只在其余策略零产出时调用）。 */
+  private parseAttributeTagCalls(content: string, warnings: string[]): ToolCall[] {
+    const calls: ToolCall[] = [];
+    const re = /<([A-Za-z_][A-Za-z0-9_-]*)\s+([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"\s*\/?>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(content)) !== null) {
+      const [, rawName, paramName, rawValue] = m;
+      if (!CORE_TOOL_NAMES.has(normalizeToolName(rawName))) continue;
+      const call: ToolCall = {
+        toolName: rawName,
+        params: [{ name: paramName, value: this.unescape(rawValue).trim() }],
+        rawBlock: m[0],
+      };
+      call.category = inferToolCategory(rawName);
+      calls.push(call);
+      warnings.push(`ATTRIBUTE_PARAM:${rawName}.${paramName}`);
     }
     return calls;
   }

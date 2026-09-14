@@ -15,7 +15,7 @@
 
 import type { ToolCall } from '../types/toolCall.js';
 import type { TierConfig } from '../tiers/TierConfig.js';
-import { createToolExecutor, normalizeToolName, type ToolExecutor } from './executor.js';
+import { createToolExecutor, normalizeToolName, normalizeToolParams, type ToolExecutor } from './executor.js';
 import { createBashTool, bashTimeoutForTier } from './bash.js';
 import { isReadonlyAllowed, READONLY_DENY_MESSAGE } from './readonlyAllowlist.js';
 import { readFile } from './readFile.js';
@@ -372,6 +372,41 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
   const DIFF_MARK = '⟦DIFF⟧';
 
+  /**
+   * T5：INVALID_PARAMS 结果回灌的正确参数集渲染（从 BUILTIN_TOOL_SCHEMAS 的
+   * required 清单取）。形状：`<file_path>路径</file_path><content>内容</content>`。
+   * 未知工具（无 schema）返回空串——调用侧跳过追加。
+   */
+  const PARAM_VALUE_HINTS: Record<string, string> = {
+    file_path: '路径',
+    path: '目录',
+    pattern: '模式',
+    command: '命令',
+    content: '内容',
+    old_string: '待替换的原文',
+    new_string: '替换后的新文本',
+    offset: '起始行',
+    limit: '行数',
+    include: '文件名过滤',
+    replace_all: "'true' 时全部替换",
+  };
+
+  function invalidParamsHint(toolNorm: string): string {
+    const schema = BUILTIN_TOOL_SCHEMAS[toolNorm];
+    if (!schema) return '';
+    const props = ((schema.parameters as any)?.properties ?? {}) as Record<string, any>;
+    const required = ((schema.parameters as any)?.required ?? []) as string[];
+    const names = required.length > 0 ? required : Object.keys(props);
+    if (names.length === 0) return '';
+    return names
+      .map((n) => {
+        const fallback = String(props[n]?.description ?? n).split(/[（(。；;，,]/)[0] || n;
+        const hint = PARAM_VALUE_HINTS[n] ?? fallback;
+        return `<${n}>${hint}</${n}>`;
+      })
+      .join('');
+  }
+
   function describeResult(call: ToolCall, params: Record<string, string>, res: ToolResult): string {
     // P0 (alias bypass) 配套：结果分段同样按归一化名分类，`write` 别名的
     // 成功结果也要带 WRITE_SUCCESS 语义与 VERIFICATION: APPLIED 尾标。
@@ -680,7 +715,10 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
       // 每个 call 独立走 gate（只读段内并行仍逐 call 审批语义）。
       const runCall = async (call: ToolCall, idx: number): Promise<CallOutcome> => {
-        const params = paramsOf(call);
+        // T2：参数名别名在门禁【之前】收敛——gate / 敏感路径检查 / RBW
+        // checkpoint / 工具实现看到同一套规范键（`filepath` 写入不能绕过
+        // sensitiveWriteDenial，必须在 paramsOf 产物上归一）。
+        const params = normalizeToolParams(String(call.toolName || ''), paramsOf(call));
         const sensitiveRes = sensitiveWriteDenial(String(call.toolName || ''), params);
         const deniedRes = sensitiveRes ?? (await gate(String(call.toolName || ''), params));
         if (deniedRes) return { kind: 'denied', params, res: deniedRes };
@@ -825,7 +863,15 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
           }
         } else {
           unknownToolStreak = 0; // any known tool resets the drift streak
-          parts.push(describeResult(call, o.params, res));
+          let seg = describeResult(call, o.params, res);
+          // T5：INVALID_PARAMS 与 UNKNOWN_TOOL 同等引导待遇——回灌该工具的
+          // 正确参数集（从 schema required 清单取），模型只看到 ✗ 无从纠正 →
+          // 参数幻觉零引导的死循环（探查实证）。
+          if (res.error === 'INVALID_PARAMS') {
+            const hint = invalidParamsHint(normalizeToolName(String(call.toolName || '')));
+            if (hint) seg += `\n（正确参数：${hint}）`;
+          }
+          parts.push(seg);
         }
       }
       return parts.join('\n---\n');
