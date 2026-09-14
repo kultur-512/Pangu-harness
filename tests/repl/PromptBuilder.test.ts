@@ -1,6 +1,9 @@
 // tests/repl/PromptBuilder.test.ts
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { PromptBuilder, TierConstraintRegistry } from '../../src/cli/repl/PromptBuilder.js';
 import { Session } from '../../src/cli/repl/Session.js';
 import { TierRegistry, Tier } from '../../src/tiers/TierConfig.js';
@@ -637,16 +640,22 @@ describe('#1 普通卡渲染帽 240（与写侧句切分硬切同源）', () => 
   });
 });
 
-describe('#3 对卡 A 行渲染帽同步 800（写 800/渲 400 失配修复）', () => {
-  it('对卡 A 行第 400-800 字符段的内容在渲染后存活', async () => {
-    assert.equal(PAIR_A_CHARS, 800, '写侧 A 行预算 = 800');
+describe('#3 对卡 A 行渲染 400（C2：smartSlice 数字句优先；写侧 PAIR_A_CHARS=800 不动）', () => {
+  it('A 侧 800 字符盘上保留；渲染 ≤400 且 600 字符处的数字句存活', async () => {
+    assert.equal(PAIR_A_CHARS, 800, '写侧 A 行预算 = 800（盘上数据不丢，渲染时才裁）');
     await withIsoMemFile(async (wsRoot) => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
       const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
       const now = Date.now();
-      const aBody = 'p'.repeat(500) + 'AMARK800' + 'q'.repeat(100);
+      // A 侧 800 字符：数字句（含 '10 hours'）位于第 ~601 字符——旧 slice(0,400)
+      // 渲染必截掉；smartSlice(400) 数字句优先把它拉进渲染段。
+      const aBody =
+        'p'.repeat(300) + '. ' + 'q'.repeat(297) + '. ' + 'AMARK800 worked 10 hours in total. ' + 'r'.repeat(164);
+      assert.equal(aBody.length, 800, '前置：A 侧 800 字符');
       const store = new RefinedMemoryStore(wsRoot);
       store.save([{
-        id: 'pair-800', kind: 'preference', category: 'OTHER', memoryCategory: 'insight',
+        id: 'pair-render400', kind: 'preference', category: 'OTHER', memoryCategory: 'insight',
         source: 'dialogue-pair', summary: `Q: 渲染帽同步测试\nA: ${aBody}`,
         weight: 0.8, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now,
         applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now, confidence: 1.0,
@@ -659,7 +668,13 @@ describe('#3 对卡 A 行渲染帽同步 800（写 800/渲 400 失配修复）',
       assert.equal(added, true, '前置：注入成功');
       const aLine = lines.find((l) => l.startsWith('    A: '));
       assert.ok(aLine, '对卡渲染 A 行');
-      assert.ok(aLine.includes('AMARK800'), 'A 行第 400-800 字符段内容存活（旧 400 渲染帽会截掉）');
+      assert.ok(aLine!.includes('AMARK800') && aLine!.includes('10 hours'), '600 字符处的数字句渲染后存活（数字句优先）');
+      assert.ok(aLine!.length <= '    A: '.length + 400, `渲染 A 行 ≤400 字符，got ${aLine!.length - '    A: '.length}`);
+      // 盘上数据不丢：写侧 800 原文仍在
+      const onDisk = JSON.parse(fs.readFileSync(path.join(wsRoot, 'mem.json'), 'utf8'));
+      const diskA = String(onDisk.cards[0].summary).split('\n')[1].replace(/^A:\s*/i, '');
+      assert.equal(diskA.length, 800, '盘上 A 侧仍 800 字符（写侧 PAIR_A_CHARS 不动）');
+      assert.ok(diskA.includes('AMARK800'), '盘上原文完整');
     });
   });
 });
@@ -674,17 +689,18 @@ describe('#2 注入预算随窗口放大（memoryBudgetTokens / memoryCardLimitF
     }
   };
 
-  it('memoryBudgetTokens：8K→819、32K→1600 小窗不变；1M→15625 放大', async () => {
+  it('memoryBudgetTokens：8K→1229（R2 统一 15%）、32K→1600 帽不变；1M→15625 不变', async () => {
     const sess = new Session({ tier: 'high' });
     const pb = new PromptBuilder(sess, TierRegistry.get('high'));
-    await withCtx('8192', () => assert.equal((pb as any).memoryBudgetTokens(), 819, '8K 窗预算不变'));
-    await withCtx('32768', () => assert.equal((pb as any).memoryBudgetTokens(), 1600, '32K 窗预算不变'));
-    await withCtx('1000000', () => assert.equal((pb as any).memoryBudgetTokens(), 15625, '1M 窗预算放大'));
+    await withCtx('8192', () => assert.equal((pb as any).memoryBudgetTokens(), 1229, '8K 窗预算 10%→15%（819 只装 3.8 张对卡的第一瓶颈）'));
+    await withCtx('32768', () => assert.equal((pb as any).memoryBudgetTokens(), 1600, '32K 窗预算帽不变'));
+    await withCtx('1000000', () => assert.equal((pb as any).memoryBudgetTokens(), 15625, '1M 窗预算不变'));
   });
 
-  it('memoryCardLimitForLevel：32K→39 不变、1M→200；PANSHA_MEMORY_LIMIT 逃生门优先', async () => {
+  it('memoryCardLimitForLevel：8K→29 随预算放大、32K→39 不变、1M→200；PANSHA_MEMORY_LIMIT 逃生门优先', async () => {
     const sess = new Session({ tier: 'high' });
     const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+    await withCtx('8192', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 29, '8K 张数帽随预算 1229 放大（floor(1229/41)=29）'));
     await withCtx('32768', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 39, '32K 窗张数帽不变'));
     await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 200, '1M 窗张数帽 200'));
     const prevLimit = process.env.PANSHA_MEMORY_LIMIT;
@@ -729,3 +745,224 @@ describe('#2 注入预算随窗口放大（memoryBudgetTokens / memoryCardLimitF
     });
   });
 });
+
+// ==================== 2026-09-14 LME 1B 失败归因驱动：R1/C1/L1 ====================
+// 归因：819 token 预算实际只装 3.8 张对卡是注入面第一瓶颈（R1/R2）；KU 新旧值
+// 选错是管道主动误导（C1a 渲染顺序 + C1b 规则行）；语言/单位不匹配（L1）。
+//   R1 注入贪心 break→skip：装不下的大卡跳过，其后小卡继续装满预算；
+//   C1(a) 注入块按 factDate 升序稳定重排（后注入者=事实时间更新者）；
+//   C1(b)+L1 规则行补"以[事实时间]最新为准"冲突规则与答案语言镜像。
+const LME_ENV_KEYS = [
+  'PANSHA_MEMORY_FILE',
+  'PANSHA_NO_MEMORY',
+  'PANSHA_CTX_WINDOW',
+  'PANSHA_MEMORY_LIMIT',
+  'PANSHA_SEMANTIC_SEARCH',
+] as const;
+let lmeSavedEnv: Record<string, string | undefined> = {};
+
+/**
+ * 隔离记忆文件 + 关语义通道（词面排序路径确定：同分回退稳定插入序，测试可
+ * 精确构造"存盘顺序 ≠ 期望渲染顺序"）。测试后恢复全部 env。
+ */
+const withLmeIsoMem = async (fn: (wsRoot: string) => Promise<void>): Promise<void> => {
+  const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-lme2-'));
+  lmeSavedEnv = {};
+  for (const k of LME_ENV_KEYS) lmeSavedEnv[k] = process.env[k];
+  process.env.PANSHA_MEMORY_FILE = path.join(wsRoot, 'mem.json');
+  delete process.env.PANSHA_NO_MEMORY;
+  process.env.PANSHA_SEMANTIC_SEARCH = '0';
+  try {
+    await fn(wsRoot);
+  } finally {
+    for (const k of LME_ENV_KEYS) {
+      if (lmeSavedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = lmeSavedEnv[k];
+    }
+    fs.rmSync(wsRoot, { recursive: true, force: true });
+  }
+};
+
+const withLmeWindow = async (w: string, fn: () => Promise<void> | void): Promise<void> => {
+  const prev = process.env.PANSHA_CTX_WINDOW;
+  process.env.PANSHA_CTX_WINDOW = w;
+  try {
+    await fn(); // await：appendMemoryCardsDedup 是异步的，不等待会让 env 在生效前还原
+  } finally {
+    if (prev === undefined) delete process.env.PANSHA_CTX_WINDOW;
+    else process.env.PANSHA_CTX_WINDOW = prev;
+  }
+};
+
+const lmeBaseCard = (id: string, summary: string, extra: object = {}) => ({
+  id,
+  kind: 'failure',
+  category: 'COMMAND_FAILED',
+  memoryCategory: 'failure',
+  summary,
+  weight: 2,
+  taskStyle: 'all',
+  count: 1,
+  // review 建议-2 去 flake：loadFiltered 同分回退是 lastSeen desc（非插入序），
+  // 由调用方用 extra.lastSeen 显式错开（Date.now() 同毫秒假设是 flake 源）
+  lastSeen: Date.now(),
+  firstSeen: Date.now(),
+  applicableTiers: [],
+  sourceContext: '',
+  decayWeight: 1.0,
+  lastUsedAt: Date.now(),
+  ...extra,
+});
+
+describe('LME-R1：注入贪心 break→skip（装不下的大卡跳过，后面小卡继续装）', () => {
+  it('大卡在预算中段落选后，其后的小卡仍入选（旧 break 语义下落选）', async () => {
+    await withLmeIsoMem(async (wsRoot) => {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const store = new RefinedMemoryStore(wsRoot);
+      // w=1024 → 预算 ceil(1024×0.15)=154 tokens（R2 统一 15%）。
+      // 满长普通卡渲染成本：'  - [M1] [失败教训] ' + 240 ascii + '...' = 70 tokens；
+      // 短卡（17 ascii）= 14 tokens。
+      // c1+c2 装入（140 ≤ 154）→ big 卡 140+70=210 > 154 跳过 → small 卡
+      // 140+14=154 ≤ 154 入选。旧 break 语义在 big 卡处直接终止 → small 落选。
+      // review 建议-2 去 flake：显式 lastSeen 错开且保持断言所需序（FILLER1 →
+      // FILLER2 → big → small，lastSeen desc 回退 = 插入序），消除同毫秒假设
+      let seq = 0;
+      const full = (id: string, marker: string) =>
+        lmeBaseCard(id, `r1skip ${marker} ${'x'.repeat(232)}`, { lastSeen: Date.now() - ++seq * 1000 }); // 240 ascii 满长
+      store.save([
+        full('r1-c1', 'FILLER1'),
+        full('r1-c2', 'FILLER2'),
+        full('r1-big', 'R1BIGONE'),
+        lmeBaseCard('r1-small', 'r1skip R1SMALLTWO', { lastSeen: Date.now() - 4000 }),
+      ]);
+
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      await withLmeWindow('1024', async () => {
+        const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, 'r1skip task');
+        assert.equal(added, true, '前置：注入成功');
+      });
+      const joined = lines.join('\n');
+      const mLines = lines.filter((l) => l.includes('  - [M'));
+      assert.equal(mLines.length, 3, `c1/c2/small 入选（big 跳过），got ${mLines.length}`);
+      assert.ok(joined.includes('R1SMALLTWO'), '大卡落选后其后小卡仍入选（R1 核心断言，旧 break 下必红）');
+      assert.ok(!joined.includes('R1BIGONE'), '装不下的大卡被跳过（不占预算）');
+      assert.ok(joined.includes('FILLER1') && joined.includes('FILLER2'), '前置小卡不受影响');
+    });
+  });
+
+  it('首卡超预算仍收录（"至少保 1 张"语义保留）', async () => {
+    await withLmeIsoMem(async (wsRoot) => {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const store = new RefinedMemoryStore(wsRoot);
+      store.save([lmeBaseCard('r1-only', `r1skip ONLYCARD ${'x'.repeat(230)}`)]);
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      await withLmeWindow('256', async () => {
+        // w=256 → 预算 ceil(38.4)=39 < 单卡 70：首卡仍必收
+        const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, 'r1skip task');
+        assert.equal(added, true, '首卡超预算仍注入');
+      });
+      assert.ok(lines.join('\n').includes('ONLYCARD'), '"至少保 1 张"语义保留');
+    });
+  });
+});
+
+describe('LME-C1a：注入渲染按 factDate 升序（后注入者=事实时间更新者）', () => {
+  it('同主题卡 factDate 升序渲染；无 factDate 老卡排最后且保持原序；[M*] 连续重编', async () => {
+    await withLmeIsoMem(async (wsRoot) => {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      const store = new RefinedMemoryStore(wsRoot);
+      // 存盘顺序故意与新→旧日期一致——检索同分回退是 lastSeen desc（review
+      // 建议-2 去 flake）：显式指定 lastSeen 锁定排序，消除 Date.now() 同毫秒假设
+      store.save([
+        lmeBaseCard('ku-new', 'kuorder KUNEWER 部门预算改为 300 万', {
+          factDate: Date.UTC(2023, 4, 1),
+          factDateText: '2023-05-01',
+          lastSeen: Date.now() + 2000,
+        }),
+        lmeBaseCard('ku-old', 'kuorder KUOLDER 部门预算为 200 万', {
+          factDate: Date.UTC(2023, 0, 19),
+          factDateText: '2023-01-19',
+          lastSeen: Date.now() + 1000,
+        }),
+        lmeBaseCard('ku-nd1', 'kuorder KUNODATE1 无日期事实甲', { lastSeen: Date.now() + 500 }),
+        lmeBaseCard('ku-nd2', 'kuorder KUNODATE2 无日期事实乙', { lastSeen: Date.now() + 100 }),
+      ]);
+
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      const added = await (pb as any).appendMemoryCardsDedup(lines, undefined, 'kuorder 部门预算');
+      assert.equal(added, true, '前置：注入成功');
+      const mLines = lines.filter((l) => l.includes('  - [M'));
+      assert.equal(mLines.length, 4, '前置：4 张全部入选');
+      const idx = (marker: string): number => mLines.findIndex((l) => l.includes(marker));
+      assert.ok(idx('KUOLDER') >= 0 && idx('KUNEWER') >= 0, '前置：两卡都渲染');
+      assert.ok(idx('KUOLDER') < idx('KUNEWER'), 'factDate 升序：旧日期卡在前（存盘顺序相反，证明重排发生）');
+      assert.ok(idx('KUNEWER') < idx('KUNODATE1'), '无 factDate 卡排在有日期卡之后');
+      assert.ok(idx('KUNODATE1') < idx('KUNODATE2'), '无 factDate 卡之间保持原序（稳定）');
+      assert.ok(mLines[idx('KUOLDER')].includes('[M1]'), '[M*] 按重排后顺序连续编（重排后的首卡 = M1）');
+      assert.ok(mLines[idx('KUNODATE2')].includes('[M4]'), '末卡编号 [M4]');
+      assert.deepEqual(
+        (pb as any).lastInjectedCardIds,
+        ['ku-old', 'ku-new', 'ku-nd1', 'ku-nd2'],
+        '注入账本顺序 == [M*] 渲染顺序（接口契约 v3）'
+      );
+    });
+  });
+});
+
+describe('LME-C1b+L1：规则行补"新旧值取最新"与答案语言镜像', () => {
+  const seedOne = async (wsRoot: string): Promise<void> => {
+    const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+    const store = new RefinedMemoryStore(wsRoot);
+    store.save([lmeBaseCard('rule-1', 'rulecheck 规则行验证卡')]);
+  };
+
+  it('注入规则行含冲突规则（同一事实以[事实时间]最新为准）', async () => {
+    await withLmeIsoMem(async (wsRoot) => {
+      await seedOne(wsRoot);
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      await (pb as any).appendMemoryCardsDedup(lines, undefined, 'rulecheck');
+      const joined = lines.join('\n');
+      assert.ok(
+        joined.includes('同一事实出现新旧不同数值时，以[事实时间]最新的一条为准。'),
+        'C1b 冲突规则文案在场'
+      );
+    });
+  });
+
+  it('注入规则行含答案语言镜像（以提问语言作答，数字与单位保留原文写法）', async () => {
+    await withLmeIsoMem(async (wsRoot) => {
+      await seedOne(wsRoot);
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const lines: string[] = [];
+      await (pb as any).appendMemoryCardsDedup(lines, undefined, 'rulecheck');
+      const joined = lines.join('\n');
+      assert.ok(
+        joined.includes('以用户提问的语言作答，数字与单位保留提问原文的写法'),
+        'L1 语言镜像文案在场'
+      );
+    });
+  });
+
+  it('规则行整行仍进 chat 直答记忆块（过滤器按 l.includes("（规则：") 放行）', async () => {
+    await withLmeIsoMem(async (wsRoot) => {
+      await seedOne(wsRoot);
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      await pb.buildForTask('rulecheck 相关提问', 'chat');
+      const block = pb.getChatMemoryBlock();
+      assert.ok(block.includes('（规则：'), '前置：规则行进 chat 块');
+      assert.ok(block.includes('同一事实出现新旧不同数值时'), 'C1b 冲突规则进 chat 块');
+      assert.ok(block.includes('以用户提问的语言作答'), 'L1 语言镜像进 chat 块');
+    });
+  });
+});
+

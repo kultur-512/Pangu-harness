@@ -63,7 +63,7 @@ describe('A1：对卡无条件落卡（source=dialogue-pair）', () => {
 
   it('Q 侧截 160 字、A 侧 smartSlice ≤800 字（数字句优先裁剪）', async () => {
     const longUser = '很长的用户输入'.repeat(60); // 420 字
-    // 填充句须互异（smartSlice 用 picked.includes 去重，相同句会塌缩为 1 句）；
+    // 填充句须互异（同文句在输出中无法区分，相同句会视觉塌缩为 1 句）；
     // 用 a-z/aa-ab… 字母编码 140 个无数字互异句，数字句置于末段 → 数字句优先仍保留、
     // 总长 ≤800。
     const letter = (i: number): string => {

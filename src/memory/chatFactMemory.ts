@@ -38,8 +38,15 @@ const MIN_INPUT_CHARS = 8;
 export const SENTENCE_HARD_CUT_CHARS = 240;
 /** 对卡 Q 侧字符上限（buildPairSummary 与 PromptBuilder 渲染 A 行同源）。 */
 export const PAIR_Q_CHARS = 160;
-/** 对卡 A 侧字符上限（smartSlice 预算；渲染侧 A 行同步此值，防写 800/渲 400 失配）。 */
+/** 对卡 A 侧字符上限（smartSlice 预算；写侧入盘不丢数据——渲染侧 A 行另用 PAIR_A_RENDER_CHARS）。 */
 export const PAIR_A_CHARS = 800;
+/**
+ * 对卡 A 行【渲染侧】字符预算（C2，2026-09-14 LME 归因）：写侧 PAIR_A_CHARS=800
+ * 不动（盘上数据不丢，渲染时才裁），渲染用 smartSlice 按 400 预算做数字句优先
+ * 裁剪——配合 C4 数字句前置，400 渲染段内必含 gold 数字事实。归因数据：819
+ * token 预算只装 3.8 张对卡，A 行渲 800 是单卡成本大头。
+ */
+export const PAIR_A_RENDER_CHARS = 400;
 // 写路径"宽进严排"（2026-09-13 裁决）：旧 MAX_CARDS_PER_TURN=3 分侧帽与
 // MAX_TOTAL_CARDS=80 硬拒绝删除——每侧句级补充 ≤4、整轮总帽 8；溢出治理交给
 // RefinedMemoryStore.applyCapacityLimits 的 kind 分桶淘汰（新进旧出）。
@@ -157,33 +164,55 @@ export function splitSentences(text: string): string[] {
  * 常在答复中后段——朴素截 80 字符会把关键事实截掉（真机实证：PB 成绩卡
  * "Congratulations on your personal best time in the 5K run! T..." 数字被截，
  * 模型看到卡也答不出）。策略：按句切分，含数字的句子优先保留，超预算再截。
+ *
+ * C4（2026-09-14 LME 归因）两处改造：
+ *  - 第一遍数字句收集 break→continue：装不下的大数字句跳过、继续找其后装得下的
+ *    小数字句（与注入侧 R1 同款 skip 语义——旧 break 让"早处大数字句"挡掉
+ *    "后处小数字句"，gold 直接损失）；
+ *  - 输出恒为"数字句在前、补齐句在后"（构造性保证：第二遍只收非数字句），
+ *    使 A 行 400 渲染段（C2/PAIR_A_RENDER_CHARS）内数字事实前置（>400 的单个
+ * 大数字句按 review 建议回退为头部硬切保存活——"必含 gold"仅对可整句装入的
+ * 数字句成立）。
+ * 导出面：PromptBuilder 渲染侧 A 行（C2）同源调用本函数。
  */
-function smartSlice(text: string, budget: number): string {
+export function smartSlice(text: string, budget: number): string {
   const t = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (t.length <= budget) return t;
   // 句末标点含全角（对齐 splitSentences / truncateAtSentence）——旧 ASCII 类对
   // 中文长答复切不出句，第一遍数字句优先与第二遍补齐双双落空 → A 侧为空。
   const sentences = t.match(/[^。．！？.!?]*[。．！？.!?]+|[^。．！？.!?]+$/g) ?? [t];
-  const hasDigit = sentences.map((x) => /\d/.test(x));
-  const picked: string[] = [];
+  // 数字句判定与 confidenceOf 对齐（confidenceOf=1.0 ⟺ 含数字，同一分类器口径）
+  const isDigitSentence = sentences.map((x) => confidenceOf(x) === 1.0);
+  const digitPicked: string[] = [];
+  const fillerPicked: string[] = [];
   let len = 0;
-  // 第一遍：含数字的句子优先
+  // 第一遍：数字句优先；装不下的跳过（continue）不终止
   for (let i = 0; i < sentences.length; i++) {
-    if (!hasDigit[i]) continue;
-    if (len + sentences[i].length > budget) break;
-    picked.push(sentences[i]);
+    if (!isDigitSentence[i]) continue;
+    if (len + sentences[i].length > budget) continue;
+    digitPicked.push(sentences[i]);
     len += sentences[i].length;
   }
-  // 第二遍：按序补齐
+  // 第二遍：非数字句按序补齐（同样 skip 不 break）；数字句不再进本遍——
+  // 输出恒为"数字句在前、补齐句在后"（C4 前置的构造性保证）
   for (let i = 0; i < sentences.length && len < budget; i++) {
-    if (picked.includes(sentences[i])) continue;
-    if (len + sentences[i].length > budget) break;
-    picked.push(sentences[i]);
+    if (isDigitSentence[i]) continue;
+    if (len + sentences[i].length > budget) continue;
+    fillerPicked.push(sentences[i]);
     len += sentences[i].length;
   }
-  // 兜底：无任何完整句装得下预算（如首个"句"超长）→ 硬切，绝不返回空串
-  const out = picked.join(' ').trim();
+  // 兜底：无任何完整句装得下预算（如首个"句"超长）→ 硬切，绝不返回空串。
+  // review 建议返工-1（gold 丢失边界）：数字句存在但全部装不下预算时，回退
+  // 硬切保住首个数字句的头部（数字事实是 gold 高发位），而非用填充句填满
+  // 预算——旧 slice(800) 渲染下该句可见，C2 渲染 400 后不得整句蒸发。
+  const out = [...digitPicked, ...fillerPicked].join(' ').trim();
   if (!out) return t.slice(0, budget);
+  if (digitPicked.length === 0 && isDigitSentence.some(Boolean)) {
+    const firstDigit = sentences[isDigitSentence.indexOf(true)];
+    const head = firstDigit.slice(0, budget);
+    const rest = (head + ' ' + out).trim();
+    return rest.length > budget ? rest.slice(0, budget) : rest;
+  }
   return out.length > budget ? out.slice(0, budget) : out;
 }
 
@@ -283,10 +312,11 @@ const normalizeTurnText = (s: string): string => String(s ?? '').replace(/\s+/g,
 
 /**
  * 对卡摘要（A1）：`Q: <user 归一化后前 160 字>\nA: <assistant smartSlice 800 字>`。
- * assistant 侧用 smartSlice 做数字句优先裁剪（该函数由死代码转为写路径主力——
- * LongMemEval 的 gold 多为数字/日期，常在答复中后段，朴素截断会把关键事实截掉）。
- * 2026-09-14 迭代：A 侧预算 400→800（PAIR_A_CHARS）——长答复清单尾部
- * （品牌/研究/场次）此前被 400 帽挤掉；渲染侧 A 行同步 800（同常量）。
+ * assistant 侧用 smartSlice 做数字句优先裁剪（LongMemEval 的 gold 多为数字/日期，
+ * 常在答复中后段，朴素截断会把关键事实截掉）。
+ * 2026-09-14 迭代：A 侧写侧预算 400→800（PAIR_A_CHARS）——长答复清单尾部
+ * （品牌/研究/场次）此前被 400 帽挤掉；渲染侧按 C2 用 PAIR_A_RENDER_CHARS=400
+ * 二次裁剪（盘上数据不丢，渲染时才裁）。
  */
 function buildPairSummary(input: string, reply: string): { summary: string; confidence: number } {
   const q = normalizeTurnText(input).slice(0, PAIR_Q_CHARS);

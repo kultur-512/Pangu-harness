@@ -9,9 +9,11 @@ import type { TaskIntent } from '../taskIntent.js';
 import { estTokens, resolveWindowTokens } from './tokenEstimate.js';
 import { resolveToday } from '../../memory/timeAnchor.js';
 // 写侧/渲染侧共享字符帽（SENTENCE_HARD_CUT_CHARS=普通卡渲染帽=句切分硬切；
-// PAIR_Q/A_CHARS=对卡 Q/A 行上限）——渲染侧与 chatFactMemory 写侧同源，
-// 防"写 800/渲 400"或"写 240/渲 120"的失配（上一轮 review 揪过的复发现象）。
-import { SENTENCE_HARD_CUT_CHARS, PAIR_Q_CHARS, PAIR_A_CHARS } from '../../memory/chatFactMemory.js';
+// PAIR_Q_CHARS=对卡 Q 行上限）——渲染侧与 chatFactMemory 写侧同源，防
+// "写 800/渲 400"或"写 240/渲 120"的失配（上一轮 review 揪过的复发现象）。
+// C2（2026-09-14）：对卡 A 行渲染用 smartSlice + PAIR_A_RENDER_CHARS(400) 做数字句
+// 优先二次裁剪（写侧 PAIR_A_CHARS=800 不动——盘上数据不丢，渲染时才裁）。
+import { SENTENCE_HARD_CUT_CHARS, PAIR_Q_CHARS, PAIR_A_RENDER_CHARS, smartSlice } from '../../memory/chatFactMemory.js';
 
 // estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
 // 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
@@ -33,11 +35,13 @@ export function truncateAtSentence(text: string, budget: number): string {
 
 /**
  * C1（2026-09-13 对卡渲染）：source==='dialogue-pair' 的卡不走 truncateAtSentence
- * （句边界截断曾把已落卡事实腰斩），改为分行渲染——Q 行 ≤160 字 + A 行 ≤800 字，
- * label 用 [对话记忆]。其他卡渲染不变（单行、句边界截断）。
+ * （句边界截断曾把已落卡事实腰斩），改为分行渲染——Q 行 ≤160 字 + A 行 ≤400 字
+ * （smartSlice 数字句优先），label 用 [对话记忆]。其他卡渲染不变（单行、句边界截断）。
  * 2026-09-14：普通卡渲染帽 120→SENTENCE_HARD_CUT_CHARS(240)（ZL vs CC 头号杀手
- * ——gold 数字/专名在第 120-400 字符段被 120 切线截掉）；对卡 Q/A 行改用
- * PAIR_Q_CHARS/PAIR_A_CHARS（写侧 smartSlice 800 同步，防写 800/渲 400 失配）。
+ * ——gold 数字/专名在第 120-400 字符段被 120 切线截掉）；对卡 Q 行用 PAIR_Q_CHARS。
+ * C2（2026-09-14 LME 归因）：A 行由 slice(0,800) 改 smartSlice(400)——写侧 800
+ * 落盘不丢数据，渲染时数字句优先裁进 400 段（配合 C4 数字句前置，单卡注入成本
+ * 下降、819→1229 预算能装更多张对卡）。
  * 返回行数组（对卡 1-2 行，普通卡 1 行）。
  */
 function renderMemoryCardLines(
@@ -51,7 +55,7 @@ function renderMemoryCardLines(
     const s = String(card.summary ?? '');
     const nl = s.indexOf('\n');
     const q = (nl >= 0 ? s.slice(0, nl) : s).replace(/^Q:\s*/i, '').slice(0, PAIR_Q_CHARS);
-    const a = (nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, '').slice(0, PAIR_A_CHARS);
+    const a = smartSlice((nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, ''), PAIR_A_RENDER_CHARS);
     return a ? [`${head}Q: ${q}`, `    A: ${a}`] : [`${head}Q: ${q}`];
   }
   return [`${head}${truncateAtSentence(card?.summary, SENTENCE_HARD_CUT_CHARS)}`];
@@ -772,17 +776,43 @@ export class PromptBuilder {
           : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
       // 0.8.3 时间锚定：卡带 factDateText → 渲染 [事实时间:…]（老卡无字段不变）
       const factTag = (c: any): string => c?.factDateText ? ` [事实时间:${c.factDateText}]` : '';
-      const cards: any[] = [];
-      const rendered: string[][] = [];
+      const chosen: Array<{ card: any; lines: string[]; tokens: number }> = [];
       let usedTokens = 0;
-      for (let i = 0; i < allCards.length && cards.length < maxCards; i++) {
-        const ls = renderMemoryCardLines(allCards[i], this.memoryNumberSeq + cards.length + 1, label, factTag);
+      for (let i = 0; i < allCards.length && chosen.length < maxCards; i++) {
+        const ls = renderMemoryCardLines(allCards[i], this.memoryNumberSeq + chosen.length + 1, label, factTag);
         const t = ls.reduce((acc, l) => acc + estTokens(l), 0);
-        if (cards.length > 0 && usedTokens + t > budgetTokens) break;
-        cards.push(allCards[i]);
-        rendered.push(ls);
+        // R1（2026-09-14 LME 归因）：装不下的大卡跳过（continue）而非终止（旧
+        // break 让一张大卡后面的所有小卡全部落选——819 token 预算实际只装 3.8 张
+        // 对卡的第一瓶颈）。首卡超预算仍收（chosen.length===0 短路）="至少保 1 张"
+        // 语义保留。
+        if (chosen.length > 0 && usedTokens + t > budgetTokens) continue;
+        chosen.push({ card: allCards[i], lines: ls, tokens: t });
         usedTokens += t;
       }
+      // C1(a)（2026-09-14 LME 归因）：注入渲染按 factDate 升序稳定重排——后注入者
+      // = 事实时间更新者，配合规则行"以[事实时间]最新的一条为准"（C1b）让 1B 的
+      // "取最后一条"启发式指向新值（KU 新旧值选错是管道主动误导）。无 factDate 的
+      // 老卡排最后、之间保持原序；重排只影响渲染顺序与编号，不改入选集合与 token
+      // 预算账（chosen/tokens 在重排前已定）。
+      const ordered = chosen
+        .map((e, idx) => ({ e, idx }))
+        .sort((a, b) => {
+          const da = a.e.card?.factDate;
+          const db = b.e.card?.factDate;
+          const hasA = typeof da === 'number' && Number.isFinite(da);
+          const hasB = typeof db === 'number' && Number.isFinite(db);
+          if (hasA !== hasB) return hasA ? -1 : 1; // 有 factDate 在前，无者排最后
+          if (hasA && hasB && da !== db) return (da as number) - (db as number); // 升序
+          return a.idx - b.idx; // 稳定：同日期/均无日期保持原序
+        })
+        .map((x) => x.e);
+      const cards: any[] = [];
+      const rendered: string[][] = [];
+      ordered.forEach((e, j) => {
+        cards.push(e.card);
+        // [M*] 编号按重排后顺序连续编（契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序）
+        rendered.push(renderMemoryCardLines(e.card, this.memoryNumberSeq + j + 1, label, factTag));
+      });
       const overflow = cards.length < allCards.length;
       if (cards.length > 0) {
         // 【3】ghost 行修复（2026-09-13 迭代包）：模板原来的 '\n' 前缀让
@@ -799,9 +829,15 @@ export class PromptBuilder {
           // 0.8.3：原"带 [S日期] 前缀的以日期较新者为准"是悬空规则——全代码库
           // 无任何路径产出 [S日期] 前缀（grep 证实）。替换为事实时间差值规则，
           // 与今天（身份行）+ [事实时间:…] 标注配套，"多久之前/多少周"可计算。
-          '（规则：记忆卡【】内的日期与[事实时间:...]标注的是事实发生时间；计算"多久之前/多少周"时用它与今天的差值，不要用其他时间戳。）',
-          // C1：对卡分行渲染（Q ≤160 / A ≤800，与写侧 smartSlice 同源），普通卡单行截 240；
-          // 行集已在 token 门按预算贪心生成（rendered），此处只拼接
+          // C1b（2026-09-14 LME 归因）：追加冲突规则——配合 C1a 的 factDate 升序
+          // 注入，"取最后一条"启发式即指向[事实时间]最新的新值。
+          // L1（2026-09-14 LME 归因）：追加答案语言镜像——语言/单位不匹配 6 题
+          // （提问英文而答复中文数字单位）。仍在同一行（chat 块过滤器按
+          // l.includes('（规则：') 整行放行，拆行会从 chat 净荷丢失）。
+          '（规则：记忆卡【】内的日期与[事实时间:...]标注的是事实发生时间；计算"多久之前/多少周"时用它与今天的差值，不要用其他时间戳。同一事实出现新旧不同数值时，以[事实时间]最新的一条为准。以用户提问的语言作答，数字与单位保留提问原文的写法（如提问为英文则以英文数字+单位作答）。）',
+          // C1：对卡分行渲染（Q ≤160；A 行 smartSlice 400 数字句优先——写侧 800
+          // 不动，见 renderMemoryCardLines），普通卡单行截 240；
+          // 行集已在 token 门按预算贪心生成并按 factDate 升序重排（rendered），此处只拼接
           ...rendered.flat(),
           ghost,
         ], lines);
@@ -872,19 +908,24 @@ export class PromptBuilder {
   }
 
   /**
-   * C2（2026-09-13 注入预算 token 化）+ 2026-09-14 随窗口放大：
-   * 注入预算 tokens = min(floor(window×比例), max(1600, floor(window/64)))。
-   *   - window ≤8192 取 10%、更大窗口取 15%（固定卡数帽不随窗口伸缩是错的——
-   *     8K 与 128K 窗口给同样的 8 张，要么撑爆小窗要么浪费大窗）。
+   * C2（2026-09-13 注入预算 token 化）+ 2026-09-14 随窗口放大 + R2 统一 15%：
+   * 注入预算 tokens = min(ceil(window×15%), max(1600, floor(window/64)))。
+   *   - R2（2026-09-14 LME 归因）：旧 8K 档 10% 删除、统一 15%。归因数据：819
+   *     token 预算实际只装 3.8 张对卡，是注入面第一瓶颈；8192→1229（+R1 贪心
+   *     skip + 对卡 A 行渲染 400/C2）≈ 6-7 张。比例项用 ceil：floor(8192×0.15)
+   *     =1228，归因报告按 1229 锚定（预算利用率优先）；大窗口比例项远超帽，
+   *     ceil/floor 不影响结果（32K→1600 帽不变、1M→15625 不变）。
+   *   - 固定卡数帽不随窗口伸缩是错的——8K 与 128K 窗口给同样的 8 张，要么撑爆
+   *     小窗要么浪费大窗。
    *   - 上限由固定 1600 改为 max(1600, floor(w/64))：1M 窗→15625（多会话大库
    *     73-80 卡可全注，旧帽只放进 ~15%）；32K 窗→floor(32768/64)=512→仍 1600、
-   *     8K 窗→128→仍 819（小窗行为逐字节不变）。
+   *     8K 窗→128→仍 1600>1229（帽不 binding）。
    * 窗口未知/异常回退 700（旧溢出块常量，语义=保守小预算）。
    */
   private memoryBudgetTokens(): number {
     try {
       const w = resolveWindowTokens((this.session as any).provider, this.session.model);
-      return Math.min(Math.floor(w * (w <= 8192 ? 0.10 : 0.15)), Math.max(1600, Math.floor(w / 64)));
+      return Math.min(Math.ceil(w * 0.15), Math.max(1600, Math.floor(w / 64)));
     } catch {
       return 700;
     }
