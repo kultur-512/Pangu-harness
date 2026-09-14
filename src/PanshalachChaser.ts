@@ -69,6 +69,13 @@ export interface ChaserConfig {
   /** 0.8.2：chat 直答的独立记忆块（宿主从 PromptBuilder 传出；chat 的 user =
    *  "此块 + 用户原话"——绝不整段 enriched 塞 user，1B 元话语根因）。 */
   chatMemoryBlock?: string;
+  /**
+   * 【1】chat 直答的最近对话段（2026-09-13 迭代包）：宿主从 session 组装
+   * （最近 2 轮 userInput+answerText，≤600 字符，自带【最近对话】段头）。
+   * chaser 拿不到 session.turns——拼在 chatMemoryBlock 之后、用户原话之前，
+   * 指代型追问（"那第二个呢"）不再零上下文硬答。
+   */
+  chatRecentTurns?: string;
   // ---- 真实执行审批透传（全部可选） ----
   /** Session approval mode (default: readonly — safe floor). */
   approvalMode?: 'readonly' | 'default' | 'full';
@@ -273,11 +280,12 @@ export class PanshalachChaser {
       // 0.8.2 chat 净化：user = "记忆块 + 用户原话"。宿主传 chatMemoryBlock 时
       // issueDescription 已是原文（runAgentTask chat 分离传递）；记忆块拼在前，
       // 与 system 的对话指令配对——不再整段 enriched 塞 user（1B 元话语根因）。
-      const chatUserContent = config.chatMemoryBlock
-        ? `${config.chatMemoryBlock}
-
-${issueDescription}`
-        : issueDescription;
+      // 【1】最近对话原文（2026-09-13 迭代包）：chat 直答模型此前看不到最近对话
+      // 原文（【最近上下文】块只在被 chat 丢弃的 enriched 里），指代型追问零
+      // 上下文硬答——宿主组装的【最近对话】段拼在记忆块之后、用户原话之前。
+      const chatUserContent = [config.chatMemoryBlock, config.chatRecentTurns, issueDescription]
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        .join('\n\n');
       const chatMessages = [
         { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
         { role: 'user' as const, content: chatUserContent },
@@ -396,7 +404,12 @@ ${issueDescription}`
           // 无流式但有 chat：整段直答（正文由宿主 answered 兜底呈现——R1 路径）
           chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
         } else {
-          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）
+          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）。
+          // 覆盖边界申报（审查建议-5，2026-09-14 迭代）：此通道不含记忆块与
+          // 【最近对话】——仅有 complete 无 chat/streamChatMessages 的客户端在
+          // chat 意图下仍是"零记忆 + 零上下文"直答。已知缺口非本批回归；
+          // classic REPL 通道（Repl.ts solveIssue(enriched) 不传 chatMemoryBlock/
+          // chatRecentTurns）同样未覆盖，补齐属独立工作项。
           chatText = extractReplyText(await chatClient.complete(basePrompt, chatOpts));
         }
       } catch (e: any) {

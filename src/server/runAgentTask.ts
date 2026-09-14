@@ -72,6 +72,45 @@ export interface RunResult {
 import { resolveWindowTokens } from '../cli/repl/tokenEstimate.js';
 export { resolveWindowTokens };
 
+// ==================== 【1】chat 直答的最近对话段（2026-09-13 迭代包） ====================
+
+/** 最近对话段长度自限（chat user 净荷纪律：记忆块 + 本段 + 用户原话）。 */
+export const CHAT_RECENT_TURNS_MAX_CHARS = 600;
+
+/**
+ * 从 session 组装 chat 直答用的【最近对话】段：最近 2 轮 userInput+answerText。
+ * 背景：chat 直答模型此前看不到最近对话原文——【最近上下文】块只在被 chat
+ * 丢弃的 enriched 里，指代型追问（"那第二个呢"）零上下文硬答。
+ * 预算策略：新轮优先（从最新轮往回装），预算耗尽时旧轮整轮让位——指代型
+ * 追问依赖的恰是尾部；超限的行尾截断加 '…'。空段返回 ''（调用方不拼段）。
+ * 返回形态：`【最近对话】\n用户：…\n助手：…\n用户：…`（整段 ≤ maxChars 字符）。
+ */
+export function buildChatRecentTurnsBlock(
+  session: Pick<Session, 'turns'>,
+  maxChars = CHAT_RECENT_TURNS_MAX_CHARS
+): string {
+  const header = '【最近对话】';
+  // 窗口常量与 PromptBuilder.buildMemoryQueryText 同源（RECENT_TURN_WINDOW=2）
+  const turns = (session?.turns ?? []).slice(-2);
+  const picked: string[] = [];
+  let used = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t: any = turns[i];
+    const u = String(t?.userInput ?? '').replace(/\s+/g, ' ').trim();
+    const a = String(t?.result?.answerText ?? '').replace(/\s+/g, ' ').trim();
+    if (!u && !a) continue;
+    const line = u && a ? `用户：${u}\n助手：${a}` : `用户：${u || a}`;
+    const remain = maxChars - header.length - 1 - used; // -1 = 首个 '\n'
+    if (remain <= 10) break; // 残余预算装不下有意义的行 → 停（旧轮让位）
+    const piece = line.length > remain ? line.slice(0, remain - 1).trimEnd() + '…' : line;
+    if (!piece.trim()) break;
+    picked.unshift(piece); // 从最新往回收集，unshift 还原时间正序
+    used += piece.length + 1; // +1 = 行间 '\n'（末行多记 1，做安全裕量）
+  }
+  if (picked.length === 0) return '';
+  return `${header}\n${picked.join('\n')}`;
+}
+
 /**
  * Run a task and emit progress events through onEvent.
  * Events emitted (best effort, engine-dependent):
@@ -207,6 +246,9 @@ export async function runAgentTask(
     // 侧通道传出，任务原文原样传 chaser。
     const solveIssueInput = intent === 'chat' ? req.task : enriched;
     const chatMemoryBlock = intent === 'chat' ? pb.getChatMemoryBlock() : undefined;
+    // 【1】chat 直答补最近对话原文：session 最近 2 轮原文组装 ≤600 字符段传入
+    //（记忆块之后的第二段——chaser 拿不到 session.turns，由宿主组装）。
+    const chatRecentTurns = intent === 'chat' ? buildChatRecentTurnsBlock(session) : undefined;
     const result = await chaser.solveIssue(solveIssueInput, session.workspace, {
       tier: session.tier as any,
       yes: true,
@@ -214,6 +256,8 @@ export async function runAgentTask(
       memoryPreInjected: true,
       // 0.8.2：chat 直答的独立记忆块（与原文分离——chaser 组装干净 user）
       chatMemoryBlock,
+      // 【1】chat 直答的最近对话段（拼在记忆块之后、用户原话之前）
+      chatRecentTurns,
       // 入口前移的意图显式传入（chaser 不再对富化文本兜底分类）
       intent,
       // 审批透传

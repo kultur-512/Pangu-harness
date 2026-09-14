@@ -175,6 +175,87 @@ export interface BuildResult {
   injectedCardIds: string[];
 }
 
+// ==================== 关键词抽取（检索通路迭代包 2026-09-13） ====================
+
+// 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
+// 停用词占满相关性命中，区分度归零）；中文走 CJK 分支（下方）。
+const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
+
+/** CJK 判定：[一-龥]（URO 4E00-9FA5）放宽为 \u3000-\u9fff（含 CJK 符号/标点，
+ * 对齐 chatFactMemory confidenceOf 的包C 缺陷6b 修正）。 */
+const CJK_CHAR_RE = /[\u3000-\u9fff]/;
+/** 短句切分边界：中英文常用标点 + 空白。 */
+const CJK_PHRASE_SPLIT_RE = /[\s，。！？!?；;、：:…]+/;
+/** CJK 停用 2-gram（虚词组合——2-gram 兜底时跳过，对记忆检索零区分度）。 */
+/** 最近对话轮窗口（buildMemoryQueryText 与 runAgentTask.buildChatRecentTurnsBlock 同源）。 */
+export const RECENT_TURN_WINDOW = 2;
+
+const CJK_STOP_2GRAMS = new Set([
+  '的呢', '了吗', '是的', '一个', '什么', '怎么', '可以', '我们', '你们', '没有',
+  '就是', '这个', '那个', '这是', '不是', '还是', '但是', '所以', '如果', '而且',
+  '或者', '自己', '时候', '这样', '那样', '你的', '我的', '他们',
+]);
+const MAX_CJK_KEYWORDS = 16;
+// 短句直采上限 8 字（2026-09-14 迭代：20→8）——9-20 字短语降为 2-gram 词粒度：
+// 整句短语做 summary.includes 永不命中（"北京那边有多少同事"整句不在任何卡里），
+// 词粒度才能让 Q 侧加权/词面通道在共享词干扰下区分 gold（ChineseRetrieval 干扰卡
+// 用例实证：粒度不足时双方 rel=0，新近度决胜顶掉 gold）。
+const MAX_PHRASE_CHARS = 8;
+const MAX_2GRAMS_PER_PHRASE = 12;
+
+/**
+ * 单个含 CJK token 的关键词展开（无空格中文此前恒整句 token → 词面永不命中）：
+ *  - 数字串（含"3月"）单独成关键词；数字位从余文剔除、前后文拼回（避免碎词）；
+ *  - 余文按标点切短句，每个短句一个关键词（CJK 总数 cap 16）；
+ *  - 短句仍 >20 字 → 字符 2-gram 滑窗兜底（cap 12，跳过含非汉字/虚词的组）。
+ */
+function extractCjkTokenKeywords(token: string, out: string[]): void {
+  const add = (kw: string): void => {
+    const t = kw.trim();
+    if (t.length < 2 || out.length >= MAX_CJK_KEYWORDS || out.includes(t)) return;
+    out.push(t);
+  };
+  // 数字后吞单位词（审查建议-1：旧只吞 1 个 CJK 把"5公里"撕成"5公"+"跑步里每周六"）
+  const NUM_RE = /\d+(?:公里|千米|米|年|个月|月|日|天|号|点|周|次|个|小时|分钟|秒|元|块|岁|层|度|%|％)?/g;
+  for (const d of token.match(NUM_RE) ?? []) add(d);
+  const rest = token.replace(NUM_RE, '');
+  for (const phrase of rest.split(CJK_PHRASE_SPLIT_RE)) {
+    const p = phrase.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (p.length < 2) continue;
+    // 审查建议-1：中英混排长 token 的 ASCII 连续段（AuthModule/bug）独立成关键词——
+    // 下方 2-gram 只收纯汉字，不提取会整段丢失（旧整句 token 也永不命中，此处是真增益）
+    for (const ascii of p.match(/[A-Za-z][A-Za-z0-9_.-]+/g) ?? []) {
+      if (ascii.length >= 2) add(ascii);
+    }
+    if (p.length <= MAX_PHRASE_CHARS) {
+      add(p);
+      continue;
+    }
+    let grams = 0;
+    for (let i = 0; i + 1 < p.length && grams < MAX_2GRAMS_PER_PHRASE && out.length < MAX_CJK_KEYWORDS; i++) {
+      const g = p.slice(i, i + 2);
+      if (!/^[\u4e00-\u9fff]{2}$/.test(g)) continue; // 含非汉字（标点/数字/字母）的组跳过
+      if (CJK_STOP_2GRAMS.has(g)) continue;          // 虚词 2-gram 跳过
+      add(g);
+      grams++;
+    }
+  }
+}
+
+/**
+ * 任务关键词抽取：ASCII token 走既有逻辑（STOPWORDS 过滤——英文行为逐字节
+ * 不变）；含 CJK 的 token 走 extractCjkTokenKeywords（中文检索通路修复）。
+ */
+export function extractKeywordsFromIssue(issue: string): string[] {
+  const keywords: string[] = [];
+  for (const raw of String(issue ?? '').split(/\s+/)) {
+    const w = raw.replace(/^[/@#]/, '');
+    if (CJK_CHAR_RE.test(w)) extractCjkTokenKeywords(w, keywords);
+    else if (w.length >= 2 && !STOPWORDS.has(w.toLowerCase())) keywords.push(w);
+  }
+  return keywords;
+}
+
 export class PromptBuilder {
   constructor(
     private session: Session,
@@ -218,7 +299,7 @@ export class PromptBuilder {
       if (m[1]) files.push(m[1]);
     }
     // also consider recent turn inputs for last context files
-    const recent = this.session.turns.slice(-2);
+    const recent = this.session.turns.slice(-RECENT_TURN_WINDOW);
     for (const t of recent) {
       if (t.userInput) {
         let m2: RegExpExecArray | null;
@@ -554,9 +635,15 @@ export class PromptBuilder {
     }
 
     // === 探索阶段自动拉取（standard/high 触发一次；预算 = L1 预算 tokens（窗口未知回退 700）；ghost 状态机）===
+    // 【2】auto-pull 审计如实（2026-09-13 迭代包）：chat 意图不做 auto-pull——
+    // chat user 只含 lastMemoryBlockText（L1 块），额外卡本就进不了 chat 净荷，
+    // 拉取只白耗嵌入计算，且 lastInjectedCardIds 照常并入使注入审计虚报
+    // （实测 8K 窗 ids=17 vs chat 块可见 12）。选择申报：采用"intent 门禁"
+    // 方案而非"lastMemoryBlockText 组装后移"——后者会让 chat 净荷膨胀、违反
+    // 0.8.2 chat 净化的预算纪律。intent 参数在 buildVolatileSegment 签名内可用。
     const AUTO_PULL_TIERS = new Set(['standard', 'high']);
     const preAutoPullCount = this.lastInjectedCardIds.length; // L1 已注入 ids 数
-    if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier)) {
+    if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier) && intent !== 'chat') {
       try {
         const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
         const memStore = new RefinedMemoryStore(this.session.workspace);
@@ -595,6 +682,9 @@ export class PromptBuilder {
             budget -= cost;
           }
           if (addedCards.length > 0) {
+            // 注意：此处 ghost 有意保留 \n 前缀——lastMemoryBlockText 过滤器靠
+            // startsWith('（另有') 只放行 L1 ghost；去掉 \n 会把溢出 ghost 泄进
+            // chat 净荷（与 L1 的去 \n 修复方向相反，勿顺手统一）。
             const ghost = overflow.pulled.length > addedCards.length || overflow.totalRemaining > 0
               ? `\n（另有 ${overflow.totalRemaining + (overflow.pulled.length - addedCards.length)} 张相关，/memory 查看）`
               : '';
@@ -647,17 +737,10 @@ export class PromptBuilder {
       // use pre-collected relevant files (from caller) for reference filtering
       const currentFiles = currentWorkspaceFiles && currentWorkspaceFiles.length ? currentWorkspaceFiles : undefined;
       // 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
-      // 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
-      // 停用词占满相关性命中，区分度归零）；中文 2 字词保留。
-      const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
-      const keywords = (issue ?? '')
-        .split(/\s+/)
-        .map(w => w.replace(/^[/@#]/, ''))
-        .filter(w => {
-          const lw = w.toLowerCase();
-          if (/[一-龥]/.test(w)) return w.length >= 2;
-          return w.length >= 2 && !STOPWORDS.has(lw);
-        });
+      // 0.8.2：stopword 过滤（英文）；【1】检索通路迭代包（2026-09-13）：
+      // 无空格中文此前恒整句 token → 词面永不命中，改为 CJK 分支（数字串/短句/
+      // 2-gram 兜底，见 extractKeywordsFromIssue）——ASCII 路径逐字节不变。
+      const keywords = extractKeywordsFromIssue(issue ?? '');
       this.lastKeywords = keywords;
       // C3（2026-09-13 混合检索接线）：查询侧从只有 issue 扩为
       // "issue + 最近 2 轮 userInput/answerText 各前 200 字符"，传 loadFiltered 的
@@ -695,7 +778,11 @@ export class PromptBuilder {
       }
       const overflow = cards.length < allCards.length;
       if (cards.length > 0) {
-        const ghost = overflow ? `\n（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
+        // 【3】ghost 行修复（2026-09-13 迭代包）：模板原来的 '\n' 前缀让
+        // lastMemoryBlockText 过滤器的 l.startsWith('（另有') 永不匹配 → chat 块
+        // 永远没有"另有 N 张"提示。tryInject 的 lines 数组本身分行（join('\n')），
+        // 前导 '\n' 多余且破坏 startsWith 过滤——去掉后 rich 渲染不变（仍换行）。
+        const ghost = overflow ? `（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
         const n0 = this.memoryNumberSeq;
         const added = this.tryInject('memory-cards', [
           '\n【相关记忆】',
@@ -809,18 +896,25 @@ export class PromptBuilder {
 
   /**
    * C3（2026-09-13 混合检索接线）：记忆检索查询文本 = 当前任务 + 最近 2 轮的
-   * userInput/answerText 各前 200 字符。仅 issue 单查询曾丢"上一轮刚说过"的
-   * 指代型问题（"那第二个呢？"），扩窗后语义通道才有可用的邻近上下文。
+   * userInput/answerText。
+   * 【3】查询稀释修复（2026-09-13 迭代包）：探查实证 77 字无关历史前缀把 gold
+   * cos 0.119 砸到 0.030——改为 issue 权重主导：issue 重复拼接两次置顶（嵌入
+   * 权重加倍）+ 最近 2 轮 userInput/answerText 各截前 60 字符（原 200）；长
+   * issue 时 issue 字符占比 ≥2/3。保留函数签名（仅查询文本形状变化）。
    */
   private buildMemoryQueryText(issue: string): string {
-    const parts: string[] = [String(issue ?? '')];
-    for (const t of this.session.turns.slice(-2)) {
+    // 审查建议-6 诚实申报：短 issue 场景稀释仍存（issue 双拼只把"9 字 issue +
+    // 240 字历史"的占比从 ~4% 提到 ~7%），彻底解需语义通道按段加权（ROADMAP）。
+    // 窗口常量 RECENT_TURN_WINDOW 与 runAgentTask.buildChatRecentTurnsBlock 同源。
+    const iss = String(issue ?? '').replace(/\s+/g, ' ').trim();
+    const parts: string[] = [iss, iss];
+    for (const t of this.session.turns.slice(-RECENT_TURN_WINDOW)) {
       const u = String(t?.userInput ?? '').replace(/\s+/g, ' ').trim();
-      if (u) parts.push(u.slice(0, 200));
+      if (u) parts.push(u.slice(0, 60));
       const a = String((t as any)?.result?.answerText ?? '').replace(/\s+/g, ' ').trim();
-      if (a) parts.push(a.slice(0, 200));
+      if (a) parts.push(a.slice(0, 60));
     }
-    return parts.filter(Boolean).join('\n');
+    return parts.filter(Boolean).join(' ');
   }
 
   /**

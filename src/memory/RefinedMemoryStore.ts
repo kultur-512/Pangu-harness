@@ -1,7 +1,7 @@
 // Panshalach 提炼后持久化存储
 // 功能：提炼 / 加载 / 过滤 / 容量控制 / 衰减 / .gitignore 默认加入
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync, statSync } from 'fs';
 import { join, isAbsolute } from 'path';
 import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
@@ -203,6 +203,10 @@ export class RefinedMemoryStore {
   private workspaceRoot: string;
   private filePath: string;
   private cache: RefinedMemoryFile | null = null;
+  // 【4】缓存数据防御（2026-09-13 迭代包）：cache 对应的盘面 stat 基线
+  // （size+mtimeMs）。null = 建缓存时盘上无文件（空库/被隔离）或尚无基线——
+  // 与"现在 stat 失败（文件被删）"同为 null 视为一致（仍是空库盘面）。
+  private cacheStat: { size: number; mtimeMs: number } | null = null;
 
   // 投影缓存 — 多槽 Map（上限 8，超限删最旧）。
   // 一致性语义：任务内快照冻结（有意）；任务边界/写入 invalidateProjection 重建；
@@ -370,7 +374,7 @@ export class RefinedMemoryStore {
 
     // 写入（包C 缺陷4：原子写——tmp + rename，崩溃不留半截文件）
     atomicWriteFileSync(this.filePath, serialized);
-    this.cache = file;
+    this.setCache(file);
     this.invalidateProjection(); // save() 写入 → 重建
 
     // 确保 .gitignore 包含
@@ -386,12 +390,24 @@ export class RefinedMemoryStore {
    * 启动 + console.error 一条告警。旧实现 JSON.parse 后直接 cast：cards 非数组
    * 时下游 .map 抛 TypeError 被上层 catch 吞 → 静默零注入；撕裂 JSON → catch
    * 后返回空库缓存 → 下次 save 静默清库。
+   * 【4】缓存数据防御（2026-09-13 迭代包）：缓存命中前 statSync 比对盘面
+   * size+mtimeMs——实例缓存此前对盘面变化完全失明，长命实例 A load 一次后
+   * 实例 B save 写盘的新卡对 A 不可见，A 后续 save 用陈旧全量快照静默抹掉
+   * B 的卡（唯一能静默丢数据的缺陷）。不匹配 → 重读盘并刷新缓存条目；
+   * statSync 失败（文件被删）按 miss 处理；两侧都无文件视为一致（空库）。
    */
   load(): RefinedMemoryFile {
-    if (this.cache) return this.cache;
+    if (this.cache) {
+      const st = this.statDisk();
+      const fresh = (st === null && this.cacheStat === null) ||
+        (st !== null && this.cacheStat !== null &&
+          st.size === this.cacheStat.size && st.mtimeMs === this.cacheStat.mtimeMs);
+      if (fresh) return this.cache;
+      // 盘面已变化（他实例写入/改写/删除）→ 落到 miss 路径重读盘
+    }
     if (!existsSync(this.filePath)) {
-      this.cache = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
-      return this.cache;
+      this.setCache({ meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] });
+      return this.cache!;
     }
     let parsed: RefinedMemoryFile;
     try {
@@ -403,8 +419,29 @@ export class RefinedMemoryStore {
     if (!isValidMemoryFile(parsed)) {
       return this.quarantineCorruptFile('结构校验失败（cards 非数组或卡片缺 id/summary）');
     }
-    this.cache = parsed;
+    this.setCache(parsed);
     return parsed;
+  }
+
+  /**
+   * 盘面 stat 快照（【4】防御用）；文件不存在/stat 失败 → null。
+   * 已知微窗口（审查建议-7，申报不修）：read→stat 间隙的他实例写入会让
+   * cacheStat 比缓存内容新，下次外部写入自愈；FAT 2s 粒度下同长改写可能漏检
+   * （工作区按 NTFS 假设）。
+   */
+  private statDisk(): { size: number; mtimeMs: number } | null {
+    try {
+      const st = statSync(this.filePath);
+      return { size: st.size, mtimeMs: st.mtimeMs };
+    } catch {
+      return null;
+    }
+  }
+
+  /** 缓存写入唯一入口：cache 与盘面 stat 基线同步刷新（【4】防御不变量）。 */
+  private setCache(file: RefinedMemoryFile): void {
+    this.cache = file;
+    this.cacheStat = this.statDisk();
   }
 
   /**
@@ -423,7 +460,7 @@ export class RefinedMemoryStore {
       console.error(`[memory] 记忆文件损坏且隔离失败：${this.filePath}（${reason}）：${qerr?.message || qerr}`);
     }
     const empty: RefinedMemoryFile = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
-    this.cache = empty;
+    this.setCache(empty);
     return empty;
   }
 
@@ -586,7 +623,12 @@ export class RefinedMemoryStore {
 
     // B3：混合排序——semantic 且 queryText 且候选关键词 ≥2 才激活语义通道；
     // 任一异常（embed 不可用等）回退纯词面（旧公式），绝不影响加载主流程。
-    const semanticActive = filter.semantic === true && !!filter.queryText && kws.length >= 2;
+    // 【2】语义闸放宽（2026-09-13 迭代包）：纯中文查询（queryText 含 CJK）哪怕
+    // 只抽出 1 个关键词也激活语义——中文无空格，改写查询常只切出 1 个短句级
+    // 关键词，kws>=2 对中文恒闭 → 排序退化纯新近度。英文查询不含 CJK，闸门
+    // 行为逐字节不变（1 关键词仍不激活）。
+    const semanticActive = filter.semantic === true && !!filter.queryText &&
+      (kws.length >= 2 || /[\u3000-\u9fff]/.test(String(filter.queryText ?? '')));
     let semScores: Map<string, number> | null = null;
     const alpha = filter.semanticWeight ?? 0.5;
     if (semanticActive) {
@@ -709,7 +751,7 @@ export class RefinedMemoryStore {
     // 对象 → 翻倍）。markVerified 是原位刷新，直写持久化。
     file.meta.lastUpdated = now;
     atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
-    this.cache = file;
+    this.setCache(file);
     this.invalidateProjection();
     return { updated, path: this.filePath };
   }
@@ -744,7 +786,7 @@ export class RefinedMemoryStore {
     existing.meta.totalCards = existing.cards.length;
     existing.meta.lastUpdated = Date.now();
     atomicWriteFileSync(this.filePath, JSON.stringify(existing, null, 2));
-    this.cache = existing;
+    this.setCache(existing);
     this.invalidateProjection(); // clear() 写入
     return { removed };
   }
@@ -788,7 +830,7 @@ export class RefinedMemoryStore {
         cards: parsed.cards,
       };
       atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
-      this.cache = file;
+      this.setCache(file);
       this.invalidateProjection(); // import 写入
     }
 
@@ -957,8 +999,16 @@ export class RefinedMemoryStore {
     const countMultiplier = Math.min(Math.max(1, card.count ?? 1), 3);
     const halfLife = halfLifeBase * countMultiplier;
     const base = (card as any).decayWeight ?? card.weight ?? 1;
-    // kind 基线（preference 0.6 — 偏好默认低于事实类）
-    const kindBaseline = (card.kind === 'preference' ? 0.6 : 1.0);
+    // kind 基线（preference 0.6 — 偏好默认低于事实类）。
+    // 【4】排序公平性（2026-09-13 迭代包，review 纠正算式）：对卡
+    // （source='dialogue-pair'）恒带 decayWeight 1.0 → base 不走 weight。旧
+    // effBase 新鲜 = 1.0×0.6 = 0.6、两段衰减 ×0.4 = 0.24 < 0.3 出局门硬出局，
+    // 零相关工程卡（eff 2.0，纯词面 1.4）全面压制完美相关对卡。对卡基线提到
+    // 0.85 后两段衰减 1.0×0.4×0.85 = 0.34 ≥ 0.3 入围——这是出局门的真实修复
+    // 载体；写侧 weight 0.5→0.8 不进衰减序（decayWeight 优先），仅容量 tiebreak。
+    // /remember 手工偏好（无 source 字段）维持 0.6。
+    const isDialoguePair = (card as any).source === 'dialogue-pair';
+    const kindBaseline = card.kind === 'preference' ? (isDialoguePair ? 0.85 : 0.6) : 1.0;
     let factor = 1.0;
     if (ageInDays < halfLife * 0.5) factor = 1.0;
     else if (ageInDays < halfLife * 1.0) factor = 0.7;
@@ -1022,7 +1072,7 @@ export class RefinedMemoryStore {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = Date.now();
       atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
-      this.cache = file;
+      this.setCache(file);
       this.invalidateProjection(); // forget 写入
     }
     return { removed };
@@ -1065,7 +1115,7 @@ export class RefinedMemoryStore {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = Date.now();
       atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
-      this.cache = file;
+      this.setCache(file);
       this.invalidateProjection(); // refineCompactSignals 写入
     }
     return out;
@@ -1164,7 +1214,7 @@ export class RefinedMemoryStore {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = now;
       atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
-      this.cache = file;
+      this.setCache(file);
       this.invalidateProjection(); // 合并后缓存重建
     }
     return results;

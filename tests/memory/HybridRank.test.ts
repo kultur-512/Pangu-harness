@@ -133,6 +133,60 @@ describe('B3b：loadFiltered 混合排序（注入确定性 embedder）', () => 
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
     }
   });
+
+  // ==================== 【8】B2 判别力加强（2026-09-13 迭代包） ====================
+  // 旧 B2 用例两卡 rel 差距与置信度/基线混杂，判别力弱。以下两例把 B2 设为
+  // 唯一翻转序的变量：两侧 eff 严格相等（同 kind 基线/weight/decay/count）、
+  // lastSeen 显式差 60 秒（plain 更新）——无 B2 时旧公式 0.7eff+0.3rel 同分，
+  // tie-break（count 相同 → lastSeen 倒序）必判 plain 胜；用例断言对卡胜出，
+  // 因此 B2 一旦被删/退化，用例必须转红。
+  it('【8】B2 是唯一翻转序变量：eff 全等 + plain 新 60s → 无 B2 时 plain 以 tie-break 胜，有 B2 时对卡翻到第一', () => {
+    const dir = ws + '-b2-only-flip';
+    fs.mkdirSync(dir, { recursive: true });
+    const s = makeStore(dir);
+    try {
+      const t = Date.now() - 60 * 60 * 1000; // 久远基准，两卡同处衰减第一段（factor 1.0）
+      const pair = {
+        ...mkCard('pair-q', 'Q: flaky suite failing again\nA: rerun twice before filing', { lastSeen: t }),
+        source: 'dialogue-pair',
+      };
+      const plain = mkCard('plain-new', 'flaky suite mitigation notes', { lastSeen: t + 60_000 });
+      s.save([pair, plain]);
+      // 前置：两卡 eff 严格相等（confidence 无字段、基线同为 failure 1.0）
+      const now = Date.now();
+      const pairCard = s.list().find((c) => c.id === 'pair-q')!;
+      const plainCard = s.list().find((c) => c.id === 'plain-new')!;
+      assert.ok(
+        Math.abs(s.effectiveWeightOf(pairCard, now) - s.effectiveWeightOf(plainCard, now)) < 1e-9,
+        '前置：eff 必须全等（否则翻转序不能归因 B2）'
+      );
+      const r = s.loadFiltered({ tier: 'high', keywords: ['flaky', 'suite'] });
+      assert.equal(r[0]?.id, 'pair-q', 'Q 侧加倍（rel 3 vs 2）翻越 lastSeen tie-break → 对卡第一');
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  it('【8】keywords 只命中 A 侧 → Q 侧加倍不误伤：rel 同分时新卡（plain）按 lastSeen 胜出', () => {
+    const dir = ws + '-b2-a-side-only';
+    fs.mkdirSync(dir, { recursive: true });
+    const s = makeStore(dir);
+    try {
+      const t = Date.now() - 60 * 60 * 1000;
+      const pair = {
+        ...mkCard('pair-a', 'Q: what is the deploy policy\nA: deploy after green ci windows', { lastSeen: t }),
+        source: 'dialogue-pair',
+      };
+      const plain = mkCard('plain-ci', 'ci pipeline notes', { lastSeen: t + 60_000 });
+      s.save([pair, plain]);
+      // 'ci' 只在对卡 A 行（'ci windows'）与 plain summary 命中；Q 行无 'ci' →
+      // qRel=0，rel 1 vs 1 同分。若实现错误地把 A 侧命中也加倍 → 对卡 rel 2 误翻序。
+      const r = s.loadFiltered({ tier: 'high', keywords: ['ci'] });
+      assert.equal(r[0]?.id, 'plain-ci', 'A 侧命中不加倍 → 同分 tie-break（lastSeen 倒序）plain 第一');
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
 });
 
 // ==================== B3c：降级路径 ====================

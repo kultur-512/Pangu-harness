@@ -33,6 +33,10 @@
 | B5 | MCP 工具结果验证尾标策略 | `engineAdapter.ts` | MCP 调用成功不计 PASS（防自述伪装真实验证）——分类策略待定，宁缺毋滥 |
 | B6 | 栈溢出守卫长会话自然复现验证 | 渲染层 | renderSseEvent 自递归守卫已修，待真机长会话自然复现确认 |
 | B7 | rewind 事件 replay 消费 / 双 synthetic 幂等 / listBranches O(N²) | `rolloutStore.ts` | 随评测工程处理 |
+| B8 | MMR 近重复惩罚 | `RefinedMemoryStore.ts:624-634` | 选 top-N 前贪心去重（3-gram 重叠 ≥60% → ×0.6，~30 行）；设计已备，落前需 run-product 单臂 A/B 证据 |
+| B9 | 相对时间归一化检索信号 | 新 `src/memory/relTime.ts` + store 接线 4 行 | 查询"3月/上周/two months ago"→相对 resolveToday() 的日期范围，卡 factDate 落入则 relevance+1（零依赖解析器 ~100 行，测试清单已备）；直击 temporal-reasoning（optimized 仅 1/15，全清单杠杆最大项），与 B8 同批"检索信号升级"带 A/B 落地 |
+| B10 | ZL-compact-90 时间锚定口径补全 | `run-cells.mjs` | 卡行带【S·date】但无 factDateText、QA 无 PANSHA_TODAY——26/90 为旧口径；补全=按会话分组播种传 sessionDate + oracle 富化 question_date（约 18 行），属口径变更须重跑并在 COMPARE-90 另起成绩行 |
+| B11 | classic REPL 与 complete-only 回退的记忆覆盖缺口 | `Repl.ts:434`、`PanshalachChaser.ts:406` | classic chat 直答不传 chatMemoryBlock/chatRecentTurns；complete-only 客户端 chat 零记忆零上下文——两通道均已在源码注释申报（2026-09-14 迭代），补齐属独立工作项 |
 
 ### C. 0.9+ 候选（已裁决推迟，恢复指针）
 

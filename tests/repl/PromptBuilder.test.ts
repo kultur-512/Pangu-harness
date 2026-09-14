@@ -502,3 +502,91 @@ describe('PromptBuilder 时间锚定（0.8.3）', () => {
     }
   });
 });
+
+// ==================== chat/execution 出口一致性（2026-09-13 迭代包） ====================
+// 【3】ghost 行修复：模板里的 '\n' 前缀使 lastMemoryBlockText 过滤器
+// l.startsWith('（另有') 永不匹配 → chat 块永远没有"另有 N 张"提示；
+// 【2】auto-pull 审计如实：chat 意图不做 auto-pull——额外卡进不了 chat 块，
+// 只白耗嵌入计算并让 lastInjectedCardIds（注入审计账本）虚报。
+describe('chat/execution 出口一致性（2026-09-13 迭代包）', () => {
+  const seedCards = (store: any): void => {
+    const now = Date.now();
+    store.save([
+      { id: 'exit-1', kind: 'failure', category: 'COMMAND_FAILED', memoryCategory: 'failure', summary: '记忆卡甲 exitgate', weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now },
+      { id: 'exit-2', kind: 'failure', category: 'WEAK_VERIFICATION', memoryCategory: 'failure', summary: '记忆卡乙 exitgate', weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now },
+      { id: 'exit-3', kind: 'failure', category: 'WEAK_VERIFICATION', memoryCategory: 'failure', summary: '记忆卡丙 exitgate', weight: 2, taskStyle: 'all', count: 1, lastSeen: now, firstSeen: now, applicableTiers: [], sourceContext: '', decayWeight: 1.0, lastUsedAt: now },
+    ] as any[]);
+  };
+
+  const withIsoWs = async (fn: (wsRoot: string) => Promise<void>): Promise<void> => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-exit-consistency-'));
+    const prevMemFile = process.env.PANSHA_MEMORY_FILE;
+    const prevNoMem = process.env.PANSHA_NO_MEMORY;
+    const prevLimit = process.env.PANSHA_MEMORY_LIMIT;
+    process.env.PANSHA_MEMORY_FILE = path.join(wsRoot, 'mem.json');
+    delete process.env.PANSHA_NO_MEMORY;
+    process.env.PANSHA_MEMORY_LIMIT = '1'; // L1 只装 1 张 → 必有溢出
+    try {
+      const { RefinedMemoryStore } = await import('../../src/memory/RefinedMemoryStore.js');
+      seedCards(new RefinedMemoryStore(wsRoot));
+      await fn(wsRoot);
+    } finally {
+      if (prevMemFile === undefined) delete process.env.PANSHA_MEMORY_FILE;
+      else process.env.PANSHA_MEMORY_FILE = prevMemFile;
+      if (prevNoMem !== undefined) process.env.PANSHA_NO_MEMORY = prevNoMem;
+      else delete process.env.PANSHA_NO_MEMORY;
+      if (prevLimit !== undefined) process.env.PANSHA_MEMORY_LIMIT = prevLimit;
+      else delete process.env.PANSHA_MEMORY_LIMIT;
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  };
+
+  it('【3】L1 溢出时 getChatMemoryBlock 含"另有 N 张相关记忆未注入"提示（\n 前缀曾致过滤器永不匹配）', async () => {
+    await withIsoWs(async () => {
+      const sess = new Session({ tier: 'high', workspace: process.cwd() });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      await pb.buildForTask('exitgate 相关任务');
+      const block = pb.getChatMemoryBlock();
+      assert.ok(block.includes('【相关记忆】'), '前置：chat 记忆块存在');
+      assert.ok(
+        block.includes('（另有 2 张相关记忆未注入，/memory 查看）'),
+        `chat 块必须带 ghost 提示，got: ${JSON.stringify(block.slice(-200))}`
+      );
+    });
+  });
+
+  it('【3】rich prompt 渲染仍含 ghost 行（去 \n 前缀不丢内容）', async () => {
+    await withIsoWs(async () => {
+      const sess = new Session({ tier: 'high', workspace: process.cwd() });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const prompt = await pb.buildForTask('exitgate 相关任务');
+      assert.ok(prompt.includes('（另有 2 张相关记忆未注入，/memory 查看）'), 'rich 渲染 ghost 行保留');
+    });
+  });
+
+  it('【2】chat 意图不做 auto-pull：lastInjectedCardIds 只含 L1 可见卡（审计不虚报）', async () => {
+    await withIsoWs(async () => {
+      const sess = new Session({ tier: 'high', workspace: process.cwd() });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      await pb.buildForTask('exitgate 相关任务', 'chat');
+      const ids = pb.lastBuildMeta?.injectedCardIds ?? [];
+      assert.equal(ids.length, 1, `chat 只注 L1 的 1 张（旧实现 auto-pull 虚报到 3），got ${ids.length}`);
+      const visibleM = (pb.getChatMemoryBlock().match(/  - \[M\d+\]/g) ?? []).length;
+      assert.equal(visibleM, ids.length, '审计 ids 数 == chat 块可见 [M*] 行数（出口一致）');
+    });
+  });
+
+  it('【2】非 chat（execution/缺省）auto-pull 行为不变：溢出卡照常拉进【额外记忆】', async () => {
+    await withIsoWs(async () => {
+      const sess = new Session({ tier: 'high', workspace: process.cwd() });
+      const pb = new PromptBuilder(sess, TierRegistry.get('high'));
+      const prompt = await pb.buildForTask('exitgate 相关任务');
+      assert.ok(prompt.includes('【额外记忆】'), '非 chat 溢出块照常注入');
+      const ids = pb.lastBuildMeta?.injectedCardIds ?? [];
+      assert.equal(ids.length, 3, '非 chat 审计账本含 L1+溢出共 3 张');
+    });
+  });
+});

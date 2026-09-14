@@ -13,6 +13,11 @@
 // 同源纪律：ZL-compact-90 播种 import src/memory/chatFactMemory.js 的
 // recordFactLines（跑本脚本须 node --import tsx），禁用评测复制品直写存储。
 //
+// ZL-compact-90 口径声明（2026-09-13 冻结）：temporal 口径=旧口径——播种经
+// recordFactLines 不传 sessionDate（卡无 factDateText），QA spawn 不带
+// PANSHA_TODAY；26/90 成绩在此口径取得。补全（事实时间锚/今天锚定）属口径
+// 变更，须整体重跑并另起成绩行，不得与本行混排。
+//
 // 用法：node --import tsx scripts/eval/longmemeval-90/run-cells.mjs --cell <ID>
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';

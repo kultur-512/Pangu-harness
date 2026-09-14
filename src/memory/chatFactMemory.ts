@@ -9,8 +9,13 @@
 //  - kind='preference'（用户相关事实）+ memoryCategory='insight'
 //    （high 档可见性：failure|implementation|insight——general 在默认档不可见，
 //    若用 general 则对话记忆永不注入，功能形同虚设）。
-//  - 降速衰减：weight 0.5（低于工程卡 1.0）——对话细节比工程教训过期更快，
-//    容量淘汰时优先让位。
+//  - 降速衰减：weight 0.8（低于工程卡 2.0，容量淘汰 tiebreak 时优先让位）——
+//    【4】排序公平性（2026-09-13 迭代包，review 纠正算式）：对卡恒带
+//    decayWeight 1.0，而 effBase 的 base = decayWeight ?? weight（优先级！），
+//    故 weight 不进衰减 effBase——0.8 仅作用于容量排序 tiebreak 与无
+//    decayWeight 卡。真正的出局门修复载体是对卡基线 0.85：旧 effBase 新鲜
+//    1.0×0.6=0.6、两段衰减 ×0.4=0.24<0.3 硬出局；0.85 基线后两段衰减
+//    1.0×0.4×0.85=0.34≥0.3 入围（见 RefinedMemoryStore calculateEffectiveBase）。
 //  - 逃生门：PANSHA_CHAT_MEMORY=0 关闭（默认开）。
 //  - 时间锚定（0.8.3）：区分"何时记的"（lastSeen，衰减语义不动）与"记的是
 //    何时的事"（factDate/factDateText，新增；卡前缀同步改为日期级事实时间，
@@ -262,12 +267,16 @@ const normalizeTurnText = (s: string): string => String(s ?? '').replace(/\s+/g,
 function buildPairSummary(input: string, reply: string): { summary: string; confidence: number } {
   const q = normalizeTurnText(input).slice(0, 160);
   const a = smartSlice(normalizeTurnText(reply), 400);
-  const confidences: number[] = [];
-  for (const seg of [input, reply]) {
-    for (const s of splitSentences(seg)) confidences.push(confidenceOf(s));
-  }
-  // 对卡置信度 = 轮内各句分类器的最大值（两侧皆无句 → 0.4 档，软惩罚兜底）
-  const confidence = confidences.length > 0 ? Math.max(...confidences) : 0.4;
+  // 【5】A 侧主导置信（2026-09-13 迭代包）：旧实现取轮内两侧各句的全局 max——
+  // Q 侧一个数字就把纯客套 A 拉满 1.0，检索端 (0.5+0.5×confidence) 软惩罚几乎
+  // 永不生效。改为 confidence = 0.7×max(A 侧各句) + 0.3×max(Q 侧各句)：
+  // A 行是注入载荷主体、事实由回答承载（0.7 主导）；Q 侧 0.3 保留提问相关性
+  // 信号、防答非所问。两侧皆无句 → 0（软惩罚兜底档）。
+  const maxConf = (seg: string): number => {
+    const cs = splitSentences(seg).map(confidenceOf);
+    return cs.length > 0 ? Math.max(...cs) : 0;
+  };
+  const confidence = 0.7 * maxConf(reply) + 0.3 * maxConf(input);
   return { summary: `Q: ${q}\nA: ${a}`, confidence };
 }
 
@@ -341,7 +350,11 @@ export async function recordConversationTurn(
       category: 'OTHER' as const,
       memoryCategory: 'insight' as const,
       summary: c.summary,
-      weight: 0.5,
+      // 【4】排序公平性：0.5→0.8。注意 weight 不进衰减 effBase（base =
+      // decayWeight ?? weight，对卡恒带 decayWeight 1.0 优先）——出局门修复载体
+      // 是 RefinedMemoryStore 的 dialogue-pair 基线 0.85；0.8 仅作用于容量淘汰
+      // tiebreak 与无 decayWeight 卡（review 纠正）
+      weight: 0.8,
       taskStyle: 'all',
       count: 1,
       lastSeen: now,

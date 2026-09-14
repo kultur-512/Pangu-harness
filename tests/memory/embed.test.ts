@@ -18,6 +18,9 @@ import {
   createDefaultProvider,
   DEFAULT_BUCKETS,
   type DenseVector,
+  embedCards,
+  embedCacheSize,
+  resetEmbedCacheForTest,
 } from '../../src/memory/embed.js';
 
 describe('P4 v0 · LocalNGramHashProvider：基础属性', () => {
@@ -193,5 +196,35 @@ describe('P4 v0 · createDefaultProvider 工厂', () => {
     const p = createDefaultProvider(128);
     assert.ok(p instanceof LocalNGramHashProvider);
     assert.equal(p.dim, 128);
+  });
+});
+
+// ==================== 【6】cardVectorCache FIFO 帽（2026-09-13 迭代包） ====================
+// 进程级向量缓存此前无上限——长跑会话卡 id 无限增长（每张新卡 set 一条，
+// 永不淘汰）。修复：size ≥ 1024 时按插入序删最旧 key（FIFO）。
+describe('【6】embedCards 进程级向量缓存 FIFO 帽（1024）', () => {
+  it('灌 1025 个 id → 缓存恒 1024（最旧按插入序淘汰）；帽内命中不重嵌', () => {
+    resetEmbedCacheForTest();
+    let calls = 0;
+    const tiny = {
+      name: 'tiny',
+      dim: 8,
+      embed: (t: string) => { calls++; return new Array(8).fill(0); },
+    };
+    const cards = Array.from({ length: 1025 }, (_, i) => ({ id: `k${i}`, summary: `s${i}` }));
+    embedCards(cards, tiny as any);
+    assert.equal(embedCacheSize(), 1024, 'FIFO 帽：size 恒 ≤ 1024');
+
+    // 最新的 k1024 仍在缓存 → 再次 embed 命中零重嵌
+    embedCards([{ id: 'k1024', summary: 's1024' }], tiny as any);
+    const afterHit = calls;
+    embedCards([{ id: 'k1024', summary: 's1024' }], tiny as any);
+    assert.equal(calls, afterHit, '帽内条目命中不重嵌');
+
+    // 被淘汰的最旧 k0 重嵌：先淘汰再入槽 → size 仍 1024
+    embedCards([{ id: 'k0', summary: 's0' }], tiny as any);
+    assert.equal(embedCacheSize(), 1024, '重嵌被淘汰 key 后 size 仍恒 1024');
+
+    resetEmbedCacheForTest();
   });
 });

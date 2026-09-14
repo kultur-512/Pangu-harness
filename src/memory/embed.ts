@@ -214,8 +214,11 @@ interface CardVectorEntry {
 }
 
 /** 进程级向量缓存：key = cardId。跨回合复用（嵌入 200 卡重算仅 ~10ms，
- *  但增量命中后接近 0）；纯内存不写盘。 */
+ *  但增量命中后接近 0）；纯内存不写盘。
+ *  【6】FIFO 帽（2026-09-13 迭代包）：此前无上限——长跑会话卡 id 无限增长
+ *  （每张新卡 set 一条永不淘汰）。size ≥ 1024 时按插入序删最旧 key。 */
 const cardVectorCache = new Map<string, CardVectorEntry>();
+export const CARD_VECTOR_CACHE_CAP = 1024;
 
 const sha1Hex = (s: string): string => createHash('sha1').update(s).digest('hex');
 
@@ -249,6 +252,12 @@ export function embedCards(
       continue;
     }
     const vec = toSyncVector(provider.embed(text));
+    // 【6】FIFO 帽：满员先按插入序删最旧 key 再入槽（对已存在 key 的 set 不改变
+    // 插入序、也不增条目，故只在"新 key + 满员"时淘汰）。
+    if (!cardVectorCache.has(id) && cardVectorCache.size >= CARD_VECTOR_CACHE_CAP) {
+      const oldest = cardVectorCache.keys().next().value;
+      if (oldest !== undefined) cardVectorCache.delete(oldest);
+    }
     cardVectorCache.set(id, { hash, vec });
     out.set(id, vec);
   }
