@@ -59,6 +59,13 @@
 3. 汇总到下方表；截图/日志归档到 `docs/panshalach/evals/<date>/`。
 4. 运行者核对声明：未混合合成数据。
 
+## 3.5 外部基准锚点与窗口探测（占位 — 选型见 EVAL-FEASIBILITY.md）
+
+基准选型决策与落地方案见 **[EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md)**。本文预留两个数据节，由 P2/P3 产出入座（mock 不入表）：
+
+- **外部基准锚点（LongMemEval-S 子集）**：能力维度（信息抽取/知识更新/拒答）× A/B 两列 + token 成本列；判分口径与自评偏差声明随表。
+- **有效窗口探测（RULER 式）**：openPangu-1B/7B 声称窗口 vs 有效窗口召回率曲线——支撑"小模型窗口下记忆外置是必需品"的底座级论证。
+
 ## 4. 结果表（占位 — 待真实 openPangu 数据）
 
 <!-- R6-AUTO-FILL §4 START -->

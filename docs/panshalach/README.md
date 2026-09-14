@@ -23,6 +23,7 @@
 | [MEMORY-DESIGN.md](MEMORY-DESIGN.md) | 记忆增强层深挖：卡片 schema、提炼/过滤/衰减/注入、已知差距 | 记忆子系统设计说明 |
 | [EVALUATION.md](EVALUATION.md) | 场景设定、消融口径（A/B/C/C4）、指标、数据表（真实数据回填位） | **命题提交物 (2) 效果评估报告** |
 | [SUBMISSION.md](SUBMISSION.md) | 国创赛项目书：概述/方案/创新点/差异化/部署/评测 | 命题提交物（项目书） |
+| [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md) | 评测基准选型与可行性评估（外部基准接入裁决 + 落地方案） | 评测决策文档 |
 | [DEPLOY-CN.md](DEPLOY-CN.md) | 从零到一部署：本机已验证路径 + 昇腾/麒麟框架（待实测）+ PANSHA_* 全集 | 部署指南 |
 | [USER-GUIDE.md](USER-GUIDE.md) | 安装、配置、交互手感（斜杠菜单/档位环/滑杆）、命令总表 | 用户手册 |
 | [ROADMAP-NEXT.md](ROADMAP-NEXT.md) | R0-R9 路线 + 实施合同 + 遗留表（0.8 M3 项/记忆审计剩余项） | 当前执行路线 |

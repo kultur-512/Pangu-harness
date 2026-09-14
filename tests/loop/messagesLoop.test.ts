@@ -354,8 +354,11 @@ describe('0.8 P2 chaser 接线（messages 通道）', () => {
         intent: 'execution',
       });
       assert.equal(chatCalls, 0, 'off 模式零 messages 调用');
-      assert.equal(prompts.length, 2);
+      // 0.8.2 防呆 nudge 生效后：execution 意图首步"只说话不动手"注入格式提醒重试
+      // 一步（prompts=2）；第二次仍不动手 → no-verification（假完成不计 answered 成功）。
+      assert.equal(prompts.length, 2, 'execution 意图文本空转 → nudge 重试一步');
       assert.ok(prompts[0].includes('修复 login 页面'), 'off 模式任务文本走 issueDescription');
+      assert.ok(prompts[1].includes('修复 login 页面'), 'nudge 步仍携带任务文本');
       assert.ok(!prompts[0].includes('STABLE-SEG'), 'off 模式 segments 不进入 prompt');
       assert.equal(res.bestTrajectory?.stopReason, 'no-verification');
     } finally {

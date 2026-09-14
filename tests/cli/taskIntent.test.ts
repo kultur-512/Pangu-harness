@@ -102,3 +102,21 @@ describe('第 3 轮：显式写/续接请求优先', () => {
     });
   }
 });
+
+// R7（0.8.2）：英文疑问/第一人称回忆（LongMemEval 接入驱动）
+describe('R7 英文疑问与第一人称回忆分类', () => {
+  it('英文疑问句开头 → chat（无问号结尾也识别）', () => {
+    assert.equal(classifyTaskIntent('What was the first issue I had with my new car after its first service'), 'chat');
+    assert.equal(classifyTaskIntent('How many children do I have'), 'chat');
+    assert.equal(classifyTaskIntent('Which speaker did I return'), 'chat');
+  });
+  it('第一人称经历回忆（中英）→ chat', () => {
+    assert.equal(classifyTaskIntent('Did I ever break my fast while traveling'), 'chat');
+    assert.equal(classifyTaskIntent('我第一次保养是什么时候'), 'chat');
+    assert.equal(classifyTaskIntent('我的新车出现过什么问题'), 'chat');
+  });
+  it('工程任务不被新规则误判', () => {
+    assert.equal(classifyTaskIntent('修复 login 页面的报错'), 'execution');
+    assert.equal(classifyTaskIntent('继续完成 memo.txt 任务'), 'execution');
+  });
+});

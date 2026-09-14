@@ -6,6 +6,25 @@ import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierConfig.js';
 import type { TaskIntent } from '../taskIntent.js';
+import { estTokens, resolveWindowTokens } from './tokenEstimate.js';
+
+// estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
+// 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
+export { estTokens };
+
+/**
+ * G6：句边界截断——预算内截到最后一个句末标点（句号/问号/叹号/省略号）；
+ * 找不到足够长的句边界才硬切。修复：旧 slice(0,117) 会把卡的后半段答案剪掉
+ * （实测 18.5% 的可播种句超 120 字符，LongMemEval 恰是"答案就在某句里"）。
+ */
+export function truncateAtSentence(text: string, budget: number): string {
+  const t = String(text ?? '');
+  if (t.length <= budget) return t;
+  const head = t.slice(0, budget + 3);
+  const m = head.match(/[\s\S]*[。．！？!?]/);
+  const cut = m && m[0].length >= Math.floor(budget * 0.5) ? m[0] : t.slice(0, budget);
+  return cut.trimEnd() + '...';
+}
 
 // ==================== L0 硬约束（≤3 条，非整段注入） ====================
 export const L0_INVARIANTS: string[] = [
@@ -17,18 +36,6 @@ export const L0_INVARIANTS: string[] = [
 /** M2.1 预算红线断言：L0 超过 3 条即失败（测试调用）。 */
 export function assertL0Count(): void {
   if (L0_INVARIANTS.length > 3) throw new Error('L0_INVARIANTS 超过 3 条（M2.1 预算红线）');
-}
-
-/** 确定性 token 估算 — ceil(asciiLen/4 + cjkLen×1.5)。纯函数。 */
-export function estTokens(text: string): number {
-  let ascii = 0;
-  let cjk = 0;
-  for (const ch of String(text ?? '')) {
-    const code = ch.codePointAt(0)!;
-    if (code >= 0x4e00 && code <= 0x9fff) cjk++;
-    else ascii++;
-  }
-  return Math.ceil(ascii / 4 + cjk * 1.5);
 }
 
 export interface TierConstraint {
@@ -149,6 +156,15 @@ export class PromptBuilder {
     private session: Session,
     private tierConfig: TierConfig
   ) {}
+
+  // 0.8.2：最近一次 build 注入的记忆块独立文本（chat 直答干净组装用）
+  private lastMemoryBlockText = '';
+
+  /** 最近一次注入的【相关记忆】块（无注入 → 空串）。chat 直答的 user 应为
+   *  "此块 + 用户原话"——绝不能整段 enriched 塞进 user（1B 元话语根因）。 */
+  getChatMemoryBlock(): string {
+    return this.lastMemoryBlockText;
+  }
 
   // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
@@ -487,9 +503,27 @@ export class PromptBuilder {
     // === Current task — dedup (in case of weird re-entrancy) ===
     this.tryInject('current-task', [`\n【当前任务】\n${issue}`], lines);
 
-    // === Optional: crude compaction note — dedup ===
-    if (this.session.turns.length > 12) {
-      this.tryInject('compaction-note', '\n（历史较长，已做内部压缩，保留关键决策与用户原文要点）', lines);
+    // === 历史压缩摘要（B3：接真——压缩收益从此真正进入 prompt）===
+    // 合成轮 userInput 以 [COMPACT] 开头、result.summary 为摘要正文；压缩后
+    // 合成轮固定在 turns 前端，getRecentContext(3) 永远取不到——在此显式注入。
+    // 无合成轮且历史较长时给诚实提示（旧行为是无压缩却声称"已做内部压缩"）。
+    {
+      const synthetic = this.session.turns.find((t) => String(t.userInput || '').startsWith('[COMPACT]'));
+      if (synthetic && synthetic.result?.summary) {
+        const summary = String(synthetic.result.summary);
+        // C3（0.8.2 审查）：注入 cap 从固定 1500 字符改窗口比例预算
+        // min(6000 字符, 15% 窗口 tokens×4)——旧 cap ÷ 24 轮 ≈ 62 字符/轮，
+        // "逐字保留"的用户指令在注入面全灭（30 轮会话跨任务带宽仅窗口 4-8%）。
+        let budgetChars = 6000;
+        try {
+          const w = resolveWindowTokens((this.session as any).provider, this.session.model);
+          budgetChars = Math.min(6000, Math.floor(w * 0.15 * 4));
+        } catch {}
+        const capped = summary.length > budgetChars ? summary.slice(0, budgetChars) + '…[摘要已截断]' : summary;
+        this.tryInject('compaction-note', [`\n【历史压缩摘要】`, capped], lines);
+      } else if (this.session.turns.length > 12) {
+        this.tryInject('compaction-note', `\n（历史较长：${this.session.turns.length} 轮，更早轮次未注入。如需把早期关键背景带进上下文，可用 /compact 生成压缩摘要。）`, lines);
+      }
     }
 
     // === 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===
@@ -512,7 +546,7 @@ export class PromptBuilder {
           const n0 = this.memoryNumberSeq;
           let accepted = 0;
           for (const c of overflow.pulled) {
-            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary}`;
+            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${truncateAtSentence(c.summary, 120)}`;
             const cost = estTokens(line);
             if (budget - cost < 0) break; // 超预算放弃（不降级不重试）
             lines2.push(line);
@@ -573,7 +607,17 @@ export class PromptBuilder {
       // use pre-collected relevant files (from caller) for reference filtering
       const currentFiles = currentWorkspaceFiles && currentWorkspaceFiles.length ? currentWorkspaceFiles : undefined;
       // 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
-      const keywords = (issue ?? '').split(/\s+/).map(w => w.replace(/^[/@#]/, '')).filter(w => w.length >= 2);
+      // 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
+      // 停用词占满相关性命中，区分度归零）；中文 2 字词保留。
+      const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
+      const keywords = (issue ?? '')
+        .split(/\s+/)
+        .map(w => w.replace(/^[/@#]/, ''))
+        .filter(w => {
+          const lw = w.toLowerCase();
+          if (/[一-龥]/.test(w)) return w.length >= 2;
+          return w.length >= 2 && !STOPWORDS.has(lw);
+        });
       this.lastKeywords = keywords;
       const allCards = memStore.loadFiltered({
         tier: this.session.tier,
@@ -590,15 +634,27 @@ export class PromptBuilder {
         const n0 = this.memoryNumberSeq;
         const added = this.tryInject('memory-cards', [
           '\n【相关记忆】',
+          // G3 最小版：知识更新指令——冲突事实并存时以后注入者为准（配合
+          // 卡内日期前缀，1B 级模型也能据此选新弃旧；此前旧事实因插入序靠前
+          // 被优先采纳，knowledge-update 题全 0 的直接原因之一）。
+          '（规则：同一主题的事实以后面出现的卡为准；带 [S日期] 前缀的以日期较新者为准。）',
           ...cards.map((c, i) => {
-            const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
-            return `  - [M${n0 + i + 1}] ${label(c)} ${one}`;
+            return `  - [M${n0 + i + 1}] ${label(c)} ${truncateAtSentence(c.summary, 120)}`;
           }),
           ghost,
         ], lines);
         if (added) this.memoryNumberSeq += cards.length;
         // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
         this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        // 0.8.2：独立记忆块文本（chat 直答干净组装用——chat 的 user 应是
+        // "记忆块 + 用户原话"，而不是整段 enriched prompt 外壳，否则 1B 被
+        // 结构块噪音拖垮、元话语复发）。非 chat 也存，无副作用。
+        const memStart = lines.findIndex((l) => l.includes('【相关记忆】'));
+        if (memStart >= 0) {
+          this.lastMemoryBlockText = lines.slice(memStart)
+            .filter((l) => l.includes('【相关记忆】') || l.includes('（规则：') || l.startsWith('  - [M') || l.startsWith('（另有'))
+            .join('\n');
+        }
         return added;
       }
       this.lastInjectedCardIds = [];
@@ -639,7 +695,7 @@ export class PromptBuilder {
       if (cards.length > 0) {
         lines.push('\n【提炼后的教训（来自历史项目记忆）】');
         for (const c of cards) {
-          const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
+          const one = truncateAtSentence(c.summary, 120);
           lines.push(`  - [${c.category}] ${one}`);
         }
       }
@@ -649,6 +705,10 @@ export class PromptBuilder {
   }
 
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
+    // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
+    // （Pi/CC 实验把整个 memory 文件塞进上下文）。产品默认不受影响。
+    const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
+    if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
     if (level === 'light') return 3;
     if (level === 'medium') return 6;
     if (level === 'high') return 8;

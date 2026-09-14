@@ -2,7 +2,7 @@
 // 功能：提炼 / 加载 / 过滤 / 容量控制 / 衰减 / .gitignore 默认加入
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
 import type { MemoryCategory } from './RefinedMemoryCard.js';
@@ -109,9 +109,11 @@ export class RefinedMemoryStore {
     this.workspaceRoot = workspaceRoot;
     // 优先级:显式 customFilename > PANSHA_MEMORY_FILE env > 默认文件名
     // (对齐 TaskStateStore 的 PANSHA_TASK_STATE_FILE 模式——R6 评测用 env 注入隔离文件)
+    // env 为绝对路径时直接采用（join 会把它拼成 `<ws>/P:\...` 垃圾路径 →
+    // existsSync false → 静默 0 卡——真机 smoke 实证，评测脚本全用绝对路径）。
     const fromEnv = typeof process !== 'undefined' ? process.env?.PANSHA_MEMORY_FILE?.trim() : undefined;
     const resolved = customFilename ?? fromEnv ?? MEMORY_LIMITS.DEFAULT_FILENAME;
-    this.filePath = join(workspaceRoot, resolved);
+    this.filePath = isAbsolute(resolved) ? resolved : join(workspaceRoot, resolved);
   }
 
   /**
@@ -437,7 +439,9 @@ export class RefinedMemoryStore {
       });
     }
 
-    // 排序 = 0.7×effectiveWeight + 0.3×relevance（默认降序权重一致）
+    // 排序 = 0.7×effectiveWeight + 0.3×relevance；同分先按 count 再按
+    // lastSeen **倒序**（G3 最小版：新旧事实并存时让较新者排前——旧排序
+    // 同分回退稳定插入序 = 时间正序 = 旧事实恒在前，1B 取第一张即错）。
     filtered.sort((a, b) => {
       const ea = (a as any)._effective ?? 0;
       const eb = (b as any)._effective ?? 0;
@@ -445,7 +449,7 @@ export class RefinedMemoryStore {
       const rb = (b as any)._relevance ?? 0;
       const sa = 0.7 * ea + 0.3 * ra;
       const sb = 0.7 * eb + 0.3 * rb;
-      return sb - sa || (b as any).count - (a as any).count;
+      return sb - sa || (b as any).count - (a as any).count || (b.lastSeen ?? 0) - (a.lastSeen ?? 0);
     });
 
     if (filter.maxCards && filter.maxCards > 0) {

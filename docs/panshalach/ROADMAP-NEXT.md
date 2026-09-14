@@ -8,6 +8,7 @@
 - **版本 v0.8.0-rc**，四分支已全部合入 develop（`5105ebf`）：主线 0.8.0-rc（turn 四模块会话壳 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七件套 + CC 级交互四件套 + 记忆链三缺陷治理 + 身份画像通用化）+ 王佐 R4/R5 挂载（/memory events、TaskState.record*）+ 王浩宇 U5（Repl 三口接线 + TurnStopReason 同步）+ 赵天昂 R5 task CLI 三子命令 + R6 follow-up。
 - **质量基线**：`npx tsc --noEmit` 干净；`npm test` **1008 例全绿**（1007 pass + 1 skip）；`verify-m2-e2e` + `check-protected-files` 双契约 PASS；`scripts/eval/smoke-eval.mjs` A/B/C/C4 四档冒烟全过（评测管线就绪，待真机端点）。
 - 旧分支（zhaiyuanhao1/wangzuo1/wanghaoyu1/zhaotianang1）**已冻结**，新工作自 develop 拉 `<pinyin>2`。
+- **0.8.2 上下文压缩对抗审查修复（2026-09-13，zhaiyuanhao1）**：P1 计量地基（tokenEstimate 收口 / 实测 usage 锚点 lastPromptTokens / CJK-aware 估算 / REPL windowTokens 接线 / 裁剪后复查 + 单步封顶 / messages 模式溢出重试真实截断）+ P2 摘要质量（提炼统一到 apply 写盘后 / turnFullBrief 逐字保留落地 / fallback 嵌套封顶 / 压缩摘要注入 prompt / kept 字节感知收缩）+ 文案诚实化（溢出应急=确定性截断，与摘要压缩严格区分）。测试 1039 绿。
 
 ## 未完成项
 
@@ -15,7 +16,7 @@
 
 | # | 项 | Owner | 说明 |
 |---|---|---|---|
-| A1 | **R6 真机评测数据** | 赵天昂+王浩宇 | 端点就绪后 `scripts/eval/run-eval.mjs` 跑 A/B/C/C4（A 档必须真溢出；B 档零注入=防线失败不计有效样本）→ `fill-evaluation.mjs` 回填 [EVALUATION.md](EVALUATION.md) §4。**当前唯一无备用方案的关键项**——最迟 9/17 开跑 |
+| A1 | **R6 真机评测数据** | 赵天昂+王浩宇 | 端点就绪后 `scripts/eval/run-eval.mjs` 跑 A/B/C/C4（A 档必须真溢出；B 档零注入=防线失败不计有效样本）→ `fill-evaluation.mjs` 回填 [EVALUATION.md](EVALUATION.md) §4。**当前唯一无备用方案的关键项**——最迟 9/17 开跑。基准选型与扩展（LongMemEval 锚点/窗口探测）见 [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md)；**前置：T3 fixture 按 32K 窗口校准溢出规模（§1.5），否则 A 档整档无效** |
 | A2 | **提交物定稿（R9）** | Leader+全员 | SUBMISSION 终稿（评测段按 A1 数据回填）、DEPLOY-CN 昇腾/麒麟实测口径、ARCHITECTURE §5 资源实测表（U7 待测数据） |
 | A3 | **master 发布** | kultur | develop 冻结 + A1 回填后，走 CI gate（agent-branch-guard）合入并打 tag；国创赛后台提报 |
 

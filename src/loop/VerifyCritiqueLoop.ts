@@ -20,6 +20,7 @@ import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawI
 import { classifyApiError } from '../model/errorClassify.js';
 import type { StaticAnalysisResult } from '../review/Reviewer.js';
 import type { ChatMessage, TurnStopReason } from '../cli/repl/types.js';
+import { estTokens } from '../cli/repl/tokenEstimate.js';
 
 /**
  * Critique 构造上下文
@@ -59,6 +60,9 @@ export interface VerifyCritiqueLoopOptions {
   practicalMode?: boolean;
   /** 任务风格（推荐）：'swe' | 'terminal' | 'automation' 等，用于适配验证策略。 */
   taskStyle?: string;
+  /** 显式执行意图：intent==='task' 时为 true——驱动"只说话不动手"防呆 nudge。
+   *  不传时回落 isStrongMode/taskStyle 启发（向后兼容）。 */
+  executionIntent?: boolean;
   /** 任务风格别名，等同于 taskStyle。 */
   benchmarkType?: BenchmarkType | string;
   /** 是否高纪律模式，等同于 !practicalMode 的高纪律路径。 */
@@ -136,6 +140,11 @@ export class VerifyCritiqueLoop {
   private practicalMode: boolean;
   private benchmarkType?: BenchmarkType | string; // taskStyle 的别名（内部同步维护）
   private taskStyle?: string;
+  /** 显式执行意图（0.8.2 真机纰漏修复）：由宿主从意图分类直接传入（intent==='task'）。
+   *  缺省时回落旧启发（isStrongMode || taskStyle==='execution'）——但默认档 high 的
+   *  taskStyle 实际为 'all'，启发恒 false 导致"只说话不动手防呆 nudge"成死代码
+   *  （MiniMax-M3 真机 T1 实证：规格书式 prompt 首步纯文本答复即被 answered 放行）。 */
+  private executionIntentFlag?: boolean;
   private isStrongMode?: boolean;
   private signal?: AbortSignal;
   private profile = BenchmarkProfiles.get('swe');
@@ -192,6 +201,7 @@ export class VerifyCritiqueLoop {
     this.practicalMode = explicitPractical ?? !this.isStrongMode;
     // 任务风格：优先 taskStyle，其次 benchmarkType（别名）
     this.taskStyle = options.taskStyle ?? (options.benchmarkType as string | undefined);
+    this.executionIntentFlag = options.executionIntent;
     this.benchmarkType = options.benchmarkType ?? this.taskStyle;
     this.profile = BenchmarkProfiles.get(this.taskStyle ?? this.benchmarkType);
     // 接收 critique 频率、纪律规则注入强度、tier 名称
@@ -234,6 +244,15 @@ export class VerifyCritiqueLoop {
   /** 上下文窗口预算（tokens）。>0 时 buildHistoryPrompt 超 70% 裁中段。 */
   private windowTokens?: number;
 
+  /**
+   * PANSHA_NO_BUDGET_TRIM=1 → 禁用主动窗口预算裁剪（评测 A 档逃生门：
+   * 让"窗口装不下"可达网关，真溢出可测）。溢出应急档（forcedCompactApplied）
+   * 是溢出后的恢复路径，不受此开关影响。
+   */
+  private get budgetTrimDisabled(): boolean {
+    return process.env.PANSHA_NO_BUDGET_TRIM === '1';
+  }
+
   private filesReadThisTrajectory = new Set<string>();
   private filesWrittenThisTrajectory = new Set<string>();
   private readBeforeWriteViolations = 0;
@@ -263,6 +282,81 @@ export class VerifyCritiqueLoop {
     if (process.env.PANSHA_MESSAGES_MODE === 'off') return false;
     const c = this.modelClient as any;
     return typeof c?.chat === 'function' || typeof c?.streamChatMessages === 'function';
+  }
+
+  /**
+   * A5：messages 栈截断——保种子前缀（system + 首条 user + 首步注入）+
+   * 末 N 个 assistant 交换对（assistant + 其 tool 结果），中段换一条 user
+   * 截断标记。边界按 role:'assistant' 切（practicalMode 下大多数步骤没有
+   * user 注入消息，user 边界凑不齐组）；assistant 在切口处、其 tool 结果
+   * 全部在后段——天然无孤儿 tool、无悬空 tool_calls（OpenAI 严格校验）。
+   */
+  private trimMessages(maxGroups = 2): void {
+    const msgs = this.messages;
+    const firstAssistant = msgs.findIndex((m) => m.role === 'assistant');
+    if (firstAssistant === -1) return;
+    const prefixEnd = firstAssistant; // [0..prefixEnd) = system/种子/首步注入，恒保留
+    const assistantIdx: number[] = [];
+    for (let i = firstAssistant; i < msgs.length; i++) {
+      if (msgs[i].role === 'assistant') assistantIdx.push(i);
+    }
+    if (assistantIdx.length <= maxGroups) return;
+    const cutFrom = assistantIdx[assistantIdx.length - maxGroups];
+    const dropped = cutFrom - prefixEnd;
+    const marker: ChatMessage = {
+      role: 'user',
+      content: `[...${dropped} 条步骤历史已截断（上下文窗口预算）；如需背景信息请用 read_file/glob 重新获取，不要复述历史。]`,
+    };
+    this.messages = [...msgs.slice(0, prefixEnd), marker, ...msgs.slice(cutFrom)];
+  }
+
+  /** A5：messages 栈 token 估算（全部消息 content 之和，CJK-aware）。 */
+  private messagesTokens(): number {
+    let t = 0;
+    for (const m of this.messages) t += estTokens(typeof m.content === 'string' ? m.content : '');
+    return t;
+  }
+
+  /**
+   * C1：把 messages 栈收缩到 capTokens 以内，返回是否做过任何裁剪。
+   * 两级策略：组级 trimMessages（丢最旧交换组）→ 仍超则对栈内最大 tool
+   * 消息做二级内容截断（防"trim 后组数已到底、巨结果仍在"的残余超窗）。
+   * 巨型首条 user（种子）不可裁——到它为止，交溢出应急。
+   */
+  private enforceMessagesBudget(capTokens: number): boolean {
+    let acted = false;
+    for (;;) {
+      if (this.messagesTokens() <= capTokens) return acted;
+      const before = this.messages.length;
+      this.trimMessages();
+      if (this.messages.length < before) { acted = true; continue; }
+      if (this.shrinkLargestToolMessage()) { acted = true; continue; }
+      return acted;
+    }
+  }
+
+  /** C1 二级裁剪：栈内 estTokens 最大的 tool 消息 >20% 窗口预算 → 头 60% + 尾 25%。 */
+  private shrinkLargestToolMessage(): boolean {
+    if (!this.windowTokens || this.windowTokens <= 0) return false;
+    const capTokens = this.windowTokens * 0.7 * 0.2;
+    let bi = -1; let bt = 0;
+    this.messages.forEach((m, i) => {
+      if (m.role === 'tool') {
+        const t = estTokens(typeof m.content === 'string' ? m.content : '');
+        if (t > bt) { bt = t; bi = i; }
+      }
+    });
+    if (bi === -1 || bt <= capTokens) return false;
+    const content = String(this.messages[bi].content ?? '');
+    const headChars = Math.floor(capTokens * 4 * 0.6);
+    const tailChars = Math.floor(capTokens * 4 * 0.25);
+    this.messages[bi] = {
+      ...this.messages[bi],
+      content: content.slice(0, headChars)
+        + '\n[...工具输出过长已截断（窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件...]'
+        + (tailChars > 0 ? content.slice(-tailChars) : ''),
+    };
+    return true;
   }
 
   /** 0.8 P2：剥离工具调用原文块，剩余面向模型的"文本部分"（assistant 消息 content）。 */
@@ -311,17 +405,31 @@ export class VerifyCritiqueLoop {
   /**
    * 0.8 P2：工具结果回灌 messages 栈（chat 通道）。结果按 '\n---\n' 分段数
    * 与调用数匹配时逐 call 切分；否则整段回灌每个 tool 消息（配对完整优先）。
+   * C1（0.8.2 审查）：per-message 封顶——read_file 上限 20K 字符/次，两个大
+   * 结果 ≈ 2×13K tokens 即破 32K 窗口；工具消息超 20% 窗口预算时保留头 60% +
+   * 尾 25%，中段换显式标记（对齐文本路径 capStepPart 语义）。
    */
   private pushToolMessages(toolCalls: ToolCall[], wireCalls: unknown[] | null, resultText: string): void {
     const segments = String(resultText ?? '').split('\n---\n');
     const perCall = segments.length === toolCalls.length ? segments : null;
+    const budgetChars = this.windowTokens && this.windowTokens > 0
+      ? this.windowTokens * 4 * 0.2
+      : 0;
     toolCalls.forEach((c, i) => {
       const wireId = wireCalls ? (wireCalls[i] as any)?.id : undefined;
+      let content = perCall ? perCall[i] : (resultText || '');
+      if (budgetChars > 0 && content.length > budgetChars) {
+        const headChars = Math.floor(budgetChars * 0.6);
+        const tailChars = Math.floor(budgetChars * 0.25);
+        content = content.slice(0, headChars)
+          + '\n[...工具输出过长已截断（单条窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件（输出中会给出 offset 续读位置）。]'
+          + (tailChars > 0 ? content.slice(-tailChars) : '');
+      }
       this.messages.push({
         role: 'tool',
         toolCallId: wireId ? String(wireId) : `call_${++this.toolCallSeq}`,
         name: c.toolName,
-        content: perCall ? perCall[i] : (resultText || ''),
+        content,
       });
     });
   }
@@ -343,7 +451,7 @@ export class VerifyCritiqueLoop {
     // M2-5 overflow 强制压缩提示——重试本步时注入一次性提醒。
     if (this.pendingOverflowNotice) {
       this.pendingOverflowNotice = false;
-      lead.push('【上下文长度已超限——历史已强制压缩（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】');
+      lead.push('【上下文长度已超限——历史已溢出截断（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】');
     }
     // answered 空转防呆——格式提醒重试一步（消费型旗标）。
     if (this.pendingFormatNudge) {
@@ -459,7 +567,7 @@ export class VerifyCritiqueLoop {
       // M2-5 overflow 强制压缩提示——重试本步时注入一次性提醒（消费型旗标）。
       if (this.pendingOverflowNotice) {
         this.pendingOverflowNotice = false;
-        prompt += '\n\n【上下文长度已超限——历史已强制压缩（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】';
+        prompt += '\n\n【上下文长度已超限——历史已溢出截断（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】';
       }
       // answered 空转防呆——execution 意图下"只说话不动作"的第一次，
       // 注入一次格式提醒重试一步（消费型旗标）。
@@ -553,8 +661,16 @@ export class VerifyCritiqueLoop {
         ? this.verificationEngine.toolSchemas()
         : undefined;
 
+      // A5：messages 发送前稳态预算——栈 >70% 窗口即迭代收缩（C1：组级 trim
+      // 到底后对巨 tool 消息二级截断，防单条巨结果残余超窗）。与文本路径的
+      // buildHistoryPrompt 70% 预算线对等。windowTokens 未提供或
+      // PANSHA_NO_BUDGET_TRIM=1（评测逃生门）时不裁。
+      if (messagesMode && !this.budgetTrimDisabled && this.windowTokens && this.windowTokens > 0) {
+        this.enforceMessagesBudget(this.windowTokens * 0.7);
+      }
+
       // M2-5：模型调用包裹 overflow 捕获——context_overflow 时通知外层、
-      // 强制压缩 history 后重试本步（每任务 ≤1 次）；仍失败原样抛出
+      // 强制截断 history 后重试本步（每任务 ≤1 次）；仍失败原样抛出
       // → chaser 落 error 终态（0.7.4 语义不变）。
       let rawOrObj: any;
       try {
@@ -578,6 +694,13 @@ export class VerifyCritiqueLoop {
             this.overflowRetryUsed = true;
             this.forcedCompactApplied = true;
             this.pendingOverflowNotice = true;
+            // A5：messages 模式的实际裁剪在这里——旧实现只置 flag 就重试，
+            // 而 forcedCompactApplied 只作用于文本路径的 buildHistoryPrompt，
+            // messages 栈原样重发必然再次溢出（修：重试必败）。C1：迭代收缩。
+            if (messagesMode) {
+              if (this.windowTokens && this.windowTokens > 0) this.enforceMessagesBudget(this.windowTokens * 0.7);
+              else this.trimMessages();
+            }
             stepNum--; // 重试本步（不消耗新步数）
             continue;
           }
@@ -800,8 +923,9 @@ export class VerifyCritiqueLoop {
         // 终局（不计 success）。仅用消费型布尔旗标实现，不引入新状态机。
         const hasText = this.hasUserFacingText(rawContent);
         const truncatedResponse = !!(rawOrObj as any)?.truncated;
-        const executionIntent = !!this.isStrongMode
-          || String(this.taskStyle ?? this.benchmarkType ?? '') === 'execution';
+        const executionIntent = this.executionIntentFlag
+          ?? (!!this.isStrongMode
+            || String(this.taskStyle ?? this.benchmarkType ?? '') === 'execution');
         if (truncatedResponse) {
           this.pendingTruncationNotice = true;
           // done 保持 false——截断响应继续下一步
@@ -977,29 +1101,58 @@ Critique: ${critique}`;
 
     const join = (arr: string[]) => arr.join('\n---\n');
 
-    // M2-5 强制档：context_overflow 触发后，本任务余下所有 history 组装
-    // 无条件裁中段（保首 1 + 末 1 步 + 显式折叠标记），与下方窗口预算裁剪
-    // （超 70% 才裁）并行——压缩是消费历史，flag 任务生命周期内保持。
+    // M2-5 溢出应急档：context_overflow 触发后，本任务余下所有 history 组装
+    // 无条件截断中段（保首 1 + 末 1 步 + 显式折叠标记）。注意这是确定性截断
+    // 不是摘要压缩——中段内容不进任何摘要，长期信号靠 TaskState/记忆卡兜底。
+    // flag 任务生命周期内保持。
     if (this.forcedCompactApplied && parts.length > 2) {
       const kept = [
         parts[0],
-        `[...强制压缩：${parts.length - 2} 步历史已折叠（context_overflow 触发）...]`,
+        `[...${parts.length - 2} 步历史已截断（context_overflow 溢出应急，仅保留首尾步骤）...]`,
         parts[parts.length - 1],
       ];
       return join(kept);
     }
 
-    // 窗口预算——组装后若超窗口 70%（token 估算 chars/4），
-    // 裁 history 中段：保前 2 步 + 后 2 步，中段替换为显式标记
-    //（windowTokens 未提供时保持旧行为，不裁）。
-    if (this.windowTokens && this.windowTokens > 0 && parts.length > 4) {
+    // 窗口预算——组装后若超窗口 70%，先做单步封顶，再迭代裁中段。
+    // 裁剪后复查（A4）：旧实现切一刀就返回，保下的首尾步本身可超预算，
+    // 重试仍溢出；这里循环收缩直到满足预算或只剩首尾步。
+    //（windowTokens 未提供时保持旧行为，不裁；PANSHA_NO_BUDGET_TRIM=1
+    // 评测逃生门禁用主动裁剪，溢出应急档不受影响。）
+    if (this.windowTokens && this.windowTokens > 0 && !this.budgetTrimDisabled) {
       const budgetChars = this.windowTokens * 4 * 0.7;
-      if (join(parts).length > budgetChars) {
-        const kept = [...parts.slice(0, 2), `[...${parts.length - 4} 步已裁剪（上下文窗口预算）...]`, ...parts.slice(-2)];
-        return join(kept);
+      const capped = parts.map((p) => this.capStepPart(p, budgetChars));
+      if (capped.length <= 2 || join(capped).length <= budgetChars) return join(capped);
+
+      // 迭代裁中段：前 2 + 后 2 起步，仍超预算则继续收缩（最少各保 1 步；
+      // 先收前段——旧步骤信息密度低于最新现场）。
+      let head = Math.min(2, Math.floor((capped.length - 1) / 2));
+      let tail = Math.min(2, capped.length - 1 - head);
+      for (;;) {
+        const dropped = capped.length - head - tail;
+        const mid = dropped > 0 ? [`[...${dropped} 步已截断（上下文窗口预算）...]`] : [];
+        const text = join([...capped.slice(0, head), ...mid, ...capped.slice(capped.length - tail)]);
+        if (text.length <= budgetChars) return text;
+        if (head <= 1 && tail <= 1) return text; // 首尾仍超预算：到此为止，交溢出应急档
+        if (head > 1) head--; else tail--;
       }
     }
     return join(parts);
+  }
+
+  /**
+   * A4 单步封顶：一步 >20% 历史预算时保留头 60% + 尾 25%，中段换显式标记。
+   * 防单步巨量输出（read_file 大文件 / 冗长 bash 日志）把预算吃穿——
+   * 旧实现只切步数不切步内容，4 个巨步照样超窗。
+   */
+  private capStepPart(part: string, budgetChars: number): string {
+    const perStep = budgetChars * 0.2;
+    if (part.length <= perStep) return part;
+    const headChars = Math.floor(perStep * 0.6);
+    const tailChars = Math.floor(perStep * 0.25);
+    return part.slice(0, headChars)
+      + '\n[...本步内容过长已截断（单步窗口预算）；如需完整输出（尤其 read_file 结果），请重新读取目标文件...]'
+      + (tailChars > 0 ? part.slice(-tailChars) : '');
   }
 
   /**

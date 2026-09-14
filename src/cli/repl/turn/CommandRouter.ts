@@ -80,6 +80,13 @@ export function suggestCommand(input: string): string | null {
  *  切换回执为 `已切换: <模式> · <后果>`；徽标行置 pending，
  *  下一次空闲提示符上方输出一次（避免刷屏）。 */
 export function createModeRing(ctx: TurnContext): ModeRing {
+  // 0.8.2 一致性修复（真机 1B 实录实证）：ModeRing 初始 'default' 不触发
+  // onChange，而 Session.approvalMode 初始 'readonly'——UI 显示 default、
+  // 实际 readonly，写操作被静默拒绝。启动时显式同步一次（readonly 是
+  // 交互场景的遗留默认，扶正为 default；显式档位不被覆盖）。
+  if (ctx.session.approvalMode === 'readonly') {
+    ctx.session.approvalMode = 'default';
+  }
   return new ModeRing('default', (m) => {
     if (m === 'plan') {
       ctx.session.setPlanMode(true);

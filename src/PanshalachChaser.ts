@@ -34,6 +34,13 @@ export interface BudgetReport {
    * false = 字符长度 /4 估算（usage 缺失时的回落口径）。
    */
   usageMeasured: boolean;
+  /**
+   * 压缩计量锚点：本任务最后一次模型调用的实测 prompt_tokens。
+   * 单次请求的 prompt ≈ 当前活体上下文（system+历史+全部步骤重发），
+   * 是"现在上下文多大"的最佳实测值——累计值（estimatedUsedTokens）跨步
+   * 重复计入历史，不能当上下文占用用。
+   */
+  lastPromptTokens?: number;
   triggeredSoftLimit: boolean;
   triggeredDegradation: boolean;
   rolloutsExecuted: number;
@@ -59,6 +66,9 @@ export interface ChaserConfig {
    * into the prompt. Core should skip its own memory injection to avoid duplication.
    */
   memoryPreInjected?: boolean;
+  /** 0.8.2：chat 直答的独立记忆块（宿主从 PromptBuilder 传出；chat 的 user =
+   *  "此块 + 用户原话"——绝不整段 enriched 塞 user，1B 元话语根因）。 */
+  chatMemoryBlock?: string;
   // ---- 真实执行审批透传（全部可选） ----
   /** Session approval mode (default: readonly — safe floor). */
   approvalMode?: 'readonly' | 'default' | 'full';
@@ -117,6 +127,8 @@ export class PanshalachChaser {
     tierConfig?: TierConfig;
     error?: string;
     message?: string;
+    /** 本任务触发过溢出截断重试（RunResult 透传 → RunCommand 溢出证据行）。 */
+    contextOverflowCompacted?: boolean;
   }> {
     // 解析 tier（必须在任何客户端校验前完成，因为 dryRun/确认等返回需要 tierConfig）
     let effectiveTier: Tier;
@@ -258,9 +270,17 @@ export class PanshalachChaser {
       };
       // messages 通道形态：system 承载对话指令（不含用户输入），user 承载原文
       // （buildChatDirective 整段内嵌会让输入在 payload 里出现两次）。
+      // 0.8.2 chat 净化：user = "记忆块 + 用户原话"。宿主传 chatMemoryBlock 时
+      // issueDescription 已是原文（runAgentTask chat 分离传递）；记忆块拼在前，
+      // 与 system 的对话指令配对——不再整段 enriched 塞 user（1B 元话语根因）。
+      const chatUserContent = config.chatMemoryBlock
+        ? `${config.chatMemoryBlock}
+
+${issueDescription}`
+        : issueDescription;
       const chatMessages = [
         { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
-        { role: 'user' as const, content: issueDescription },
+        { role: 'user' as const, content: chatUserContent },
       ];
 
       // 直答失败的合成返回（R2 空回答 / R3 异常）——照用 syntheticFailureTrajectory
@@ -417,6 +437,7 @@ export class PanshalachChaser {
         estimatedUsedTokens: chatMeasured,
         usageRatio: chatMeasured > 0 ? Math.min(1, chatMeasured / budgetTokens) : 0,
         usageMeasured: chatMeasured > 0,
+        ...(chatMeasured > 0 && chatUsage.prompt > 0 ? { lastPromptTokens: chatUsage.prompt } : {}),
         triggeredSoftLimit: false,
         triggeredDegradation: false,
         rolloutsExecuted: 1,
@@ -442,12 +463,20 @@ export class PanshalachChaser {
 
     // M2-4：真实 usage 计量——loop 每次模型调用经 wrapper 传 onUsage 累加；
     // usage 缺失（网关无 usage 字段）时回落 len/4 估算（budgetReport 标注实测/估算）。
-    const usageAccum = { prompt: 0, completion: 0 };
+    // overflowCompacted：loop 触发过溢出截断重试（评测 A 档正源，经 RunResult
+    // 透传到 RunCommand 证据行——stdout 正则误判多，机器可读标记是权威）。
+    let overflowCompacted = false;
+    // lastPrompt：最近一次请求的实测 prompt_tokens——上下文占用的最佳锚点
+    // （累计值跨步重复计入历史，见 BudgetReport.lastPromptTokens 注释）。
+    const usageAccum = { prompt: 0, completion: 0, lastPrompt: 0 };
     let usageSamples = 0;
     let usageMeasured = false;
     const onUsage = (u: { prompt?: number; completion?: number }) => {
       if (!u || typeof u !== 'object') return;
-      if (typeof u.prompt === 'number' && u.prompt >= 0) usageAccum.prompt += u.prompt;
+      if (typeof u.prompt === 'number' && u.prompt >= 0) {
+        usageAccum.prompt += u.prompt;
+        usageAccum.lastPrompt = u.prompt;
+      }
       if (typeof u.completion === 'number' && u.completion >= 0) usageAccum.completion += u.completion;
       usageSamples++;
     };
@@ -461,8 +490,10 @@ export class PanshalachChaser {
       verifyFirstBias: tierConfig.verifyFirstBias,
       practicalMode: !isHighRigor || isSearchIntent,
       isStrongMode: isHighRigor && !isSearchIntent,
-      taskStyle: taskStyle ?? (intent === 'execution' ? 'execution' : undefined),
-      benchmarkType: taskStyle ?? (intent === 'execution' ? 'execution' : undefined),
+      taskStyle,
+      benchmarkType: taskStyle,
+      // 0.8.2：显式执行意图（task 意图才驱动防呆 nudge；chat 直答不进 loop、search 只读）
+      executionIntent: intent === 'execution',
       ironLawInjectionLevel: isSearchIntent ? 'none' : tierConfig.ironLawInjectionLevel,
       signal: config.signal,
       windowTokens: config.windowTokens,
@@ -661,7 +692,8 @@ export class PanshalachChaser {
         budgetNotes.push('usage 估算（网关未返回 usage 字段，按字符长度 /4 估算）');
       }
       if (loopResult.contextOverflowCompacted) {
-        budgetNotes.push('context_overflow 触发强制压缩并重试本步');
+        overflowCompacted = true;
+        budgetNotes.push('context_overflow 触发溢出截断并重试本步');
       }
       stepsExecuted = loopResult.steps.length;
 
@@ -726,6 +758,7 @@ export class PanshalachChaser {
       estimatedUsedTokens,
       usageRatio: Math.min(1, estimatedUsedTokens / budgetTokens),
       usageMeasured,
+      ...(usageMeasured && usageAccum.lastPrompt > 0 ? { lastPromptTokens: usageAccum.lastPrompt } : {}),
       triggeredSoftLimit,
       triggeredDegradation,
       rolloutsExecuted,
@@ -733,6 +766,6 @@ export class PanshalachChaser {
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, message: !success ? best.lastError : undefined };
+    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
   }
 }

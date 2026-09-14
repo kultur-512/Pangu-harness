@@ -148,9 +148,21 @@ describe('0.8.1 只读拒绝快速通道（ToolCallGuardrailController）', () =
     const d = g.beforeCall([c]);
     assert.equal(d.blocked, true, '连续 2 次 → 阻断');
     assert.match(d.reason ?? '', /GUARDRAIL_READONLY_DENIED/);
-    assert.match(d.reason ?? '', /请立即 end_turn 并向用户报告/);
+    assert.match(d.reason ?? '', /请立即 end_turn，并向用户说明/);
     assert.match(d.reason ?? '', /\/approvals default/, '强指引必须点名 /approvals default');
     assert.equal(d.halt, undefined, '阻断不是 halt 级（模型仍有 end_turn 报告机会）');
+  });
+
+  it('readonly 闸（0.8.2 跨工具计数）：write 1 次 + edit 1 次 = 不同工具也阻断（真机实录场景）', () => {
+    const g = new ToolCallGuardrailController();
+    const w = call('write_file', { file_path: 'notes.md', content: 'x' });
+    const e = call('edit_file', { file_path: 'notes.md', content: 'y' });
+    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('edit_file', RO_DENY);
+    // 跨工具总计数 2 → 即使第 3 次换成 edit_file 也阻断（旧分桶实现永不触发）
+    const d = g.beforeCall([e]);
+    assert.equal(d.blocked, true, '跨工具总数达阈值 → 阻断');
+    assert.match(d.reason ?? '', /与具体工具无关/);
   });
 
   it('readonly 闸：reason 非 DENIED_READONLY / 工具执行成功 → 计数归零', () => {
