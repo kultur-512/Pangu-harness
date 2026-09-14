@@ -58,5 +58,7 @@ node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repair
 3. **混合检索**：embed.ts 4096 维 n-gram 语义接入 loadFiltered（两步归一防量纲压制；keywords<2 / 异常自动回纯词面；投影 key 含查询防串槽）。
 4. **窗口感知注入**：固定卡数帽改窗口比例预算（8K≈10%、大窗 15%、1600 token 帽）+ 渲染后实测 token 贪心门（对卡实际 122-470 token/张，纯张数帽超发 3-11 倍——review FAIL 实测后返工）；PANSHA_MEMORY_LIMIT 显式时行为不变。
 
+**终验（2026-09-14，a99ab77 文档提交后代码复跑）**：strict **16/90** · lenient **22/90** · 0 超时 · 平均 3.1s/题——与 optimized2 双样本一致（16/90 稳定复现），lenient 新高；temporal 2/15、preference 1/15 连续两轮保持非零。分题型 strict：knowledge-update 5 · multi-session 2 · assistant 3 · preference 1 · user 3 · temporal 2。完整轨迹：baseline 9 → repaired 13 → optimized 15 → optimized2 16 → **final 16**（lenient 16→18→18→20→22）。
+
 诚实备注：+2 strict 中 temporal/assistant/knowledge-update 的增益方向与机制证据一致，single-session-user 的 -2 属方差级波动；对卡写入使 A 侧保留了 smartSlice 数字句优先的 400 字符（渲染同源 400，review 返工对齐），注入 token 成本上升由预算门兜底。
 
