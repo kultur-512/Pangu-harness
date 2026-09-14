@@ -13,7 +13,7 @@ import { resolveToday } from '../../memory/timeAnchor.js';
 // "写 800/渲 400"或"写 240/渲 120"的失配（上一轮 review 揪过的复发现象）。
 // C2（2026-09-14）：对卡 A 行渲染用 smartSlice + PAIR_A_RENDER_CHARS(400) 做数字句
 // 优先二次裁剪（写侧 PAIR_A_CHARS=800 不动——盘上数据不丢，渲染时才裁）。
-import { SENTENCE_HARD_CUT_CHARS, PAIR_Q_CHARS, PAIR_A_RENDER_CHARS, smartSlice } from '../../memory/chatFactMemory.js';
+import { SENTENCE_HARD_CUT_CHARS, PAIR_Q_CHARS, PAIR_A_CHARS, PAIR_A_RENDER_CHARS, smartSlice } from '../../memory/chatFactMemory.js';
 
 // estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
 // 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
@@ -55,7 +55,10 @@ function renderMemoryCardLines(
     const s = String(card.summary ?? '');
     const nl = s.indexOf('\n');
     const q = (nl >= 0 ? s.slice(0, nl) : s).replace(/^Q:\s*/i, '').slice(0, PAIR_Q_CHARS);
-    const a = smartSlice((nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, ''), PAIR_A_RENDER_CHARS);
+    // C2 迭代回退（it2-1b 实证 assistant 8→5/user 7→5 回退）：400 裁剪对 gold
+    // 位于长答复中后段的题型是净损失——渲染与写侧 PAIR_A_CHARS(800) 同源不裁
+    const a = smartSlice((nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, ''), PAIR_A_CHARS);
+    void PAIR_A_RENDER_CHARS;
     return a ? [`${head}Q: ${q}`, `    A: ${a}`] : [`${head}Q: ${q}`];
   }
   return [`${head}${truncateAtSentence(card?.summary, SENTENCE_HARD_CUT_CHARS)}`];

@@ -669,7 +669,8 @@ describe('#3 对卡 A 行渲染 400（C2：smartSlice 数字句优先；写侧 P
       const aLine = lines.find((l) => l.startsWith('    A: '));
       assert.ok(aLine, '对卡渲染 A 行');
       assert.ok(aLine!.includes('AMARK800') && aLine!.includes('10 hours'), '600 字符处的数字句渲染后存活（数字句优先）');
-      assert.ok(aLine!.length <= '    A: '.length + 400, `渲染 A 行 ≤400 字符，got ${aLine!.length - '    A: '.length}`);
+      // it2 迭代回退（assistant 8→5/user 7→5 实证 400 裁剪净损失）：渲染与写侧同源 800
+      assert.ok(aLine!.length <= '    A: '.length + 800, `渲染 A 行 ≤800 字符，got ${aLine!.length - '    A: '.length}`);
       // 盘上数据不丢：写侧 800 原文仍在
       const onDisk = JSON.parse(fs.readFileSync(path.join(wsRoot, 'mem.json'), 'utf8'));
       const diskA = String(onDisk.cards[0].summary).split('\n')[1].replace(/^A:\s*/i, '');
