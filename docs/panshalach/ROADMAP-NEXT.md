@@ -12,6 +12,8 @@
 
 - **0.8.3 对抗性审查修缮（2026-09-13，zhaiyuanhao1）**：四路子系统深审（记忆/循环压缩/工具安全/适配器模型层）确认 3 P0 + 12 P1 + 全部 P2 并全量修复——审批工具别名绕过（readonly/plan 档 `write`/`edit` 直写）、readonly bash 白名单换行/命令替换逃逸、messages 二级收缩纯中文巨结果死循环（默认路径 P0）、记忆 OTHER 桶 10 张挤爆（80/200 声明不可达）与原子写/quarantine/审计账本、适配器容错砍尾、模型层 body 超时/Retry-After/流式 name 幂等。新增对抗性回归测试 118 例（旧代码验红）+ CI test 门（ci.yml）+ 90 题 LME 基建与修复前基线（strict 9/90）。测试 **1162 例绿**（concurrency=4）。B2 记忆审计清单中：注入审计视图（/memory stats）、classic recordChatFact 接线、容量治理、chat-fact 去重本轮已完成；messages 分段补 Repl/Simulate、2-gram 相关性、prevEnvSnapshot 仍遗留。
 
+- **0.8.4/0.8.5 记忆架构优化与全适用性迭代（2026-09-14，zhaiyuanhao1）**：三路探查（写路径 84.5% 丢弃率实证 / 检索召回实验 / 时间性失败归因）→ 实现 → 子代理 review 全处置。0.8.4：时间锚定（sessionDate 贯通 + 卡带 factDateText + "今天是 X"注入，根除评测回放假日期污染）、宽进严排（对卡为主单元 + confidence 分类器 + 80 帽硬拒绝删除 + 配对牵连修复）、混合检索（embed 语义接入 loadFiltered，降级完备）、窗口感知注入（比例预算 + 实测 token 门）。0.8.5：中文检索双通道打通（CJK 关键词 2-gram 词粒度 + 语义闸 CJK 放宽 + 查询稀释修复——中文场景此前排序退化纯新近度）、chat 最近对话原文贯通、load() 跨实例静默抹卡防御、auto-pull 意图门禁、遗留核销 6 项。90 题轨迹 strict 9→13→15→16（英文回归守护无回退），六格交叉对比见 [COMPARE-90](../../scripts/eval/longmemeval-90/COMPARE-90.md)。测试 **1253 例绿**。
+
 ## 未完成项
 
 ### A. 9/24 交付关键路径（有截止时间，按序）

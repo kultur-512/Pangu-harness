@@ -1,7 +1,42 @@
 # Changelog
 
-> **当前状态（2026-09-12）**：v0.8.0-rc · 四分支已合入 develop（`5105ebf`）· tsc 干净 + `npm test` **1008 例全绿** + 双契约 PASS + eval 冒烟 A/B/C/C4 全过 · 评测管线就绪待真机端点 · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-14）**：v0.8.5 · tsc 干净 + `npm test` **1253 例全绿**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交叉对比已出成绩**（六格矩阵 + 修复轨迹 strict 9→13→15→16，见 `scripts/eval/longmemeval-90/COMPARE-90.md`）· 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
+
+## 0.8.5 全适用性迭代（2026-09-14 · zhaiyuanhao1）
+
+三路探查（中文适用性 / 非评测场景 / 遗留核销）→ 两包串行实现 → 子代理 review（16 项：1 必须返工 + 7 建议，全部处置）→ 全量 1253 例绿 → 英文回归守护轮 strict 16/90 无回退（`55526d7`）。
+
+- **中文检索双通道打通**（探查实证：中文无空格 → 关键词恒整句 → 词面永不命中 + 语义闸 `kws≥2` 恒闭 → 排序退化纯新近度，而 embed 底座中文区分度实测优秀）：关键词抽取 CJK 分支（标点切短句 + 2-gram 词粒度 + 单位词白名单 + ASCII 段保留）· 语义闸对含 CJK 查询放宽 · `MAX_PHRASE_CHARS` 20→8（干扰卡用例实证：粒度不足时双方 rel=0，新近度顶掉 gold）· 查询稀释修复（issue 双拼主导 + 最近 2 轮各截 60 字——77 字无关前缀曾把 gold cos 0.119 砸到 0.030）
+- **chat 最近对话原文**：`【最近对话】`段（≤600 字符）贯通 chaser chat user——修多轮指代（"那第二个呢"）零上下文硬答；`RECENT_TURN_WINDOW` 常量与查询构造同源
+- **数据防御**：`load()` statSync size+mtime 基线（跨实例静默抹卡洞，CrossInstanceCache 5 例锁定）；cardVectorCache FIFO 帽 1024
+- **出口一致性**：auto-pull 按意图门禁（chat 不再白耗嵌入计算并虚报注入账本——实测 ids 17 vs 可见 12）；L1 ghost 去 `
+` 使 chat 块含"另有 N 张"提示（L2 有意保留并注释防误统一）
+- **遗留核销**：对卡 confidence 0.7A+0.3Q 加权（双侧 max 使软惩罚几乎永不生效）；老格式互去重 / B2 判别力测试补强；旧评测 harness 冻结弃用注释（假日期污染在旧脚本存活，已声明仅用于复现历史成绩）
+- 排序公平性修正申报（review 纠正算式）：对卡 effBase 出局门修复的真实载体是 dialogue-pair 基线 0.85（`decayWeight ?? weight` 优先级证伪 weight 路径，三处注释已按正确算式重写）
+- 新测试：ChineseRetrieval 25 + ChatUserAssembly 9 + CrossInstanceCache 5 + LegacyFormatDedup 4 + ChatFactPairConfidence 3 等
+
+## 0.8.4 记忆架构优化（2026-09-14 · zhaiyuanhao1）
+
+三路架构探索（写路径实证 84.5% 句子丢弃率 / 检索召回实验 / 时间性失败归因 9/15 假日期污染）→ 两包实现 → 子代理 review（16 项：1 必须返工 + 4 建议，全部处置，含一处实现注释算式纠正与一处自引入回归回退）→ 全量 1162 例绿 → 90 题度量 strict 13→15（`7e1acd7`）。
+
+- **时间锚定**：sessionDate 参数贯通播种链（评测回放不再把记录时间冒充事实时间）；卡带 `factDate/factDateText`；stable 段与 chat directive 注入"今天是 X"；悬空 `[S日期]` 规则替换为事实时间差值规则——temporal-reasoning 产品管线首次得分（0→1）
+- **宽进严排**：对卡（Q/A 对）为主落卡单元无条件落卡；`isFactSentence` 从硬门改 confidence 分类器（句级补充卡 ≥0.7 才发）；80 帽硬拒绝删除（新进旧出交存储层 kind 分桶淘汰）；配对牵连修复（user 噪音不再连坐 assistant）；分句器缩写保护（Dr./e.g. 不再切碎）
+- **混合检索**：embed.ts 4096 维 n-gram 语义接入 loadFiltered（两步归一防量纲压制；keywords<2/异常自动回纯词面；投影 key 含查询防串槽；进程级向量缓存）——`PANSHA_SEMANTIC_SEARCH=0` 显式关闭
+- **窗口感知注入**：固定卡数帽改窗口比例预算（8K≈10% / 大窗 15%、1600 token 帽）+ 渲染后实测 token 贪心门（对卡实际 122-470 token/张，纯张数帽超发 3-11 倍——review FAIL 实测后返工）；A 行渲染与写侧 smartSlice(400) 同源；`PANSHA_MEMORY_LIMIT` 显式时行为不变
+
+## 90 题 LongMemEval 交叉对比（2026-09-13/14 · zhaiyuanhao1）
+
+题集 = oracle 500 题确定性抽样 15/型×6（48 题集超集）；同 runner 同播种归因纪律；判分 strict（主口径：多候选拆分+复述豁免+词边界）/lenient（数字回退）双口径；六格 harness 矩阵（CC×M3 / Pi×1B / 烛龙 product·direct·pipeline·compact）+ 修复 A/B 轨迹（`3b61ea3`、`c16a2dd`、`55526d7`）：
+
+| 轮 | strict | 说明 |
+|---|---|---|
+| baseline | 9/90 | 修复前代码 |
+| repaired | 13/90 | 0.8.3 修缮批次 |
+| optimized | 15/90 | 0.8.4 记忆架构优化 |
+| **optimized2** | **16/90** | 0.8.5 全适用性迭代（回归守护轮） |
+
+六格同题对比：CC×M3 31/90 · ZL-compact（1B，无门控播种+检索）26/90 · ZL-direct = Pi（1B）20/90 · ZL-pipeline 14/90。关键发现：烛龙系 1B 最强配置是"宽进播种+检索注入"；preference 题型全格 ≤1 属判分盲区（自由文本偏好 vs 子串匹配）；M3 与 1B 绝对分不可直接归因 harness。全量报告见 `scripts/eval/longmemeval-90/COMPARE-90.md`。
 
 ## 修缮批次（2026-09-13 · 对抗性审查修复 zhaiyuanhao1）
 

@@ -25,7 +25,8 @@
 ## 3. 数据模型
 
 ### 3.1 RefinedMemoryCard（src/memory/RefinedMemoryCard.ts）
-见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(档位可见性+分类半衰期) / summary(建设性一句话) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers / referencedFiles / pinned / status·mergedFrom。容量按 kind（failure 40·类内每 category 10 / success 10 / preference 80——chat-fact 同桶；pinned 免淘汰）·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
+见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(档位可见性+分类半衰期) / summary(建设性一句话；对话对卡为 'Q: …
+A: …' 双行) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers / referencedFiles / pinned / status·mergedFrom / source（0.8.4：'dialogue-pair'=对话对卡） / confidence（0.8.4：写侧分类器定价，软惩罚只进排序） / factDate·factDateText（0.8.4 时间锚定：事实发生时间，区别于记录时间 lastSeen）。容量按 kind（failure 40·类内每 category 10 / success 10 / preference 80——chat-fact 同桶；pinned 免淘汰）·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
 
 ### 3.2 事件记忆（已落地 · R4，`memory/events.ts`；下为立项时规划 schema）
 ```ts
@@ -73,23 +74,49 @@ interface TaskState {
 ## 5. 读取与注入（loadFiltered 全链）
 
 ```
-用户任务文本
+用户任务文本 + 最近2轮(各60字)                                [0.8.5 查询构造：issue 双拼主导防稀释]
   → collectCurrentWorkspaceFiles(@path + 路径-like + 最近2轮)  [PromptBuilder]
-  → 关键词提取(过滤 /@# 前缀, ≥2字符)
+  → 关键词提取(extractKeywordsFromIssue：ASCII 词走停用词表；CJK 标点切短句
+    + 2-gram 词粒度 + 单位词白名单 + ASCII 段保留——中文无空格，整句作关键词
+    曾致词面/语义双通道失效)                                    [0.8.5]
   → loadFiltered({
-       tier, currentWorkspaceFiles?, keywords?,
-       (Chaser 路径再加 maxCards + reservePreferenceSeat)
+       tier, currentWorkspaceFiles?, keywords?, queryText?, semantic?   [0.8.4 混合检索]
      })
      ├─ 归一化旧卡(kind/memoryCategory/refs 默认补齐)
      ├─ taskStyle + tier 可见性(architecture 恒可见)
      ├─ P2-D 参照文件交集: referencedFiles ∩ currentFiles ≠ ∅ → 只留交集；空 → 回退
-     ├─ 有效权重: pin=1 │ preference基0.6 │ 半衰期(按类×count) │ 4段(1/.7/.4/.1) │ <0.3 丢弃
-     ├─ 关键词相关性 +1/命中(cap3)
-     ├─ 排序 0.7·w + 0.3·rel（再按 count）
-     └─ top-N(档位 3/6/8/10) · preference 保 1 席
-  → 【相关记忆】注入(截120/来源标签/ghost余量提示)          [L1]
-  → (standard/high) 探索期 auto-pull ≤5 张、预算≤700token  [M3.2 overflow]
+     ├─ 有效权重: pin=1 │ preference基0.6(对话对卡0.85) │ 半衰期(按类×count)
+     │            │ 4段(1/.7/.4/.1) │ ×confidence 软惩罚(0.5+0.5×c，只进排序)
+     │            → 出局门 0.3 用未惩罚基线(_effectiveBase)               [0.8.4]
+     ├─ 关键词相关性 +1/命中(cap3；对卡 Q 侧命中 ×2)
+     ├─ 混合排序: semantic 激活时 effN/relN 归一后与 cosine 融合
+     │            (α=0.5，PANSHA_SEMANTIC_SEARCH=0 可关；keywords<2 且
+     │             查询无 CJK / embed 异常 → 回纯词面 0.7·w+0.3·rel)      [0.8.4]
+     └─ 窗口感知预算: min(窗口×10%(≤8K)/15%, 1600token) 内按渲染后实测
+        token 贪心装入，张数上限 clamp[6,40]；PANSHA_MEMORY_LIMIT 显式时不变  [0.8.4]
+  → 【相关记忆】注入(对卡双行渲染 Q≤160/A≤400；普通卡截120；[事实时间:…]
+    标注；ghost余量提示)                                        [L1]
+  → (standard/high 且非 chat) 探索期 auto-pull ≤5 张            [M3.2 overflow]
 ```
+
+**Cached 变体** `loadFilteredCached`：filter 归一（0.8.5 起含 queryText 与 α）+ 30d decayStep 作 key，8 槽 LRU 投影缓存；任务内快照冻结、写入 invalidate 重建。
+
+**注入形态（最终 prompt 片段）**：
+```
+【相关记忆】
+（规则：记忆卡【】内的日期与[事实时间:...]标注的是事实发生时间；计算"多久之前/
+  多少周"时用它与今天的差值，不要用其他时间戳。）
+  - [失败教训] 重要教训：写入前应先完整读取目标文件…
+  - [成功经验] 已验证可行的做法：修复 alpha 模块登录 bug …
+  - [用户偏好] [事实时间:2023-11-01] 项目优先用 pnpm
+  - [对话记忆] [事实时间:2023-05-21] Q: 我3月开始学法语，每周上两次课
+    A: 已记录：你3月开始学法语，每周两次课…
+（另有 3 张相关记忆未注入，/memory 查看）
+```
+
+> **时间锚定（0.8.4）**：显式区分三个时间——`factDate/factDateText`（记的是何时的事，写侧 sessionDate 透传，产品实时路径=当天）、`lastSeen/firstSeen`（何时记的，衰减语义不动）、`now`（消费者 prompt 注入"今天是 X"，`resolveToday()` 支持 `PANSHA_TODAY` 锚定）。stable 段与 chat directive 均注入今天行。
+
+> **chat 直答出口（0.8.2 起）**：user = `getChatMemoryBlock()` + `【最近对话】`（最近 2 轮原文 ≤600 字符，0.8.5）+ 用户原话；auto-pull 溢出卡不进 chat 块（按意图门禁），注入账本只记实际可见卡。
 
 **Cached 变体** `loadFilteredCached`：filter 归一 + 30d decayStep 作 key，8 槽 LRU 投影缓存；任务内快照冻结、写入 invalidate 重建。
 
@@ -104,7 +131,7 @@ interface TaskState {
 
 ## 6. 维护策略（确定性）
 
-- **衰减**：加载时算 effective，不写回（读不刷新鲜）。age 锚 = **max(lastSeen, lastUsedAt)**（接口契约 v3，2026-09-04 修复 `??` 短路——复发卡的 lastSeen 刷新此前对衰减不可见）。四段：age<half/2 → 1.0；<half → .7；<2half → .4；else .1；且 <0.3 丢弃。分类半衰期：failure/general 90d、implementation/insight 180d、architecture 365d；count≥2 半衰期×count；preference 基 0.6（默认低于事实卡）；pin 冻结。
+- **衰减**：加载时算 effective，不写回（读不刷新鲜）。age 锚 = **max(lastSeen, lastUsedAt)**（接口契约 v3，2026-09-04 修复 `??` 短路——复发卡的 lastSeen 刷新此前对衰减不可见）。四段：age<half/2 → 1.0；<half → .7；<2half → .4；else .1。分类半衰期：failure/general 90d、implementation/insight 180d、architecture 365d；count≥2 半衰期×count（封顶 ×3）；基线：preference 0.6（对话对卡 0.85，0.8.4——修复对卡 effBase 踩 0.3 出局门被工程卡全面压制）；pin 冻结。**confidence 软惩罚**（0.8.4）：带 confidence 字段 ×(0.5+0.5×c)，**只进排序不进淘汰判定**——出局门 0.3 用未惩罚基线 `_effectiveBase`（惩罚进淘汰会把 0.4 置信卡在第一个衰减段就硬出局，'排序下沉'变'提前出局'）。
 - **合并（M3.3a）**：active 且 effective≥0.5 的候选，2-gram 公共词元≥2 归组（组≤6）；合并 summary≤800、count=Σ、decayWeight 从 now 起算（防 Σcount 霸榜）；原卡 `status=archived` 软删（可回滚）。
 - **容量**：按 kind 分桶——failure 40（类内每 category ≤10）/ success 10 / preference 80（chat-fact 卡 kind='preference' 同桶承载；pinned 卡免淘汰，非 pinned 竞争剩余名额）→ 总≤200（按 weight×count 淘汰）。2026-09-13 修缮：旧『按 category 每类≤10』使 success/preference/chat-fact（全部 category='OTHER'）互挤一个 10 张桶，80/200 声明不可达。
 - **投影缓存**：多槽 LRU(≤8)，写操作 invalidate，跨衰减阶梯自动重建。
