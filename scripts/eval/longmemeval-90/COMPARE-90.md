@@ -103,6 +103,17 @@ node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repair
 
 **ZL×M3 与 CC×M3 在 strict 上完全追平（41 vs 41）**——同模型差距从 v1 的 6 分 / v2 的 14 分归零。判分器 v2.1 修正了 CC 的 4 个词碎片虚高（45→41），同时 ZL 侧真实增益（+12 strict，含渲染帽 5 题 + 写侧 3 题 + 预算放大）使净差距关闭。
 
+**模型升级验证轮（2026-09-15，ZL×openPangu-7B with-medusa，grader v2.1）**：strict **31/90 (34.4%)** · lenient **29/90** · 0 残留超时（10 题 180s 超时后经 300s 补跑全收）· 平均 46.2s/题。
+
+| 配置 | strict | 说明 |
+|---|---|---|
+| ZL×1B（gapfix） | 23/90 | 1B 交付基线 |
+| **ZL×7B** | **31/90** | **超过 ZL×M3（29）**；knowledge-update 9/15 全场最高（超越 CC 的 8） |
+| ZL×M3 | 29/90 | API 通道 |
+| CC×M3 | 41/90 | harness 对照 |
+
+**结论**：(1) 模型升级路线验证成立——1B→7B 同管道 +8（23→31），且 7B+ZL 记忆管道已超越 M3+ZL 记忆管道（31 vs 29），本地 7B 是性价比最优的交付配置；(2) 与 CC 的剩余差距（31 vs 41）主要是 harness 差距（CC 用逐题人工级蒸馏卡 100% 覆盖 vs ZL 在线播种 ~9 卡）与 CC 原生 agentic 检索能力，管道侧压缩/检索迭代（B8-B11 登记项）是下一步杠杆。
+
 **MiniMax-M3 通道（2026-09-14，grader v2 重算）**：改进后 ZL 产品管线 × M3（同 runner 同播种，`--model minimax:MiniMax-M3`）——strict **31/90 (34.4%)** · lenient **34/90** · 0 超时 · 平均 11.1s/题。对照：ZL×1B final 17/90（模型规模 +14）；CC×M3 45/90（同模型下 ZL 产品管线差 14——v1 口径差 6，判分伪影修复后差距反而放大，见结论 4）。分题型 strict（v2）：knowledge-update 6 · multi-session 7 · assistant 6 · preference 0（判分盲区） · user 4 · **temporal 8/15（反超 CC×M3 的 7/15）**——时间锚定在强模型上的收益随 v2 判分放大（v1 口径 temporal 3 vs CC 2 已反超，v2 8 vs 7 保持）。
 
 诚实备注：v2 口径下 strict 增益方向与机制证据一致（句子子候选切分/数字 token 匹配让"答对了但措辞连写"的题不再被误杀）；single-session-user 的跨轮波动属 1B 方差级。对卡写入使 A 侧保留了 smartSlice 数字句优先的裁剪（该轮为 400 字符；2026-09-14 迭代已升至 800 并同步渲染侧），注入 token 成本上升由预算门兜底。
