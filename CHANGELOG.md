@@ -1,6 +1,6 @@
 # Changelog
 
-> **当前状态（2026-09-14）**：v0.8.5 · tsc 干净 + `npm test` **1253 例全绿**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交叉对比已出成绩**（六格矩阵 + 修复轨迹 strict 9→13→15→16，见 `scripts/eval/longmemeval-90/COMPARE-90.md`）· 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-15）**：v0.8.6 · tsc 干净 + `npm test` **1349 例全绿**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 41/90（已追平 CC×M3）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
 ## 0.8.5 全适用性迭代（2026-09-14 · zhaiyuanhao1）
@@ -37,6 +37,12 @@
 | **optimized2** | **16/90** | 0.8.5 全适用性迭代（回归守护轮） |
 
 六格同题对比：CC×M3 31/90 · ZL-compact（1B，无门控播种+检索）26/90 · ZL-direct = Pi（1B）20/90 · ZL-pipeline 14/90。关键发现：烛龙系 1B 最强配置是"宽进播种+检索注入"；preference 题型全格 ≤1 属判分盲区（自由文本偏好 vs 子串匹配）；M3 与 1B 绝对分不可直接归因 harness。全量报告见 `scripts/eval/longmemeval-90/COMPARE-90.md`。
+
+## 0.8.6 工具调用配合度 + 压缩检索迭代（2026-09-14/15 · zhaiyuanhao1）
+
+**工具调用配合度**（三路探查实证：模型=示例复制器，schema 措辞/工具数量零效应，few-shot 示例工具族唯一杠杆；文本协议下参数名不可见→参数幻觉 100%）：格式教学重构（read_file 示例恒有+按意图追加+参数名从 schema 取+中性占位+V1 实证措辞+每工具速览行）· 参数名别名归一（executor 中心化+engineAdapter gate 前应用，堵敏感写检查旁路）· 解析器四修补（全角归一/属性式参数/首标签错配救援限闭合后兄弟块/双调用拆分）+ rootless 兜底（已知工具标签开头丢壳三重门控救回）· 失败恢复三级阶梯（教学全文→具体实例短命令→终局）+ INVALID_PARAMS 回灌正确参数名 + guardrails 停滞闸按归一名计数 · 意图门补检索/枚举动词（英文  词边界）+ execution 零工具 answered 不计 success + 假验证收紧。**1B 实测：首步出块+正确工具 5/5（修复前 3/5 且 edit 参数幻觉 100%）、零 UNKNOWN_TOOL；解析/执行口径调用成功率 100%**（20 畸形形态全接住）。
+
+**压缩与检索迭代**（67 失败题四类归因驱动）：R1 打包 break→continue · C1a 注入块 factDate 升序重排 + C1b 规则行补冲突事实取最新（修 KU 新旧值反向误导，KU 3→6）· L1 规则行答案语言镜像 · R2 8K 档预算 10%→15%（819→1229；归因实证 819 只装 3.8 张对卡）· C2 对卡 A 行渲染 smartSlice（it2 实证 400 裁剪对 assistant/user 题型净损失，迭代回退至与写侧同源 800）· C4 smartSlice 数字句前置 + gold 丢失边界回退。90 题三轮严格对照 23→22→20（方差 ±3）：**管道优化进入 1B 方差噪声区的诚实记录**，temporal 0→2→3→4 单调上升为真实管道增益；模型升级验证轮 ZL×7B 31/90 超越 ZL×M3 29/90（本地 7B 为性价比最优交付配置）。
 
 ## 修缮批次（2026-09-13 · 对抗性审查修复 zhaiyuanhao1）
 
