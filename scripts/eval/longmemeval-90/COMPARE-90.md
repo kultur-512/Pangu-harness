@@ -84,6 +84,17 @@ node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repair
 
 **终验（2026-09-14，a99ab77 文档提交后代码复跑，grader v2 重算）**：strict **17/90** · lenient **22/90** · 0 超时 · 平均 3.1s/题。分题型 strict（v2）：knowledge-update 5 · multi-session 2 · assistant 3 · preference 1 · user 4 · temporal 2。完整轨迹（v1 → v2）：baseline 9→11 · repaired 13→15 · optimized 15→17 · optimized2 16→20 · **final 16→17**（lenient 16→18→18→20→22，v1/v2 相同）。注意：optimized2 与 final 是同代码双样本，v1 口径同为 16，v2 口径 20 vs 17——v2 判分每题 0/1 翻转、对单轮数字措辞波动更敏感，1B 单轮方差被放大，双样本解读需谨慎。
 
+**ZL vs CC 差距修复轮（2026-09-14，grader v2.1 口径，9acf202）**：逐题尸检（差距集 15 题四类归因：渲染/检索 40% + 判分伪影 33% + 写入覆盖 27%，模型推理 0）→ #1 句卡渲染帽 120→240（与写侧共享常量）· #2 注入预算随窗口放大（上限 max(1600, w/64)、张数帽 200，小窗不变）· #3 写侧扩容（补充帽 4、A 侧 800、列表项豁免、文件帽 512KiB）· #4 grader v2.1（句子子候选切分 + 短数字 token 相等 + 词界 or 拆分 + 列表编号排除）· #5 回答语言跟随提问。复验（同 runner 同播种，新代码）：
+
+| 配置 | strict | lenient | 说明 |
+|---|---|---|---|
+| ZL×M3（0.8.5 前） | 29/90 | 34 | v2.1 口径 |
+| **ZL×M3（差距修复后）** | **41/90** | **40** | 分题型 knowledge-update 6→9 · user 4→9 · assistant 7→9 · multi-session 4→7 · temporal 7（与 CC 持平） |
+| ZL×1B（差距修复后） | 23/90 | 24 | 较前轮 17 提升（渲染帽/写侧扩容对小模型同样生效） |
+| CC×M3 | 41/90 | 38 | v2.1 口径（v2 的 45 含 4 个词碎片误判，返工后回落） |
+
+**ZL×M3 与 CC×M3 在 strict 上完全追平（41 vs 41）**——同模型差距从 v1 的 6 分 / v2 的 14 分归零。判分器 v2.1 修正了 CC 的 4 个词碎片虚高（45→41），同时 ZL 侧真实增益（+12 strict，含渲染帽 5 题 + 写侧 3 题 + 预算放大）使净差距关闭。
+
 **MiniMax-M3 通道（2026-09-14，grader v2 重算）**：改进后 ZL 产品管线 × M3（同 runner 同播种，`--model minimax:MiniMax-M3`）——strict **31/90 (34.4%)** · lenient **34/90** · 0 超时 · 平均 11.1s/题。对照：ZL×1B final 17/90（模型规模 +14）；CC×M3 45/90（同模型下 ZL 产品管线差 14——v1 口径差 6，判分伪影修复后差距反而放大，见结论 4）。分题型 strict（v2）：knowledge-update 6 · multi-session 7 · assistant 6 · preference 0（判分盲区） · user 4 · **temporal 8/15（反超 CC×M3 的 7/15）**——时间锚定在强模型上的收益随 v2 判分放大（v1 口径 temporal 3 vs CC 2 已反超，v2 8 vs 7 保持）。
 
 诚实备注：v2 口径下 strict 增益方向与机制证据一致（句子子候选切分/数字 token 匹配让"答对了但措辞连写"的题不再被误杀）；single-session-user 的跨轮波动属 1B 方差级。对卡写入使 A 侧保留了 smartSlice 数字句优先的裁剪（该轮为 400 字符；2026-09-14 迭代已升至 800 并同步渲染侧），注入 token 成本上升由预算门兜底。
