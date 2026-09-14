@@ -24,7 +24,8 @@ import { spawn } from 'node:child_process';
 const ROOT = resolve(process.cwd());
 const DIR = join(ROOT, 'scripts', 'eval', 'longmemeval-90');
 const WS_ROOT = join(DIR, 'ws');
-const TIMEOUT_MS = 180_000;
+// 7B 级模型单题延迟高（100-180s），env 可放大超时线（断点续跑跳过已完成题）
+const TIMEOUT_MS = Number(process.env.PANSHA_LME_TIMEOUT_MS) || 180_000;
 const MAX_FACTS = 80;
 
 function parseArgs() {
