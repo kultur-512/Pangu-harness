@@ -48,6 +48,8 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 ```
 
 **模型选择优先级**（0.6.5 modelSeed 播种）：
+**记忆链 env（0.8.4/0.8.5）**：`PANSHA_SEMANTIC_SEARCH`（`0`=关闭语义混合检索，默认开；异常自动降级纯词面）· `PANSHA_MEMORY_LIMIT`（显式注入卡数帽，未设时按窗口比例预算自适应）· `PANSHA_TODAY`（锚定"今天"，仅评测/测试用；非法值自动回退真实当天）· `PANSHA_CHAT_MEMORY=0`（关闭对话事实沉淀）。
+
 1. `PANSHA_MODEL` env（永远优先）；
 2. 配置文件 `model` 字段（0.6.5 起兜底播种生效——此前该字段从未被读取，不带 env 必报"未配置可用的模型客户端"）；
 3. REPL 内 `/model` 显式切换。
@@ -69,7 +71,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 | `full` | 全部放行（写不确认） |
 
 - one-shot/headless：`--approval <readonly|default|full>` 或 `PANSHA_APPROVAL` env（0.6.5 前锁死 readonly，写文件必然被拒）。**0.7.3 起审批语义在全部入口真实生效**——one-shot / classic / simulate 向执行引擎透传 `approvalMode`、会话放行清单与审批桥（此前 flag 只改会话字段、引擎收不到）。
-- REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。审批提示选 **`a`（本会话总是允许）**时，决策同时持久化到项目配置 `.panshalach.json` 的 `approvalAllowlist`（0.7.3 起）——下次会话启动自动并入放行清单，不再重复确认（best-effort，写失败不影响审批流）。
+- REPL 内：`/approvals <mode>` 随时切换；`max/ex/pangu` 档位任务开始前另有确认面板。审批提示选 **`a`（总是允许）**：对 `write_file`/`edit_file` 决策持久化到项目配置 `.panshalach.json` 的 `approvalAllowlist`（0.7.3 起）——下次会话启动自动并入放行清单；对 **`bash` 仅本会话内放行且不落盘**（2026-09-13 修缮：防一次 'a' 等于任意命令跨会话永久免审），且危险命令（rm -rf / git push -f 等）即便在放行清单内仍会再次弹卡确认。
 
 ## 5. 交互手感（0.8 · Claude Code 级）
 
@@ -143,6 +145,7 @@ panshalach --approval full run "…"  # one-shot/headless 指定审批档位（�
 /memory forget <id>                                 删除卡
 /memory merge                                       同主题自动合并（原卡归档）
 /memory search <词>                                 关键词检索
+/memory stats                                       注入审计视图（按 kind 卡数 + 注入账本 + 最近注入事件）
 /memory export [file] / import <file> [--merge false]   导出/导入
 ```
 记忆卡存于 `<workspace>/.panshalach-memory.json`（内部名），自动加入 `.gitignore`。

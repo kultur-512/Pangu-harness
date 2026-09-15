@@ -15,7 +15,7 @@
 
 import type { ToolCall } from '../types/toolCall.js';
 import type { TierConfig } from '../tiers/TierConfig.js';
-import { createToolExecutor, normalizeToolName, type ToolExecutor } from './executor.js';
+import { createToolExecutor, normalizeToolName, normalizeToolParams, type ToolExecutor } from './executor.js';
 import { createBashTool, bashTimeoutForTier } from './bash.js';
 import { isReadonlyAllowed, READONLY_DENY_MESSAGE } from './readonlyAllowlist.js';
 import { readFile } from './readFile.js';
@@ -205,7 +205,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
   // MCP 工具 — 命名空间 mcp_<server>_<tool>，按 bash 同等门禁。
   // readonly → denied; default → confirm (via the same bridge); full → pass;
   // plan mode → denied. Danger heuristic: write-ish tool names flagged.
-  let decisionTimerLocal: NodeJS.Timeout | undefined;
+  // (P2: 审批超时句柄收进每次 call 的局部闭包 — 见下方 race 注释)
   const mcpTools = (opts.mcpTools ?? []).map((mt) => ({
     ...mt,
     call: async (args: Record<string, unknown>) => {
@@ -235,19 +235,21 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         const description = `MCP 工具 ${mt.name}（${mt.description || ''}）`;
         emitEvent?.({ version: 2, type: 'approval.request', requestId: `mcp_${Date.now()}_${++approvalSeq}`, tool: mt.name, description, danger });
         let decision = 'n';
+        // timer 收进本次审批的局部闭包（并发 MCP 审批互不覆盖/漏清）
+        let decisionTimer: NodeJS.Timeout | undefined;
         try {
-          // timer 限定在 race 局部（adapter 级共享变量会被并发 MCP 审批互相覆盖/漏清）
           decision = await Promise.race([
             approvalBridge({ tool: mt.name, description, danger }),
             new Promise<string>((resolve) => {
               const t = setTimeout(() => resolve('n'), approvalTimeoutMs);
               t.unref();
-              decisionTimerLocal = t;
+              decisionTimer = t;
             }),
           ]);
-          if (decisionTimerLocal) { clearTimeout(decisionTimerLocal); decisionTimerLocal = undefined; }
+          if (decisionTimer) { clearTimeout(decisionTimer); decisionTimer = undefined; }
         } catch {
           decision = 'n';
+          if (decisionTimer) { clearTimeout(decisionTimer); decisionTimer = undefined; }
         }
         // 'a'（always allow）按 MCP 工具全名放行（mcp_<server>_<tool>），
         // 绝不 add('bash')——否则放行一个 MCP 工具即解锁全部 bash 免审。
@@ -370,8 +372,45 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
   const DIFF_MARK = '⟦DIFF⟧';
 
+  /**
+   * T5：INVALID_PARAMS 结果回灌的正确参数集渲染（从 BUILTIN_TOOL_SCHEMAS 的
+   * required 清单取）。形状：`<file_path>路径</file_path><content>内容</content>`。
+   * 未知工具（无 schema）返回空串——调用侧跳过追加。
+   */
+  const PARAM_VALUE_HINTS: Record<string, string> = {
+    file_path: '路径',
+    path: '目录',
+    pattern: '模式',
+    command: '命令',
+    content: '内容',
+    old_string: '待替换的原文',
+    new_string: '替换后的新文本',
+    offset: '起始行',
+    limit: '行数',
+    include: '文件名过滤',
+    replace_all: "'true' 时全部替换",
+  };
+
+  function invalidParamsHint(toolNorm: string): string {
+    const schema = BUILTIN_TOOL_SCHEMAS[toolNorm];
+    if (!schema) return '';
+    const props = ((schema.parameters as any)?.properties ?? {}) as Record<string, any>;
+    const required = ((schema.parameters as any)?.required ?? []) as string[];
+    const names = required.length > 0 ? required : Object.keys(props);
+    if (names.length === 0) return '';
+    return names
+      .map((n) => {
+        const fallback = String(props[n]?.description ?? n).split(/[（(。；;，,]/)[0] || n;
+        const hint = PARAM_VALUE_HINTS[n] ?? fallback;
+        return `<${n}>${hint}</${n}>`;
+      })
+      .join('');
+  }
+
   function describeResult(call: ToolCall, params: Record<string, string>, res: ToolResult): string {
-    const name = String(call.toolName || '').trim().toLowerCase();
+    // P0 (alias bypass) 配套：结果分段同样按归一化名分类，`write` 别名的
+    // 成功结果也要带 WRITE_SUCCESS 语义与 VERIFICATION: APPLIED 尾标。
+    const name = normalizeToolName(call.toolName);
     let head: string;
     if (res.ok) {
       if (name.includes('read')) {
@@ -444,7 +483,10 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
    *   'a' adds the tool to the session allowlist.
    */
   async function gate(toolRaw: string, params: Record<string, string>): Promise<ToolResult | null> {
-    const tool = String(toolRaw || '').trim().toLowerCase();
+    // P0 (alias bypass): normalize BEFORE any gate decision — `write`/`edit`/
+    // `run_command` must hit the same plan-mode precheck, classify() and 'a'
+    // allowlist bookkeeping as the canonical names.
+    const tool = normalizeToolName(toolRaw);
 
     // plan-mode 预检（classify 之前）— 读取放行，写入与
     // bash denied with the plan reason. Uses approval.ts WRITE_TOOLS as a
@@ -499,12 +541,15 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
     let decision: string = 'n';
     let timedOut = false;
+    // timer 限定在本次审批的局部闭包内 — adapter 级共享句柄会被并发审批
+    // 互相覆盖：后到者的句柄顶掉先到者，先到者胜出时清掉的是后到者的
+    // 超时计时器 → 后到者的桥挂死且永远等不到超时兜底。
+    let timer: NodeJS.Timeout | undefined;
     try {
       // 桥接胜出时清除超时（防挂起）：
       // race — a stray 60s timer otherwise keeps `node --test` alive.
       // (No unref(): the timeout is a real deadline and must keep the loop
       //  alive until it fires or the bridge resolves.)
-      let timer: NodeJS.Timeout | undefined;
       decision = await Promise.race([
         approvalBridge({ tool, description, danger: verdict.danger }),
         new Promise<string>((resolve) => {
@@ -514,6 +559,7 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
       if (timer) clearTimeout(timer);
     } catch {
       decision = 'n';
+      if (timer) clearTimeout(timer);
     }
     // 引擎侧 60s race 超时放行时，桥接侧 finish 未跑会残留
     // activeApprovalCancel → isApprovalActive() 恒真（gerund 永久暂停 +
@@ -528,9 +574,12 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     let eff: ApprovalDecision = dRaw === 'a' ? 'a' : dRaw === 'y' ? 'y' : 'n';
     if (eff === 'a') {
       sessionAllowlist.add(tool);
-      // 'a' 决策同时持久化到项目配置 approvalAllowlist（best-effort，
-      // 失败静默）——下一会话启动时经 Session 构造器加载回 sessionAllowlist。
-      try { appendProjectApprovalAllowlist(opts.workspaceRoot, tool); } catch {}
+      // 'a' 决策持久化到项目配置 approvalAllowlist（best-effort，失败静默）
+      // ——但 bash 例外（P1 克制语义，对齐 MCP 全名路径）：放行一条良性 bash
+      // 绝不能跨会话解锁全部 bash，且 dangerous bash 由 classify 强制重审。
+      if (tool !== 'bash') {
+        try { appendProjectApprovalAllowlist(opts.workspaceRoot, tool); } catch {}
+      }
       // 'a' = 加入会话 allowlist 且**本次放行**（与 MCP gate
       // 语义一致：选"总是允许"当次也必须放行，否则首次选 a 反而被拒）。
       eff = 'y';
@@ -666,11 +715,16 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
       // 每个 call 独立走 gate（只读段内并行仍逐 call 审批语义）。
       const runCall = async (call: ToolCall, idx: number): Promise<CallOutcome> => {
-        const params = paramsOf(call);
+        // T2：参数名别名在门禁【之前】收敛——gate / 敏感路径检查 / RBW
+        // checkpoint / 工具实现看到同一套规范键（`filepath` 写入不能绕过
+        // sensitiveWriteDenial，必须在 paramsOf 产物上归一）。
+        const params = normalizeToolParams(String(call.toolName || ''), paramsOf(call));
         const sensitiveRes = sensitiveWriteDenial(String(call.toolName || ''), params);
         const deniedRes = sensitiveRes ?? (await gate(String(call.toolName || ''), params));
         if (deniedRes) return { kind: 'denied', params, res: deniedRes };
-        const toolNorm = String(call.toolName || '').trim().toLowerCase();
+        // P0 (alias bypass): checkpoint / 写锁判定必须用归一化名 — 裸
+        // trim+lowercase 会让 `write`/`edit` 别名跳过 checkpoint 与写互斥。
+        const toolNorm = normalizeToolName(String(call.toolName || ''));
         if (toolNorm === 'write_file' || toolNorm === 'edit_file') {
           try { checkpointBeforeMutation(toolNorm, params, opts.workspaceRoot); } catch {}
         }
@@ -773,7 +827,13 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
         const call = calls[k];
         const o = outcomes[k]!;
         if (o.kind === 'denied') {
-          parts.push(describeResult(call, o.params, o.res));
+          let seg = describeResult(call, o.params, o.res);
+          // 契约（guardrails 分段尾锚定计数）：gate() 以 readonly 拒绝某调用时，
+          // 在该调用结果段落末尾追加尾标行。
+          if (o.res.error === 'DENIED_READONLY') {
+            seg += `\n[TOOL_DENIED_READONLY ${String(call.toolName || '').trim()}]`;
+          }
+          parts.push(seg);
           continue;
         }
         if (o.kind === 'batch-timeout') {
@@ -803,7 +863,15 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
           }
         } else {
           unknownToolStreak = 0; // any known tool resets the drift streak
-          parts.push(describeResult(call, o.params, res));
+          let seg = describeResult(call, o.params, res);
+          // T5：INVALID_PARAMS 与 UNKNOWN_TOOL 同等引导待遇——回灌该工具的
+          // 正确参数集（从 schema required 清单取），模型只看到 ✗ 无从纠正 →
+          // 参数幻觉零引导的死循环（探查实证）。
+          if (res.error === 'INVALID_PARAMS') {
+            const hint = invalidParamsHint(normalizeToolName(String(call.toolName || '')));
+            if (hint) seg += `\n（正确参数：${hint}）`;
+          }
+          parts.push(seg);
         }
       }
       return parts.join('\n---\n');

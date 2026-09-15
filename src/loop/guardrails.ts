@@ -14,6 +14,8 @@
 // 本闸按"同参数同工具"签名细计数，阻断发生在 before_call（执行前），而非事后掐。
 
 import type { ToolCall } from '../types/toolCall.js';
+import { normalizeToolName } from '../tools/executor.js';
+import { WRITE_TOOLS } from '../tools/approval.js';
 
 /** before_call 判定：blocked=false 放行；blocked=true 时本步不执行工具。 */
 export interface GuardrailDecision {
@@ -54,6 +56,21 @@ function looksLikeFailure(result: string): boolean {
   return result.includes('FAIL') || result.includes('ERROR');
 }
 
+/**
+ * 只读拒绝尾标（engineAdapter 契约）：聚合文本中对每个 gate readonly 拒绝的
+ * 调用，在其结果段落【末尾】追加一行 `[TOOL_DENIED_READONLY <toolName>]`。
+ * 判定用分段尾锚定（与 VerifyCritiqueLoop.classifySignal 的 segEndsWith 同一
+ * 分段方式，'\n---\n' 切段后逐段测尾标）——旧的整段 includes('DENIED_READONLY')
+ * 会把读到含该字面量的文件正文（如本仓库守卫源码自身）误计成只读拒绝。
+ */
+const DENIED_READONLY_TAIL_RE = /(?:^|\n)\[TOOL_DENIED_READONLY\s+\S+\]\s*$/;
+
+function reasonHasReadonlyDenialTail(reason: string): boolean {
+  return String(reason ?? '')
+    .split('\n---\n')
+    .some((seg) => DENIED_READONLY_TAIL_RE.test(seg));
+}
+
 export class ToolCallGuardrailController {
   private readonly exactFailureBlockAfter: number;
   private readonly sameToolFailureHaltAfter: number;
@@ -64,12 +81,16 @@ export class ToolCallGuardrailController {
 
   /** 签名 → 该签名失败次数（该签名成功时归零——"连续"按无成功间隔计）。 */
   private exactFailures = new Map<string, number>();
-  /** 工具名 → 该工具失败次数（该工具成功时归零）。 */
+  /** 归一化工具名 → 该工具失败次数（该工具成功时归零）。T5：键用
+   *  normalizeToolName——模型换花样写 Read_File/readfile/READ_FILE 时必须命中
+   *  同一计数桶，否则 sameToolFailureHaltAfter 停滞闸永不触发（漂移修复）。 */
   private toolFailures = new Map<string, number>();
   /** 签名 → { preview, count }：幂等工具同结果重复计数。 */
   private noProgress = new Map<string, { preview: string; count: number }>();
   /** 工具名 → 连续 DENIED_READONLY 次数（成功 / 非只读拒绝即归零）。 */
   private readonlyDenials = new Map<string, number>();
+  /** T4：连续 NO_TOOL_CALLS 步数（loop 喂入；格式停滞信号，只计数上报不设闸）。 */
+  private noToolCallsStreakCount = 0;
 
   constructor(options: ToolCallGuardrailOptions = {}) {
     this.exactFailureBlockAfter = options.exactFailureBlockAfter ?? 5;
@@ -113,7 +134,9 @@ export class ToolCallGuardrailController {
    *   判定，避免只读输出正文偶含 FAIL/ERROR 字样被误计；缺省按结果串降级推断。
    */
   recordResult(call: ToolCall, result: string, failed?: boolean): void {
-    const name = String(call.toolName ?? '').trim();
+    // T5：键一律用归一化工具名——Read_File/readfile/READ_FILE 漂移写法必须命中
+    // 同一计数桶（与 normalizeToolName 键的 checkHalt 查询配对）。
+    const name = normalizeToolName(String(call.toolName ?? ''));
     const key = toolCallSignature(call);
     const isFailure = failed ?? looksLikeFailure(result);
 
@@ -124,12 +147,17 @@ export class ToolCallGuardrailController {
       // 成功即打破连败：该签名 / 该工具计数归零。
       this.exactFailures.delete(key);
       this.toolFailures.delete(name);
-      // 只读拒绝快速通道：该工具执行成功（如用户已 /approvals default 放行）→ 归零。
-      this.readonlyDenials.delete(name);
+      // 只读拒绝快速通道：仅【写工具】执行成功（如用户已 /approvals default
+      // 放行）才视为 readonly 根因解除、跨工具总计数归零。read/grep 成功不清
+      // 零——否则只读档下"写拒→读成功"交替会永久饿死阈值 2 的快速止损
+      // （对抗审查 P1-3，注释原称"写工具成功"但代码不查工具类型）。
+      if (WRITE_TOOLS.has(name)) {
+        this.readonlyDenials.delete('__any_write__');
+      }
     }
 
     // 幂等无进展跟踪：同签名同结果（截断预览）重复计数；结果变化即重置。
-    if (this.idempotentTools.has(name.toLowerCase())) {
+    if (this.idempotentTools.has(name)) {
       const preview = String(result ?? '').slice(0, this.progressPreviewLength);
       const prev = this.noProgress.get(key);
       if (prev && prev.preview === preview) {
@@ -141,24 +169,48 @@ export class ToolCallGuardrailController {
   }
 
   /**
+   * T4：连续 NO_TOOL_CALLS 计数（loop 每遇空转步喂入；工具调用恢复时 loop 调
+   * resetNoToolCalls）。格式停滞信号——只计数上报，不新增硬闸（maxSteps 已兜底）。
+   */
+  recordNoToolCalls(): void {
+    this.noToolCallsStreakCount++;
+  }
+
+  /** T4：工具调用恢复 → 连续空转计数清零。 */
+  resetNoToolCalls(): void {
+    this.noToolCallsStreakCount = 0;
+  }
+
+  /** T4：当前连续 NO_TOOL_CALLS 步数（上报用）。 */
+  get noToolCallsStreak(): number {
+    return this.noToolCallsStreakCount;
+  }
+
+  /**
    * 只读拒绝快速通道（0.8.1 UX）：execute 返回 DENIED_READONLY 结果时按工具逐
-   * call 调用。reason 含 DENIED_READONLY → 连续计数 +1；否则（拒绝性质变化）
-   * 该工具计数归零。达阈值后 beforeCall 直接阻断——readonly 语义确定，同参数
-   * 重试无意义，比一般失败硬闸（5/8）更早止损。
+   * call 调用。reason 的分段【尾部】含 `[TOOL_DENIED_READONLY <tool>]` 标记行 →
+   * 连续计数 +1；否则（拒绝性质变化）该工具计数归零。达阈值后 beforeCall 直接
+   * 阻断——readonly 语义确定，同参数重试无意义，比一般失败硬闸（5/8）更早止损。
    */
   recordDenied(tool: string, reason: string): void {
     const name = String(tool ?? '').trim();
     if (!name) return;
-    if (String(reason ?? '').includes('DENIED_READONLY')) {
-      this.readonlyDenials.set(name, (this.readonlyDenials.get(name) ?? 0) + 1);
+    // 0.8.2 一致性修复（真机 1B 实录）：readonly 拒绝按【跨工具总数】计数——
+    // 此前按工具名分桶，write_file 1 次 + edit_file 1 次 = 各 1，阈值 2 永不
+    // 触发，模型在只读档位死磕到步数耗尽。readonly 场景任何写类拒绝都是同一
+    // 根因（档位），总计数 2 即阻断并指引用户。
+    if (reasonHasReadonlyDenialTail(reason)) {
+      this.readonlyDenials.set('__any_write__', (this.readonlyDenials.get('__any_write__') ?? 0) + 1);
     } else {
-      this.readonlyDenials.delete(name);
+      this.readonlyDenials.delete('__any_write__');
     }
   }
 
   private checkHalt(call: ToolCall): GuardrailDecision | undefined {
     const name = String(call.toolName ?? '').trim();
-    const count = this.toolFailures.get(name) ?? 0;
+    // T5：查询键归一化（与 recordResult 的归一化键配对）——模型换工具名花样
+    // （Read_File/readfile）时 sameToolFailureHaltAfter 才能触发。
+    const count = this.toolFailures.get(normalizeToolName(name)) ?? 0;
     if (count >= this.sameToolFailureHaltAfter) {
       return {
         blocked: true,
@@ -172,15 +224,19 @@ export class ToolCallGuardrailController {
   }
 
   private checkReadonlyDenial(call: ToolCall): GuardrailDecision | undefined {
-    const name = String(call.toolName ?? '').trim();
-    const count = this.readonlyDenials.get(name) ?? 0;
+    // 0.8.2：跨工具总计数（readonly 场景任何写类拒绝都是同一根因——
+    // 真机 1B 实录：write 1 次 + edit 1 次 = 按工具分桶各 1，阈值 2 永不触发，
+    // 模型死磕到步数耗尽）。
+    const count = this.readonlyDenials.get('__any_write__') ?? 0;
     if (count >= this.readonlyDenyBlockAfter) {
       return {
         blocked: true,
         reason:
           `TOOL_ERROR: GUARDRAIL_READONLY_DENIED\n` +
-          `当前为只读档位，写操作无法执行。请立即 end_turn 并向用户报告：` +
-          `需要用户执行 /approvals default 切换档位后重试（${name} 已连续被只读拒绝 ${count} 次）。`,
+          `当前为只读档位，任何写操作（write_file/edit_file）都无法执行，` +
+          `与具体工具无关（已累计拒绝 ${count} 次）。本任务无法在只读档位完成：` +
+          `请立即 end_turn，并向用户说明"需要切换到 default 档位（/approvals default 或 shift+tab）后重新提交任务"。` +
+          `不要再次尝试任何写操作。`,
       };
     }
     return undefined;
@@ -202,7 +258,8 @@ export class ToolCallGuardrailController {
   }
 
   private checkNoProgress(call: ToolCall): GuardrailDecision | undefined {
-    const name = String(call.toolName ?? '').trim().toLowerCase();
+    // T5：归一化键（与 recordResult 一致——别名写法同样受 noProgress 约束）。
+    const name = normalizeToolName(String(call.toolName ?? ''));
     if (!this.idempotentTools.has(name)) return undefined;
     const key = toolCallSignature(call);
     const entry = this.noProgress.get(key);

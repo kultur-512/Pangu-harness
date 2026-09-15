@@ -15,8 +15,9 @@
 // JSON 布局（对齐团队 `~/.panshalach/task_state.json` 概念，语义一致）：
 //   { schemaVersion, tasks: Record<taskId, TaskState> }
 
-import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { join, isAbsolute } from 'path';
+import { atomicWriteFileSync } from '../utils/atomicFile.js';
 import type { TaskState, AgentEvent } from '../cli/repl/types.js';
 
 /** 单文件默认名（多个 workspace 用不同文件） */
@@ -121,7 +122,13 @@ export class TaskStateStore {
   private cache: TaskStateFile | null = null;
 
   constructor(workspaceRoot: string, customFilename?: string) {
-    this.filePath = join(workspaceRoot, customFilename ?? DEFAULT_FILENAME);
+    // 包C 缺陷5：env（PANSHA_TASK_STATE_FILE，runAgentTask.ts / PromptBuilder.ts
+    // 原样透传）传绝对路径时直接采用——旧实现一律 join(workspaceRoot, ...)，
+    // 绝对路径被拼成 `<ws>\P:\...` 垃圾路径 → existsSync false → 静默空台账。
+    // 对齐 RefinedMemoryStore 同款解析（优先级：显式参数 > env > 默认文件名）。
+    const fromEnv = typeof process !== 'undefined' ? process.env?.PANSHA_TASK_STATE_FILE?.trim() : undefined;
+    const resolved = customFilename ?? fromEnv ?? DEFAULT_FILENAME;
+    this.filePath = isAbsolute(resolved) ? resolved : join(workspaceRoot, resolved);
   }
 
   /** 返回单例默认路径的 absolute（task_state.json——跨会话共享的任务台账） */
@@ -145,23 +152,22 @@ export class TaskStateStore {
     }
   }
 
+  /** 非原子提交（遗留入口，当前无调用方；保留以备调试直写）——同样走共享原子写。 */
   private commit(file: TaskStateFile): void {
     this.cache = file;
-    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+    atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
   }
 
   /**
    * 原子提交（tmp → rename）：避免写盘中途崩溃留下半个文件（R5 落地合同）。
-   * rename 在同一目录内是原子的；tmp 名带进程号防并发写串扰。
+   * 包C 缺陷4：实现委托共享 src/utils/atomicFile.ts（同目录 tmp + 带进程号
+   * tmp 名 + renameSync + 失败清理）；rename 失败仍抛本层错误信息（行为不变）。
    */
   private commitAtomic(file: TaskStateFile): void {
     this.cache = file;
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(file, null, 2), 'utf-8');
     try {
-      renameSync(tmp, this.filePath);
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
     } catch {
-      rmSync(tmp, { force: true });
       throw new Error(`task state write failed: ${this.filePath}`);
     }
   }

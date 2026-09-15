@@ -104,6 +104,10 @@ const command: Command = {
         if (Array.isArray(inj)) {
           ctx.renderer.writeLine(`[memory] injectedCardIds=[${inj.join(',')}]`);
         }
+        // 溢出证据行：评测 A 档"真溢出"的机器可读正源（stdout 正则误判多）。
+        if ((result as any).contextOverflowCompacted) {
+          ctx.renderer.writeLine('[ctx] contextOverflowCompacted=1');
+        }
       } catch { /* 证据行失败不影响任务结果 */ }
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = result.stopReason;

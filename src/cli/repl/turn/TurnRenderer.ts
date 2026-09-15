@@ -512,7 +512,7 @@ export function buildQuickHelpLines(totalCommands: number): string[] {
     entry('直接输入', '任务描述即开始，如：修复 README 里的错别字'),
     entry('/mode', '切换 plan/default/auto-accept（shift+tab 同效）'),
     entry('/model', '查看或切换模型'),
-    entry('/memory', '查看沉淀的记忆'),
+    entry('/memory', '查看沉淀的记忆 · stats 统计/注入账本'),
     entry('/usage', '本会话 token 用量'),
     entry('/undo', '撤销最近一次写盘'),
     entry('/compact', '立即压缩上下文'),

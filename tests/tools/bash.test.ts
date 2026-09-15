@@ -73,6 +73,23 @@ describe('readonlyAllowlist', () => {
     }
   });
 
+  it('T-28b: newline/CR/backtick/command-substitution chains are denied', () => {
+    for (const c of [
+      'ls\nrm -rf ~',
+      'git diff\r\necho pwned',
+      'git log $(touch x)',
+      'git show `touch x`',
+      'cat f.txt\nnode evil.js',
+    ]) {
+      assert.equal(isReadonlyAllowed(c), false, `must be denied: ${JSON.stringify(c)}`);
+    }
+  });
+
+  it('T-28b: % format specifiers are NOT over-blocked (no false positive)', () => {
+    assert.equal(isReadonlyAllowed('git log --format=%h'), true);
+    assert.equal(isReadonlyAllowed('git log --format="%h %s"'), true);
+  });
+
   it('T-28: plain whitelisted commands still allowed (no regression)', () => {
     for (const c of ['ls', 'git diff HEAD~1', 'npm run test:unit', 'python -m pytest -q', 'node --test']) {
       assert.equal(isReadonlyAllowed(c), true, `should still allow: ${c}`);
@@ -104,6 +121,32 @@ describe('isDangerousCommand', () => {
     // Documented raw-text semantics: the marker scans the command string as-is
     // (marking-only; enforcement is the approval layer's job).
     assert.equal(isDangerousCommand('echo rm -rf is a phrase'), true);
+  });
+
+  it('marks separated-flag destruction (rm -r -f / --recursive --force / git push -f / Remove-Item)', () => {
+    for (const c of [
+      'rm -r -f build',
+      'rm -f -r build',
+      'rm --recursive --force build',
+      'rm build -r -f',
+      'git push -f origin main',
+      'Remove-Item -Recurse -Force build',
+      'remove-item -force -recurse build',
+    ]) {
+      assert.equal(isDangerousCommand(c), true, `should mark: ${c}`);
+    }
+  });
+
+  it('still does not mark benign lookalikes (separated-flag patterns)', () => {
+    for (const c of [
+      'git push origin main',
+      'rm file.txt',
+      'npm test -- -f',
+      'ls -la',
+      'Remove-Item build',
+    ]) {
+      assert.equal(isDangerousCommand(c), false, `should not mark: ${c}`);
+    }
   });
 });
 

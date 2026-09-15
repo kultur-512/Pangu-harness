@@ -6,6 +6,7 @@
 // default. compactService reads .panshalach.json compaction.strategy.
 
 import type { Turn } from './types.js';
+import { safeSlice } from './tokenEstimate.js';
 
 export interface CompactStrategy {
   id: string;
@@ -13,28 +14,71 @@ export interface CompactStrategy {
   postprocess?(summary: string): string;
 }
 
+/**
+ * 结果摘要内联上限：嵌套压缩（[COMPACT] 合成轮的 result.summary 是上一代摘要
+ * 全文）不治理时摘要代代膨胀。turnFullBrief 与 fallbackSummary 共用此 cap。
+ */
+export const NESTED_SUMMARY_MAX_CHARS = 400;
+/** 摘要超限的显式省略标记（截断点必须可见，不静默丢原文）。 */
+const SUMMARY_TRUNCATED_MARK = '…[上一代摘要已截断]';
+
+function capSummary(raw: string): string {
+  const s = String(raw || '');
+  return s.length > NESTED_SUMMARY_MAX_CHARS
+    ? safeSlice(s, 0, NESTED_SUMMARY_MAX_CHARS) + SUMMARY_TRUNCATED_MARK
+    : s;
+}
+
 /** Shared per-turn brief (kept identical to compactService's). */
 export function turnBrief(t: Turn): string {
-  const u = (t.userInput || '').replace(/\s+/g, ' ').slice(0, 80);
+  const u = safeSlice((t.userInput || '').replace(/\s+/g, ' '), 0, 80);
   const r = t.result?.summary || '';
   return `[${u}]${r ? ` → ${r}` : ''}`;
 }
 
+/** 完整 brief 的用户指令上限：超过则显式标记截断（不再静默丢原文）。 */
+export const TURN_BRIEF_MAX_CHARS = 2000;
+
 /**
- * M2-7：摘要 prompt 的不对称保留约束——用户指令原文逐字保留，其余（结果/得分/教训）
- * 可压缩。本步只落 prompt 约束（吃到 80% 收益）；compactService 分区改造留 R8。
+ * B2：摘要输入用完整用户指令（≤2000 字符，超长显式标记）。
+ * 旧 turnBrief 的 80 字符静默截断与 VERBATIM_RULE"逐字保留"硬约束自相矛盾：
+ * 摘要模型根本看不到原文，合成轮替换后超 80 字符的用户指令永久丢失。
+ * 空白不归一化（逐字保留语义）；摘要 prompt 是自由文本，容忍多行。
+ */
+export function turnFullBrief(t: Turn): string {
+  const u = String(t.userInput || '').trim();
+  const capped = u.length > TURN_BRIEF_MAX_CHARS
+    ? safeSlice(u, 0, TURN_BRIEF_MAX_CHARS) + '…[超长已截断]'
+    : u;
+  // 嵌套压缩治理：summary 与 userInput 同样封顶——[COMPACT] 合成轮的
+  // result.summary 是上一代摘要全文，无 cap 则每代压缩把全部历史摘要再内联
+  // 一遍进摘要 prompt（代代膨胀，可自身超窗）。
+  const r = capSummary(t.result?.summary || '');
+  return `[${capped}]${r ? ` → ${r}` : ''}`;
+}
+
+/**
+ * M2-7：摘要 prompt 的不对称保留约束——用户指令原文逐字保留（≤2000 字符内，
+ * 与 turnFullBrief 的截断标记对齐），其余（结果/得分/教训）可压缩。
  */
 export const VERBATIM_RULE =
-  '硬约束：用户指令原文必须逐字保留（原样引用，不改写、不省略、不合并）；结果、得分与教训可压缩。';
+  '硬约束：每条 [ ] 内的用户指令原文（≤2000 字符）必须逐字保留在摘要中（原样引用，不改写、不省略、不合并）；带"超长已截断"标记的部分按已截断原文引用，不得补写；结果、得分与教训可压缩。';
 
 const strategies = new Map<string, CompactStrategy>();
 
 const DEFAULT_STRATEGY: CompactStrategy = {
   id: 'default',
   buildPrompt: (removed, opts) => {
-    const lines = removed.map((t, i) => `${i + 1}. ${turnBrief(t)}`);
+    const lines = removed.map((t, i) => `${i + 1}. ${turnFullBrief(t)}`);
     return [
-      opts?.instruction ?? '请把以下历史任务轮次压缩成一段不超过 300 字的摘要，保留：每项任务的核心诉求、关键结果与得分、重要教训（失败原因/约束）。',
+      // C3（0.8.2 审查）：删"不超过 300 字"总额约束——它与 VERBATIM_RULE 的
+      // 逐字保留数学上互斥（多条被移除轮时不可能同时满足），模型要么违反
+      // 字数（摘要过长 → 注入端截断）要么丢指令。改为两段式结构化输出。
+      opts?.instruction ?? [
+        '请把以下历史任务轮次压缩为两段：',
+        '【第一段·用户指令清单】逐条列出每轮 [ ] 内的用户指令原文（不改写、不省略、不合并）；',
+        '【第二段·要点】结果、得分与重要教训（失败原因/约束）可自由压缩。',
+      ].join('\n'),
       VERBATIM_RULE,
       '只输出摘要正文，不要寒暄。',
       '---',
@@ -50,7 +94,7 @@ const TOPIC_STRATEGY: CompactStrategy = {
     // cluster by first meaningful token of userInput (fallback 'misc')
     const groups = new Map<string, string[]>();
     for (const t of removed) {
-      const brief = turnBrief(t);
+      const brief = turnFullBrief(t);
       const word = /[A-Za-z\u4e00-\u9fff]{2,}/.exec(t.userInput || '')?.[0] ?? 'misc';
       const key = word.slice(0, 16).toLowerCase();
       if (!groups.has(key)) groups.set(key, []);

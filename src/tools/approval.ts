@@ -10,6 +10,7 @@
 
 import * as readline from 'readline';
 import { isDangerousCommand } from './bash.js';
+import { normalizeToolName } from './executor.js';
 import type { DiffHunk } from './types.js';
 
 export type ApprovalMode = 'readonly' | 'default' | 'full';
@@ -46,15 +47,19 @@ export const READONLY_HINT = '当前档位为只读；使用 /approvals default 
  * Pure function — the adapter performs the actual bridge interaction.
  */
 export function classify(tool: string, params: Record<string, string>, ctx: ClassifyContext): ClassifyResult {
-  const name = String(tool || '').trim().toLowerCase();
+  // P0 (alias bypass): aliases (`write`/`edit`/`run_command`/…) MUST hit the
+  // same classification as their canonical names — trim+lowercase alone let
+  // `write` bypass the write gate entirely.
+  const name = normalizeToolName(tool);
   const isWrite = WRITE_TOOLS.has(name);
   const isBash = name === 'bash';
   const cmd = params.command ?? params.cmd ?? '';
   const danger = isBash ? isDangerousCommand(cmd) : false;
 
   // Session 'allow-always' wins (never for readonly mode itself — that mode
-  // exists precisely to be a hard floor).
-  if (ctx.mode !== 'readonly' && ctx.sessionAllowlist.has(name)) {
+  // exists precisely to be a hard floor; and NEVER for DANGEROUS bash — an
+  // 'a' on one benign bash command must not silently unlock `rm -rf`).
+  if (ctx.mode !== 'readonly' && ctx.sessionAllowlist.has(name) && !(isBash && danger)) {
     return { needsApproval: false, denied: false, danger };
   }
 
@@ -84,7 +89,7 @@ export function classify(tool: string, params: Record<string, string>, ctx: Clas
 
 /** Build a human-readable description for the request card / question. */
 export function describeRequest(tool: string, params: Record<string, string>): string {
-  const name = String(tool || '').trim().toLowerCase();
+  const name = normalizeToolName(tool);
   if (name === 'bash') {
     return params.command ?? params.cmd ?? '(empty command)';
   }

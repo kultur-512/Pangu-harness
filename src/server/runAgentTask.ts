@@ -56,25 +56,59 @@ export interface RunResult {
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
   verifyCmd?: string[];
+  /**
+   * 本任务触发过溢出截断重试（loop context_overflow → trim → retry）。
+   * 评测 A 档的机器可读正源——RunCommand 打 `[ctx] contextOverflowCompacted=1`
+   * 证据行，run-eval 据此判"真溢出"，替代易误判的 stdout 正则。
+   */
+  contextOverflowCompacted?: boolean;
   /** 0.8.2 证据链：本任务实际注入的记忆卡号（lastBuildMeta 透出；headless 宿主打印证据行用） */
   injectedCardIds?: string[];
 }
 
+// 窗口解析收口到共享模块 ./cli/repl/tokenEstimate.ts（UI 计量 / loop 预算 /
+// runAgentTask 三处必须同源，否则 UI 压缩阈值与 loop 裁剪预算会分叉）；
+// 此处再导出保持既有测试/调用方的 import 路径不变。
+import { resolveWindowTokens } from '../cli/repl/tokenEstimate.js';
+export { resolveWindowTokens };
+
+// ==================== 【1】chat 直答的最近对话段（2026-09-13 迭代包） ====================
+
+/** 最近对话段长度自限（chat user 净荷纪律：记忆块 + 本段 + 用户原话）。 */
+export const CHAT_RECENT_TURNS_MAX_CHARS = 600;
+
 /**
- * 解析当前模型的上下文窗口（tokens）。
- * 走 provider.getModelContextLength 通道；≤0 或遗留 256000 哨兵视为
- * unknown → 回落 32768 保守值（8K 模型按 256K 预算跑长任务必爆——预算必须挂真值）。
+ * 从 session 组装 chat 直答用的【最近对话】段：最近 2 轮 userInput+answerText。
+ * 背景：chat 直答模型此前看不到最近对话原文——【最近上下文】块只在被 chat
+ * 丢弃的 enriched 里，指代型追问（"那第二个呢"）零上下文硬答。
+ * 预算策略：新轮优先（从最新轮往回装），预算耗尽时旧轮整轮让位——指代型
+ * 追问依赖的恰是尾部；超限的行尾截断加 '…'。空段返回 ''（调用方不拼段）。
+ * 返回形态：`【最近对话】\n用户：…\n助手：…\n用户：…`（整段 ≤ maxChars 字符）。
  */
-export function resolveWindowTokens(provider: ModelProvider | undefined, model: string): number {
-  try {
-    // PANSHA_CTX_WINDOW 显式覆盖优先（与 sseInteractive UI 侧同一优先级——
-    // env 覆盖时两侧若分叉，UI 压缩阈值与 loop 裁剪预算会不一致）。
-    const env = Number(process.env.PANSHA_CTX_WINDOW);
-    if (Number.isFinite(env) && env > 0) return env;
-    const n = Number((provider as any)?.getModelContextLength?.(model));
-    if (Number.isFinite(n) && n > 0 && n !== 256000) return n;
-  } catch {}
-  return 32768;
+export function buildChatRecentTurnsBlock(
+  session: Pick<Session, 'turns'>,
+  maxChars = CHAT_RECENT_TURNS_MAX_CHARS
+): string {
+  const header = '【最近对话】';
+  // 窗口常量与 PromptBuilder.buildMemoryQueryText 同源（RECENT_TURN_WINDOW=2）
+  const turns = (session?.turns ?? []).slice(-2);
+  const picked: string[] = [];
+  let used = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t: any = turns[i];
+    const u = String(t?.userInput ?? '').replace(/\s+/g, ' ').trim();
+    const a = String(t?.result?.answerText ?? '').replace(/\s+/g, ' ').trim();
+    if (!u && !a) continue;
+    const line = u && a ? `用户：${u}\n助手：${a}` : `用户：${u || a}`;
+    const remain = maxChars - header.length - 1 - used; // -1 = 首个 '\n'
+    if (remain <= 10) break; // 残余预算装不下有意义的行 → 停（旧轮让位）
+    const piece = line.length > remain ? line.slice(0, remain - 1).trimEnd() + '…' : line;
+    if (!piece.trim()) break;
+    picked.unshift(piece); // 从最新往回收集，unshift 还原时间正序
+    used += piece.length + 1; // +1 = 行间 '\n'（末行多记 1，做安全裕量）
+  }
+  if (picked.length === 0) return '';
+  return `${header}\n${picked.join('\n')}`;
 }
 
 /**
@@ -96,6 +130,8 @@ export async function runAgentTask(
     approvalTimeoutMs?: number;
     planMode?: boolean;
     mcpTools?: any[];
+    /** 溢出回调透传（宿主注册会话级应急压缩；headless 缺省不注册）。 */
+    onContextOverflow?: (info: { error: unknown }) => void | Promise<void>;
   }
 ): Promise<RunResult> {
   const start = Date.now();
@@ -158,6 +194,10 @@ export async function runAgentTask(
   // 评测由此回答"模型当时到底看见了什么"；lastBuildMeta 在此消费（不改变 buildForTask 的 string 返回契约）。
   // 供 finalizeTaskMemory 消费的注入卡账本。
   let injectedCardIds: string[] = [];
+  // 包C 缺陷8：作用域内长命记忆实例——旧实现 `new RefinedMemoryStore(...).markInjected(...)`
+  // 实例即弃（账本只写不读还每步重例化）。现挂到本作用域唯一实例上（账本已升级
+  // 进程级，跨实例可读；实例复用消除逐任务重例化），finalizeTaskMemory 复用同一实例。
+  let auditMemoryStore: import('../memory/RefinedMemoryStore.js').RefinedMemoryStore | null = null;
   try {
     const meta = pb.lastBuildMeta;
     const injected = meta?.injectedCardIds ?? [];
@@ -175,7 +215,8 @@ export async function runAgentTask(
       try {
         const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
         if (session.workspace) {
-          new RefinedMemoryStore(session.workspace).markInjected(injected);
+          auditMemoryStore ??= new RefinedMemoryStore(session.workspace);
+          auditMemoryStore.markInjected(injected);
         }
       } catch {}
       appendAgentEvent(session.id, {
@@ -205,6 +246,9 @@ export async function runAgentTask(
     // 侧通道传出，任务原文原样传 chaser。
     const solveIssueInput = intent === 'chat' ? req.task : enriched;
     const chatMemoryBlock = intent === 'chat' ? pb.getChatMemoryBlock() : undefined;
+    // 【1】chat 直答补最近对话原文：session 最近 2 轮原文组装 ≤600 字符段传入
+    //（记忆块之后的第二段——chaser 拿不到 session.turns，由宿主组装）。
+    const chatRecentTurns = intent === 'chat' ? buildChatRecentTurnsBlock(session) : undefined;
     const result = await chaser.solveIssue(solveIssueInput, session.workspace, {
       tier: session.tier as any,
       yes: true,
@@ -212,6 +256,8 @@ export async function runAgentTask(
       memoryPreInjected: true,
       // 0.8.2：chat 直答的独立记忆块（与原文分离——chaser 组装干净 user）
       chatMemoryBlock,
+      // 【1】chat 直答的最近对话段（拼在记忆块之后、用户原话之前）
+      chatRecentTurns,
       // 入口前移的意图显式传入（chaser 不再对富化文本兜底分类）
       intent,
       // 审批透传
@@ -224,6 +270,8 @@ export async function runAgentTask(
       signal: ctx.signal,
       // 窗口预算挂真值（provider 真实窗口，unknown → 32768 保守值）
       windowTokens: resolveWindowTokens(ctx.provider ?? (session as any).provider, session.model),
+      // C5：溢出回调透传（宿主可注册会话级应急压缩；headless 无宿主时缺省）
+      onContextOverflow: (ctx as any).onContextOverflow,
       onStep: (event: any) => {
         if (ctx.signal?.aborted) return;
         ctx.onEvent(event);
@@ -269,7 +317,8 @@ export async function runAgentTask(
     // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不
     // 影响任务成功返回（本模块 console-silent，错误以事件透出）。
     try {
-      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start);
+      // 包C 缺陷8：复用作用域内长命实例（markInjected 与 refine/markVerified 同一实例）
+      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start, auditMemoryStore ?? undefined);
     } catch (memErr: any) {
       ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
     }
@@ -319,6 +368,7 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      contextOverflowCompacted: (result as any).contextOverflowCompacted === true,
       // 0.8.2 证据链透出：headless/one-shot 宿主（RunCommand/eval runner）可从此
       // 读取逐任务注入账本——此前注入审计只在 rollout context 事件里，stdout 不可见。
       injectedCardIds,
@@ -361,13 +411,16 @@ export async function finalizeTaskMemory(
   injectedCardIds: string[],
   onEvent: (event: any) => void,
   taskText?: string,
-  startedAt = Date.now()
+  startedAt = Date.now(),
+  // 包C 缺陷8：可选复用调用方作用域内的长命实例（runAgentTask 传入）；
+  // 缺省时照旧自建（Repl.ts 等既有调用方零改动）。
+  reuseStore?: import('../memory/RefinedMemoryStore.js').RefinedMemoryStore
 ): Promise<void> {
   const traj = result?.bestTrajectory;
   if (!traj || traj.stopReason !== 'completed' || !session.workspace) return;
 
   const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
-  const store = new RefinedMemoryStore(session.workspace);
+  const store = reuseStore ?? new RefinedMemoryStore(session.workspace);
   const writtenFiles = extractWrittenFilePaths(traj);
 
   // R1：completed = 真实验证通过 → 提炼 success 卡并持久化（触发红线：写盘

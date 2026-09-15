@@ -54,7 +54,7 @@ export function resolveUnderWorkspace(
     if (existsSync(abs)) {
       real = realpathSync(abs);
     } else if (mustExist) {
-      return { ok: false, reason: `NOT_FOUND: ${p}` };
+      return { ok: false, reason: `NOT_FOUND: ${p}（文件不存在——若不确定文件名，先用 glob 列出目录内容再选择目标文件）` };
     } else {
       let probe = path.dirname(abs);
       while (probe !== path.dirname(probe) && !existsSync(probe)) {

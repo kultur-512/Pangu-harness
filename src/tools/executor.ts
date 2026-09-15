@@ -38,6 +38,38 @@ export function normalizeToolName(name: string): string {
   return TOOL_ALIASES[key] || key;
 }
 
+// ---- T2 参数名别名归一（openPangu 配合度修复）----
+// 探查实证：文本协议下模型看不到参数名 → 参数幻觉频发（`filepath`→EMPTY_PATH、
+// grep `command`→requires pattern）——解析成功但执行必败。别名在执行内核入口
+// 按工具收敛：executor.execute 与 engineAdapter.runCall（门禁/敏感路径/RBW
+// checkpoint 之前）都过 normalizeToolParams，保证下游看到同一套规范键。
+const TOOL_PARAM_ALIASES: Record<string, Record<string, string>> = {
+  read_file: { filepath: 'file_path', filename: 'file_path' },
+  write_file: { filepath: 'file_path', filename: 'file_path' },
+  edit_file: { filepath: 'file_path', filename: 'file_path' },
+  glob: { query: 'pattern', command: 'pattern' },
+  grep: { query: 'pattern', command: 'pattern' },
+};
+
+/**
+ * 把已知的参数名别名收敛到各工具实现读取的规范键。
+ * - 非破坏性：别名键保留（工具实现内的 `?? path` 兜底链不受影响）；
+ * - 规范键优先：canonical 已存在时别名值被忽略；
+ * - 未知工具 / 无别名表 → 原样返回。
+ */
+export function normalizeToolParams(toolName: string, params: Record<string, string>): Record<string, string> {
+  const aliases = TOOL_PARAM_ALIASES[normalizeToolName(toolName)];
+  if (!aliases || !params) return params;
+  let out: Record<string, string> | undefined;
+  for (const [aliasKey, canonicalKey] of Object.entries(aliases)) {
+    if (params[aliasKey] !== undefined && params[canonicalKey] === undefined) {
+      if (!out) out = { ...params };
+      out[canonicalKey] = params[aliasKey];
+    }
+  }
+  return out ?? params;
+}
+
 function withTimeout(p: Promise<ToolResult>, ms: number, signal?: AbortSignal): Promise<ToolResult> {
   return new Promise<ToolResult>((resolve) => {
     let settled = false;
@@ -118,6 +150,8 @@ export function createToolExecutor(
   return {
     async execute(toolName: string, params: Record<string, string>): Promise<ToolResult> {
       const norm = normalizeToolName(toolName);
+      // T2：参数名别名收敛（filepath→file_path、grep/glob 的 command/query→pattern）
+      const canonicalParams = normalizeToolParams(toolName, params);
       const entry = registry.get(norm);
       if (!entry) {
         return {
@@ -128,7 +162,7 @@ export function createToolExecutor(
         };
       }
       try {
-        const res = await withTimeout(Promise.resolve().then(() => entry.impl(params, ctx)), entry.timeoutMs, ctx.signal);
+        const res = await withTimeout(Promise.resolve().then(() => entry.impl(canonicalParams, ctx)), entry.timeoutMs, ctx.signal);
         return applyOutputCap(res);
       } catch (e: any) {
         return applyOutputCap({ ok: false, output: `✗ ${e?.message || e}`, durationMs: 0, error: 'IO' });

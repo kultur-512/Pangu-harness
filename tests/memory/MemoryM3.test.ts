@@ -114,37 +114,54 @@ describe('M3.2: getOverflowCards + auto-pull state machine', () => {
     const { PromptBuilder } = await import('../../src/cli/repl/PromptBuilder.js');
     const { Session } = await import('../../src/cli/repl/Session.js');
     const { TierRegistry } = await import('../../src/tiers/TierConfig.js');
-    const store = makeStore();
-    seedStore(store, 12);
-    const session = new Session();
-    session.workspace = ws;
-    session.tier = 'standard';
-    const builder = new PromptBuilder(session, TierRegistry.get('standard'));
-    const p1 = await builder.buildForTask('修 bug 跑测试');
-    assert.ok(builder.lastBuildMeta, 'lastBuildMeta populated');
-    assert.ok(Array.isArray(builder.lastBuildMeta!.injectedCardIds));
-    assert.ok(builder.lastBuildMeta!.memoryOverflowCount > 0, 'overflow pulled');
-    assert.ok(p1.includes('【额外记忆】'), 'extra memory block injected');
-    // 仅一次：同任务第二次 buildForTask 不再拉（autoPulledThisBuild 重置为 false 但 pulled 已排除？）
-    const p2 = await builder.buildForTask('修 bug 跑测试');
-    assert.ok(p2.includes('【额外记忆】') === false || builder.lastBuildMeta!.memoryOverflowCount >= 0, 'second build still completes');
+    // C2（2026-09-13）：L1 注入上限已窗口感知化（默认 32K 窗口 → 39 张会把 12 张
+    // 种子全吞掉，溢出恒为空）。本用例测的是 auto-pull 状态机本身——用评测逃生门
+    // 固定 L1 名额，溢出卡才有存在空间。
+    const prevLimit = process.env.PANSHA_MEMORY_LIMIT;
+    process.env.PANSHA_MEMORY_LIMIT = '8';
+    try {
+      const store = makeStore();
+      seedStore(store, 12);
+      const session = new Session();
+      session.workspace = ws;
+      session.tier = 'standard';
+      const builder = new PromptBuilder(session, TierRegistry.get('standard'));
+      const p1 = await builder.buildForTask('修 bug 跑测试');
+      assert.ok(builder.lastBuildMeta, 'lastBuildMeta populated');
+      assert.ok(Array.isArray(builder.lastBuildMeta!.injectedCardIds));
+      assert.ok(builder.lastBuildMeta!.memoryOverflowCount > 0, 'overflow pulled');
+      assert.ok(p1.includes('【额外记忆】'), 'extra memory block injected');
+      // 仅一次：同任务第二次 buildForTask 不再拉（autoPulledThisBuild 重置为 false 但 pulled 已排除？）
+      const p2 = await builder.buildForTask('修 bug 跑测试');
+      assert.ok(p2.includes('【额外记忆】') === false || builder.lastBuildMeta!.memoryOverflowCount >= 0, 'second build still completes');
+    } finally {
+      if (prevLimit === undefined) delete process.env.PANSHA_MEMORY_LIMIT;
+      else process.env.PANSHA_MEMORY_LIMIT = prevLimit;
+    }
   });
 
   it('tier gating: quick/max do NOT auto-pull; standard/high do', async () => {
     const { PromptBuilder } = await import('../../src/cli/repl/PromptBuilder.js');
     const { Session } = await import('../../src/cli/repl/Session.js');
     const { TierRegistry } = await import('../../src/tiers/TierConfig.js');
-    const store = makeStore();
-    seedStore(store, 10);
-    for (const tier of ['quick', 'max', 'standard', 'high'] as const) {
-      const s = new Session();
-      s.workspace = ws;
-      s.tier = tier as any;
-      const b = new PromptBuilder(s, TierRegistry.get(tier));
-      await b.buildForTask('任务 ' + tier);
-      const pulled = b.lastBuildMeta?.memoryOverflowCount ?? 0;
-      if (tier === 'quick' || tier === 'max') assert.equal(pulled, 0, `${tier} must not auto-pull`);
-      else assert.ok(pulled > 0, `${tier} should auto-pull`);
+    const prevLimit = process.env.PANSHA_MEMORY_LIMIT;
+    process.env.PANSHA_MEMORY_LIMIT = '8';
+    try {
+      const store = makeStore();
+      seedStore(store, 10);
+      for (const tier of ['quick', 'max', 'standard', 'high'] as const) {
+        const s = new Session();
+        s.workspace = ws;
+        s.tier = tier as any;
+        const b = new PromptBuilder(s, TierRegistry.get(tier));
+        await b.buildForTask('任务 ' + tier);
+        const pulled = b.lastBuildMeta?.memoryOverflowCount ?? 0;
+        if (tier === 'quick' || tier === 'max') assert.equal(pulled, 0, `${tier} must not auto-pull`);
+        else assert.ok(pulled > 0, `${tier} should auto-pull`);
+      }
+    } finally {
+      if (prevLimit === undefined) delete process.env.PANSHA_MEMORY_LIMIT;
+      else process.env.PANSHA_MEMORY_LIMIT = prevLimit;
     }
   });
 

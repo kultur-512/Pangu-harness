@@ -66,4 +66,14 @@ describe('grep tool', () => {
     const r = await grep({ pattern: 'alpha' }, ctx);
     assert.ok(!r.output.includes('bin.dat'));
   });
+
+  it('skips files over the 5MB scan cap with a placeholder line (no unbounded read)', async () => {
+    const big = 'x'.repeat(5 * 1024 * 1024) + '\nalpha-hidden-huge\n';
+    fs.writeFileSync(path.join(root, 'src', 'huge.txt'), big);
+    const r = await grep({ pattern: 'alpha' }, ctx);
+    assert.ok(r.ok);
+    assert.ok(!r.output.includes('alpha-hidden-huge'), 'oversized file must not be scanned');
+    assert.ok(r.output.includes('[skipped large file]'), `placeholder line expected, got: ${r.output.split('\n')[0]}`);
+    assert.equal(r.meta?.lines, 3, 'placeholder must not count as a match');
+  });
 });

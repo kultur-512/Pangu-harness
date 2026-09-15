@@ -34,6 +34,13 @@ export interface BudgetReport {
    * false = 字符长度 /4 估算（usage 缺失时的回落口径）。
    */
   usageMeasured: boolean;
+  /**
+   * 压缩计量锚点：本任务最后一次模型调用的实测 prompt_tokens。
+   * 单次请求的 prompt ≈ 当前活体上下文（system+历史+全部步骤重发），
+   * 是"现在上下文多大"的最佳实测值——累计值（estimatedUsedTokens）跨步
+   * 重复计入历史，不能当上下文占用用。
+   */
+  lastPromptTokens?: number;
   triggeredSoftLimit: boolean;
   triggeredDegradation: boolean;
   rolloutsExecuted: number;
@@ -62,6 +69,13 @@ export interface ChaserConfig {
   /** 0.8.2：chat 直答的独立记忆块（宿主从 PromptBuilder 传出；chat 的 user =
    *  "此块 + 用户原话"——绝不整段 enriched 塞 user，1B 元话语根因）。 */
   chatMemoryBlock?: string;
+  /**
+   * 【1】chat 直答的最近对话段（2026-09-13 迭代包）：宿主从 session 组装
+   * （最近 2 轮 userInput+answerText，≤600 字符，自带【最近对话】段头）。
+   * chaser 拿不到 session.turns——拼在 chatMemoryBlock 之后、用户原话之前，
+   * 指代型追问（"那第二个呢"）不再零上下文硬答。
+   */
+  chatRecentTurns?: string;
   // ---- 真实执行审批透传（全部可选） ----
   /** Session approval mode (default: readonly — safe floor). */
   approvalMode?: 'readonly' | 'default' | 'full';
@@ -120,6 +134,8 @@ export class PanshalachChaser {
     tierConfig?: TierConfig;
     error?: string;
     message?: string;
+    /** 本任务触发过溢出截断重试（RunResult 透传 → RunCommand 溢出证据行）。 */
+    contextOverflowCompacted?: boolean;
   }> {
     // 解析 tier（必须在任何客户端校验前完成，因为 dryRun/确认等返回需要 tierConfig）
     let effectiveTier: Tier;
@@ -264,11 +280,12 @@ export class PanshalachChaser {
       // 0.8.2 chat 净化：user = "记忆块 + 用户原话"。宿主传 chatMemoryBlock 时
       // issueDescription 已是原文（runAgentTask chat 分离传递）；记忆块拼在前，
       // 与 system 的对话指令配对——不再整段 enriched 塞 user（1B 元话语根因）。
-      const chatUserContent = config.chatMemoryBlock
-        ? `${config.chatMemoryBlock}
-
-${issueDescription}`
-        : issueDescription;
+      // 【1】最近对话原文（2026-09-13 迭代包）：chat 直答模型此前看不到最近对话
+      // 原文（【最近上下文】块只在被 chat 丢弃的 enriched 里），指代型追问零
+      // 上下文硬答——宿主组装的【最近对话】段拼在记忆块之后、用户原话之前。
+      const chatUserContent = [config.chatMemoryBlock, config.chatRecentTurns, issueDescription]
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        .join('\n\n');
       const chatMessages = [
         { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
         { role: 'user' as const, content: chatUserContent },
@@ -387,7 +404,12 @@ ${issueDescription}`
           // 无流式但有 chat：整段直答（正文由宿主 answered 兜底呈现——R1 路径）
           chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
         } else {
-          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）
+          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）。
+          // 覆盖边界申报（审查建议-5，2026-09-14 迭代）：此通道不含记忆块与
+          // 【最近对话】——仅有 complete 无 chat/streamChatMessages 的客户端在
+          // chat 意图下仍是"零记忆 + 零上下文"直答。已知缺口非本批回归；
+          // classic REPL 通道（Repl.ts solveIssue(enriched) 不传 chatMemoryBlock/
+          // chatRecentTurns）同样未覆盖，补齐属独立工作项。
           chatText = extractReplyText(await chatClient.complete(basePrompt, chatOpts));
         }
       } catch (e: any) {
@@ -428,6 +450,7 @@ ${issueDescription}`
         estimatedUsedTokens: chatMeasured,
         usageRatio: chatMeasured > 0 ? Math.min(1, chatMeasured / budgetTokens) : 0,
         usageMeasured: chatMeasured > 0,
+        ...(chatMeasured > 0 && chatUsage.prompt > 0 ? { lastPromptTokens: chatUsage.prompt } : {}),
         triggeredSoftLimit: false,
         triggeredDegradation: false,
         rolloutsExecuted: 1,
@@ -453,12 +476,20 @@ ${issueDescription}`
 
     // M2-4：真实 usage 计量——loop 每次模型调用经 wrapper 传 onUsage 累加；
     // usage 缺失（网关无 usage 字段）时回落 len/4 估算（budgetReport 标注实测/估算）。
-    const usageAccum = { prompt: 0, completion: 0 };
+    // overflowCompacted：loop 触发过溢出截断重试（评测 A 档正源，经 RunResult
+    // 透传到 RunCommand 证据行——stdout 正则误判多，机器可读标记是权威）。
+    let overflowCompacted = false;
+    // lastPrompt：最近一次请求的实测 prompt_tokens——上下文占用的最佳锚点
+    // （累计值跨步重复计入历史，见 BudgetReport.lastPromptTokens 注释）。
+    const usageAccum = { prompt: 0, completion: 0, lastPrompt: 0 };
     let usageSamples = 0;
     let usageMeasured = false;
     const onUsage = (u: { prompt?: number; completion?: number }) => {
       if (!u || typeof u !== 'object') return;
-      if (typeof u.prompt === 'number' && u.prompt >= 0) usageAccum.prompt += u.prompt;
+      if (typeof u.prompt === 'number' && u.prompt >= 0) {
+        usageAccum.prompt += u.prompt;
+        usageAccum.lastPrompt = u.prompt;
+      }
       if (typeof u.completion === 'number' && u.completion >= 0) usageAccum.completion += u.completion;
       usageSamples++;
     };
@@ -476,6 +507,7 @@ ${issueDescription}`
       benchmarkType: taskStyle,
       // 0.8.2：显式执行意图（task 意图才驱动防呆 nudge；chat 直答不进 loop、search 只读）
       executionIntent: intent === 'execution',
+      searchIntent: isSearchIntent,
       ironLawInjectionLevel: isSearchIntent ? 'none' : tierConfig.ironLawInjectionLevel,
       signal: config.signal,
       windowTokens: config.windowTokens,
@@ -674,7 +706,8 @@ ${issueDescription}`
         budgetNotes.push('usage 估算（网关未返回 usage 字段，按字符长度 /4 估算）');
       }
       if (loopResult.contextOverflowCompacted) {
-        budgetNotes.push('context_overflow 触发强制压缩并重试本步');
+        overflowCompacted = true;
+        budgetNotes.push('context_overflow 触发溢出截断并重试本步');
       }
       stepsExecuted = loopResult.steps.length;
 
@@ -739,6 +772,7 @@ ${issueDescription}`
       estimatedUsedTokens,
       usageRatio: Math.min(1, estimatedUsedTokens / budgetTokens),
       usageMeasured,
+      ...(usageMeasured && usageAccum.lastPrompt > 0 ? { lastPromptTokens: usageAccum.lastPrompt } : {}),
       triggeredSoftLimit,
       triggeredDegradation,
       rolloutsExecuted,
@@ -746,6 +780,6 @@ ${issueDescription}`
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, message: !success ? best.lastError : undefined };
+    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
   }
 }

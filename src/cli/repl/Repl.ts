@@ -12,6 +12,7 @@ import { PromptBuilder } from './PromptBuilder.js';
 import { TierRegistry } from '../../tiers/TierConfig.js';
 import { classifyTaskIntent } from '../taskIntent.js';
 import { createCliApprovalBridge } from '../../tools/approval.js';
+import { resolveWindowTokens } from './tokenEstimate.js';
 
 // Import all commands
 import HelpCommand from './commands/HelpCommand.js';
@@ -340,14 +341,14 @@ export class Repl {
       return;
     }
 
-    // Consume model context length from provider (persisted or cache). Default 256K.
+    // Consume model context length from provider (persisted or cache).
+    // 收口到共享 resolveWindowTokens：unknown/哨兵 → 32768 保守值（旧回落
+    // 256000 会把未知窗口谎报成"上下文 256K"）；与 loop 裁剪预算同源。
     const modelName = this.session.model || 'default';
     const effectiveModel = (provider && typeof (provider as any).getEffectiveModel === 'function')
       ? (provider as any).getEffectiveModel(modelName)
       : modelName;
-    const contextLen: number = (provider && typeof (provider as any).getModelContextLength === 'function')
-      ? (provider as any).getModelContextLength(modelName)
-      : 256000;
+    const contextLen: number = resolveWindowTokens(provider, modelName);
 
     const { PanshalachChaser } = await import('../../PanshalachChaser.js');
     const chaser = new PanshalachChaser(client, this.session.tier);
@@ -436,6 +437,20 @@ export class Repl {
       dryRun: simulate,
       memoryPreInjected: true,
       intent, // 入口前移的意图显式传入
+      // loop 70% 窗口预算裁剪的依据（此前只有 server/headless 路径传入，
+      // 交互模式长任务在溢出前没有任何主动裁剪）。
+      windowTokens: resolveWindowTokens(provider, modelName),
+      // C5（0.8.2 审查）：溢出 → 宿主应急压缩接线——onContextOverflow 首次
+      // 触发时对会话跑一次同步压缩（loop 的 overflowNotified 保证每任务至多
+      // 一次；绕 0.85 阈值的 force 语义由 compactSession 的轮次门槛自然承担），
+      // 会话级自愈而非只靠 loop 内截断。best-effort：失败不阻断任务。
+      onContextOverflow: async () => {
+        try {
+          const { compactSession } = await import('./compactService.js');
+          const r = await compactSession(this.session, client);
+          if (r.ok) this.renderer.warn(`溢出应急压缩：${r.message}`);
+        } catch { /* 记忆/压缩失败不阻断任务 */ }
+      },
       // classic 路径与 SSE 主路径共享同一审批/中断语义。
       approvalMode: this.session.approvalMode,
       sessionAllowlist: this.session.sessionApprovalAllowlist,
@@ -526,6 +541,20 @@ export class Repl {
           }
         });
       } catch {}
+
+      // 对话事实记忆（chat 直答沉淀）——与 runAgentTask server 路径同款：
+      // answered 正文 + chat 意图才落卡。classic 行模式 REPL 此前静默零沉淀
+      // （对抗审查 F16）。best-effort：记忆沉淀失败绝不影响对话返回。
+      if ((result as any)?.bestTrajectory?.stopReason === 'answered' && this.session.workspace) {
+        try {
+          const ansTraj = (result as any).bestTrajectory;
+          const chatAnswer = String(ansTraj?.steps?.[ansTraj.steps.length - 1]?.result ?? '');
+          if (chatAnswer.trim() && classifyTaskIntent(issue) === 'chat') {
+            const { recordChatFact } = await import('../../memory/chatFactMemory.js');
+            await recordChatFact(this.session.workspace, issue, chatAnswer);
+          }
+        } catch { /* 记忆沉淀失败不影响对话 */ }
+      }
 
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = (result as any)?.bestTrajectory?.stopReason;

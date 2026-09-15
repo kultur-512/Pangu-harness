@@ -103,6 +103,66 @@ describe('0.7.3 T1#1 classifySignal（真实成功信号）', () => {
   });
 });
 
+// ==================== 包B：ALL_TESTS_PASSED 分段尾锚定（残余全文 includes 清理） ====================
+// 【原缺陷】classifySignal 及 run() 内 4 处 `verificationResult.includes('ALL_TESTS_PASSED')`
+// ——读到含该字面量的文件正文（如本仓库历史日志、源码）即假"验证通过"。
+// 修复：全部改为与 VERIFICATION: PASS 同款的分段尾锚定（segEndsWith）。
+describe('包B ALL_TESTS_PASSED 尾锚定（残余全文 includes 清理）', () => {
+  const loop: any = new VerifyCritiqueLoop({}, {}, {});
+
+  it('【原缺陷】正文含 ALL_TESTS_PASSED 字样但结尾不是它 → 不判 PASS', () => {
+    const r = [
+      'READ_SUCCESS: docs/release-notes.md',
+      '历史发布日志里记录过一次 ALL_TESTS_PASSED',
+      'VERIFICATION: NEUTRAL',
+    ].join('\n');
+    assert.equal(loop.classifySignal(r), 'PARTIAL', '读到含该字面量的文件正文不是验证通过');
+  });
+
+  it('多调用：字面量只出现在段落中部、唯一尾标是 NEUTRAL → 不判 PASS', () => {
+    const r = [
+      'READ_SUCCESS: a.log\ngrep 命中行: ALL_TESTS_PASSED',
+      'READ_SUCCESS: b.txt\nVERIFICATION: NEUTRAL',
+    ].join('\n---\n');
+    assert.equal(loop.classifySignal(r), 'PARTIAL');
+  });
+
+  it('结尾确实为 ALL_TESTS_PASSED → PASS（smoke mock 形状保持）', () => {
+    assert.equal(loop.classifySignal('ALL_TESTS_PASSED'), 'PASS');
+    assert.equal(loop.classifySignal('BASH_SUCCESS:\npong\nALL_TESTS_PASSED'), 'PASS');
+    assert.equal(loop.classifySignal('BASH_SUCCESS:\npong\nALL_TESTS_PASSED  \n'), 'PASS', '容忍尾随空白');
+    assert.equal(loop.classifySignal('VERIFICATION: ALL_TESTS_PASSED'), 'PASS', 'Termination mock 形状');
+  });
+
+  it('多调用一成一败：PASS 段存在即过（粒度锁定不回归）', () => {
+    assert.equal(
+      loop.classifySignal('TOOL_ERROR: x\n---\nALL_TESTS_PASSED'),
+      'PASS'
+    );
+  });
+
+  it('loop 级：engine 结果正文含字面量（非尾标）→ success=false、不 completed', async () => {
+    const alwaysRead = `
+<thinking>t</thinking>
+<plan>p</plan>
+<verify>v</verify>
+<>
+  <read_file><file_path>docs.md</file_path></read_file>
+</>
+`;
+    const model = { calls: 0, async complete(_p: string) { this.calls++; return alwaysRead; } };
+    const engine = {
+      async execute(_calls: any[]) {
+        return 'READ_SUCCESS: docs.md\n日志正文提及 ALL_TESTS_PASSED\nVERIFICATION: NEUTRAL';
+      },
+    };
+    const loop = makeLoop(model, engine, { maxSteps: 2 });
+    const out = await loop.run('读文档');
+    assert.equal(out.success, false, '字面量不是 PASS（旧实现 includes 假成功）');
+    assert.equal(out.stopReason, 'max-steps', '无真实验证 → 不 completed');
+  });
+});
+
 describe('0.7.3 T1#1 loop 级：NEUTRAL=PARTIAL 不计真实验证（不清零断言）', () => {
   it('read_file 成功（NEUTRAL）不置 hasPerformedRealVerification、不清零 stepsSinceLastVerification', async () => {
     const alwaysRead = `

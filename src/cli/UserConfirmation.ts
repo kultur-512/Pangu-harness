@@ -80,8 +80,16 @@ export function renderConfirmationPanel(input: ConfirmationInput): string {
 
 /**
  * 等待用户确认（同步 stdin）
+ * P2: 无 TTY 保护 —— 管道/CI 下没有可交互 stdin，resume + 挂起等待只会
+ * 永久卡死流程（或吞掉管道数据）。直接按否决 resolve，零等待、不碰 stdin。
  */
 export function waitForUserConfirmation(prompt: string = '确认继续？[yes/no]: '): Promise<ConfirmationResult> {
+  if (!process.stdin.isTTY) {
+    return Promise.resolve({
+      confirmed: false,
+      reason: 'non-interactive: stdin is not a TTY, auto-declined（非交互环境自动否决）',
+    });
+  }
   return new Promise((resolve) => {
     process.stdout.write(prompt);
     process.stdin.setEncoding('utf-8');

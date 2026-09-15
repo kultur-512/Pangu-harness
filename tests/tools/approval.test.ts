@@ -11,6 +11,7 @@ import path from 'node:path';
 import { classify, createHeadlessApprovalBridge, describeRequest } from '../../src/tools/approval.js';
 import { createEngineAdapter } from '../../src/tools/engineAdapter.js';
 import { isReadonlyAllowed } from '../../src/tools/readonlyAllowlist.js';
+import { latestCheckpoint, clearHistoryForWorkspace } from '../../src/tools/fileHistory.js';
 import type { TierConfig } from '../../src/tiers/TierConfig.js';
 
 let root: string;
@@ -79,10 +80,29 @@ describe('classify', () => {
     assert.equal(r.danger, true);
   });
 
-  it("session allowlist ('a') skips approval in default mode", () => {
-    const allow = new Set<string>(['write_file']);
-    const r = classify('write_file', { file_path: 'x' }, { mode: 'default', sessionAllowlist: allow, isReadonlyAllowed });
-    assert.equal(r.needsApproval, false);
+  it("session allowlist ('a'): write/benign-bash skip, DANGEROUS bash never skips", () => {
+    const allow = new Set<string>(['write_file', 'bash']);
+    const w = classify('write_file', { file_path: 'x' }, { mode: 'default', sessionAllowlist: allow, isReadonlyAllowed });
+    assert.equal(w.needsApproval, false, "write_file allow-always still skips (session + persist semantics kept)");
+
+    const benign = classify('bash', { command: 'node script.js' }, { mode: 'default', sessionAllowlist: allow, isReadonlyAllowed });
+    assert.equal(benign.needsApproval, false, 'benign bash is covered by the session allowlist');
+
+    const evil = classify('bash', { command: 'rm -rf build' }, { mode: 'default', sessionAllowlist: allow, isReadonlyAllowed });
+    assert.equal(evil.needsApproval, true, 'dangerous bash must re-prompt even when the session allowlist hits');
+    assert.equal(evil.denied, false, 'dangerous bash is an approval, not a hard deny');
+  });
+
+  it('alias-normalized tool names hit the write/bash classification', () => {
+    const w = classify('write', { file_path: 'x', content: 'y' }, { ...base, mode: 'readonly' });
+    assert.equal(w.denied, true, "'write' alias must be treated as write_file in readonly");
+    assert.ok(w.reason!.includes('/approvals default'));
+    const wU = classify('WRITE_FILE', { file_path: 'x' }, { ...base, mode: 'readonly' });
+    assert.equal(wU.denied, true, 'case variants must normalize');
+    const e = classify('edit', { file_path: 'x' }, { ...base, mode: 'default' });
+    assert.equal(e.needsApproval, true, "'edit' alias must be treated as edit_file");
+    const sh = classify('run_command', { command: 'node x.js' }, { ...base, mode: 'default' });
+    assert.equal(sh.needsApproval, true, "'run_command' alias must be treated as bash");
   });
 
   it('describeRequest: bash shows command; write shows path + size', () => {
@@ -227,5 +247,176 @@ describe('engineAdapter approval gate', () => {
     assert.ok(req, 'approval.request event must be emitted');
     assert.equal(req.tool, 'write_file');
     assert.ok(req.description.includes('evt.txt'));
+  });
+
+  // ==================== P0: 工具别名不得绕过审批门 ====================
+
+  it('readonly: write alias (`write`) denied with guidance, nothing written', async () => {
+    setStdoutTty(true);
+    let bridgeCalls = 0;
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'readonly',
+      approvalBridge: async () => { bridgeCalls++; return 'y'; },
+    });
+    const out = await adapter.execute(call('write', { file_path: 'alias.txt', content: 'hacked' }));
+    assert.ok(out.startsWith('TOOL_ERROR: DENIED_READONLY'), out.slice(0, 80));
+    assert.ok(out.includes('当前档位为只读；使用 /approvals default 或切换档位放行'), 'reason must carry readonly guidance');
+    assert.equal(bridgeCalls, 0);
+    assert.ok(!fs.existsSync(path.join(root, 'alias.txt')), 'alias must NOT slip past the readonly gate');
+  });
+
+  it('plan mode: write alias returns PLAN_MODE and writes nothing', async () => {
+    setStdoutTty(true);
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'full',
+      planMode: true,
+    });
+    const out = await adapter.execute(call('write', { file_path: 'plan.txt', content: 'nope' }));
+    assert.ok(out.includes('PLAN_MODE'), out.slice(0, 120));
+    assert.ok(!fs.existsSync(path.join(root, 'plan.txt')), 'alias must NOT slip past plan-mode precheck');
+  });
+
+  it('readonly denial segment ends with the [TOOL_DENIED_READONLY <tool>] tail marker', async () => {
+    setStdoutTty(true);
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'readonly',
+    });
+    const out = await adapter.execute(call('bash', { command: 'curl http://evil.example' }));
+    assert.ok(out.includes('DENIED_READONLY'));
+    const seg = out.split('\n---\n')[0];
+    assert.ok(seg.trimEnd().endsWith('[TOOL_DENIED_READONLY bash]'), `segment must end with the tail marker, got: ${JSON.stringify(seg.slice(-120))}`);
+  });
+
+  it("write alias still checkpoints + passes the write mutex (normalization at :674/:681)", async () => {
+    clearHistoryForWorkspace(root);
+    setStdoutTty(true);
+    fs.writeFileSync(path.join(root, 'rbw.txt'), 'original');
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'full',
+    });
+    await adapter.execute(call('read_file', { file_path: 'rbw.txt' })); // RBW prerequisite
+    const out = await adapter.execute(call('write', { file_path: 'rbw.txt', content: 'v2' }));
+    assert.ok(out.includes('VERIFICATION: APPLIED'), out.slice(0, 120));
+    const e = latestCheckpoint(root);
+    assert.ok(e, 'alias write must still create a file-history checkpoint');
+    assert.equal(e.rel, 'rbw.txt');
+    clearHistoryForWorkspace(root);
+  });
+
+  // ==================== P1: 'a' 对 bash 的克制语义 ====================
+
+  it("'a' on bash is session-scoped ONLY: no persist; dangerous bash still re-prompts", async () => {
+    setStdoutTty(true);
+    const allowlist = new Set<string>();
+    let bridgeCalls = 0;
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'default',
+      approvalTimeoutMs: 100,
+      approvalBridge: async () => { bridgeCalls++; return 'a'; },
+      sessionAllowlist: allowlist,
+    });
+    const out1 = await adapter.execute(call('bash', { command: 'node -e "console.log(1)"' }));
+    assert.ok(out1.includes('BASH_SUCCESS'), out1.slice(0, 120)); // 'a' approves the current call
+    assert.ok(allowlist.has('bash'), 'session allowlist gains bash for this session');
+    const cfgPath = path.join(root, '.panshalach.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      assert.ok(!(cfg.approvalAllowlist || []).includes('bash'), "'a' on bash must NOT persist to project config");
+    }
+    await adapter.execute(call('bash', { command: 'node -e "console.log(2)"' }));
+    assert.equal(bridgeCalls, 1, 'benign bash reuses the session allowlist without re-prompting');
+
+    // control: 'a' on write_file KEEPS the persist semantics
+    await adapter.execute(call('write_file', { file_path: 'persist.txt', content: 'x' }));
+    assert.ok(fs.existsSync(cfgPath), "write_file 'a' still persists project config");
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    assert.ok((cfg.approvalAllowlist || []).includes('write_file'), 'write_file allow-always persisted');
+
+    // dangerous bash while the session allowlist contains bash → bridge again, 'n' → denied
+    let evilBridgeCalls = 0;
+    const evil = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'default',
+      approvalTimeoutMs: 100,
+      approvalBridge: async () => { evilBridgeCalls++; return 'n'; },
+      sessionAllowlist: new Set<string>(['bash']),
+    });
+    const out2 = await evil.execute(call('bash', { command: 'rm -rf everything' }));
+    assert.ok(out2.startsWith('TOOL_ERROR: DENIED_BY_USER'), out2.slice(0, 120));
+    assert.equal(evilBridgeCalls, 1, 'dangerous bash must reach the bridge even when allowlisted');
+    assert.ok(!out2.includes('BASH_SUCCESS'), 'dangerous command must not execute');
+  });
+
+  it("'a' on bash persists nothing even across a fresh adapter (control: no .panshalach.json entry)", async () => {
+    setStdoutTty(true);
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'default',
+      approvalTimeoutMs: 100,
+      approvalBridge: async () => 'a',
+      sessionAllowlist: new Set<string>(),
+    });
+    await adapter.execute(call('bash', { command: 'node -e "console.log(3)"' }));
+    const cfgPath = path.join(root, '.panshalach.json');
+    assert.ok(!fs.existsSync(cfgPath), "bash 'a' must never create the project config entry");
+  });
+});
+
+// ==================== P2: adapter 级共享 decisionTimer 并发互踩 ====================
+describe('engineAdapter MCP approval concurrency (timer hygiene)', () => {
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-appr-mcp-'));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    setStdoutTty(undefined);
+    delete process.env.PANSHA_SMOKE;
+  });
+
+  it('a fast MCP approval must not clear the slow one\'s timeout (timer is per-call)', async () => {
+    setStdoutTty(true);
+    const adapter = createEngineAdapter({
+      workspaceRoot: root,
+      tierConfig: fakeTierConfig('high'),
+      approvalMode: 'default',
+      approvalTimeoutMs: 400,
+      sessionAllowlist: new Set<string>(),
+      approvalBridge: (req) =>
+        req.tool === 'mcp_fast_ping'
+          ? new Promise<string>((r) => setTimeout(() => r('y'), 100))
+          : new Promise<string>(() => {}), // slow bridge hangs forever
+      mcpTools: [
+        { server: 'f', name: 'mcp_fast_ping', description: 'fast', call: async () => ({ ok: true, output: 'FAST-OK' }) },
+        { server: 's', name: 'mcp_slow_tool', description: 'slow', call: async () => ({ ok: true, output: 'SLOW-OK' }) },
+      ] as any,
+    });
+    const guarded = (p: Promise<any>, ms: number) =>
+      Promise.race([
+        p.then(() => 'settled', () => 'settled'),
+        new Promise<string>((r) => setTimeout(() => r('HUNG'), ms)),
+      ]);
+
+    const pFast = adapter.executor.execute('mcp_fast_ping', {});
+    await new Promise((r) => setTimeout(r, 50)); // fast timer set FIRST, slow clobbers the shared handle
+    const pSlow = adapter.executor.execute('mcp_slow_tool', {});
+
+    const slowState = await guarded(pSlow, 5000);
+    assert.equal(slowState, 'settled', 'slow MCP approval must settle via its OWN timeout (shared handle was clobbered by the fast call)');
+    const slowRes = await pSlow;
+    assert.equal((slowRes as any).error, 'DENIED_BY_USER', `slow tool must be denied by timeout, got: ${JSON.stringify((slowRes as any).error)}`);
+    const fastRes = await pFast;
+    assert.ok(String((fastRes as any).output).includes('FAST-OK'), 'fast approval unaffected');
   });
 });

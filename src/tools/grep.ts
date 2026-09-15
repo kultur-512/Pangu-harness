@@ -3,15 +3,19 @@
 // 250-match cap; output `file:line:text`; include glob filter; friendly
 // error on invalid regex.
 
-import { readFileSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
 import path from 'path';
 import { resolveUnderWorkspace } from './pathGuard.js';
 import { walkFiles, globToRegExp } from './walk.js';
+import { redactSecrets } from '../utils/redact.js';
 import type { ToolImpl } from './types.js';
 
 const MATCH_CAP = 250;
 const SCAN_CAP = 2000;
 const LINE_DISPLAY_CAP = 200;
+// 5MB 单文件扫描上限（与 readFile.ts 同款 stat+cap）——超限文件整文件跳过，
+// 输出占位行（无上限的 readFileSync 会把 grep 拖死在巨型产物/日志上）。
+const MAX_SCAN_BYTES = 5 * 1024 * 1024;
 
 export const grep: ToolImpl = async (params, ctx) => {
   const start = Date.now();
@@ -51,6 +55,18 @@ export const grep: ToolImpl = async (params, ctx) => {
       if (matches >= MATCH_CAP) { truncated = true; break; }
       if (includeRe && !includeRe.test(f.rel) && !includeRe.test(path.basename(f.rel))) continue;
 
+      // 5MB 上限：超限跳过该文件并输出占位行（不占 match 配额）
+      try {
+        const st = statSync(f.abs);
+        if (!st.isFile()) continue;
+        if (st.size > MAX_SCAN_BYTES) {
+          out.push(`${f.rel}:0:[skipped large file]`);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
       let content: string;
       try {
         const buf = readFileSync(f.abs);
@@ -66,7 +82,9 @@ export const grep: ToolImpl = async (params, ctx) => {
         if (re.test(lines[i])) {
           if (matches >= MATCH_CAP) { truncated = true; break; }
           const text = lines[i].length > LINE_DISPLAY_CAP ? lines[i].slice(0, LINE_DISPLAY_CAP) + '…' : lines[i];
-          out.push(`${f.rel}:${i + 1}:${text}`);
+          // 输出行接 redactSecrets——grep 会把文件内容原样带进上下文/终端，
+          // 不得成为密钥外泄通道。
+          out.push(`${f.rel}:${i + 1}:${redactSecrets(text)}`);
           matches++;
         }
       }

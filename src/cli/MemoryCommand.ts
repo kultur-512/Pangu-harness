@@ -118,6 +118,10 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
       const filtered = kind ? cards.filter(c => c.kind === kind) : cards;
       return renderList(filtered, kind);
     }
+    case 'stats':
+      // /memory stats（包C 缺陷7）：注入审计视图——总卡数（按 kind 分列）+
+      // markInjected 账本 + 最近 10 条 memory_injected 事件（复用 events.ts）
+      return renderStats(store, args);
     case 'search': {
       // /memory search <词> — 关键词检索（不占注入预算，人工按需）
       const q = args.slice(1).join(' ').trim().toLowerCase();
@@ -193,11 +197,66 @@ export async function runMemoryCommand(args: string[], workspaceRoot: string): P
   }
 }
 
+/**
+ * `/memory stats`（包C 缺陷7）：记忆与注入审计视图（只读）。
+ * - 总卡数（按 kind 分列）；
+ * - markInjected 账本：cardId → 注入次数 / 最近注入时间（进程级内存账本，
+ *   经 RefinedMemoryStore.injectedAtOf / injectedCountOf）；
+ * - 最近 10 条 memory_injected 事件（复用 events.ts；会话定位与 /memory events
+ *   同源：--session > PANSHA_SESSION_ID > 最近 rollout）。
+ */
+function renderStats(store: RefinedMemoryStore, args: string[]): string {
+  const cards = store.list();
+  const byKind = new Map<string, number>();
+  for (const c of cards) {
+    const k = (c as any).kind ?? 'failure';
+    byKind.set(k, (byKind.get(k) ?? 0) + 1);
+  }
+  const kindLine = ['failure', 'success', 'preference']
+    .map((k) => `${k} ${byKind.get(k) ?? 0}`)
+    .join(' / ');
+
+  const lines: string[] = ['记忆统计：'];
+  lines.push(`  总卡数: ${cards.length}（${kindLine}）`);
+
+  // 注入账本（进程级内存记账；一次性进程内若从未 markInjected 则如实呈现为空）
+  const ledger = cards.filter((c) => store.injectedAtOf(c.id) !== undefined);
+  if (ledger.length === 0) {
+    lines.push('  注入账本:（本进程尚无注入记账——markInjected 为内存账本，随任务注入产生）');
+  } else {
+    lines.push('  注入账本（cardId → 注入次数 / 最近注入时间）：');
+    for (const c of ledger) {
+      const n = store.injectedCountOf(c.id) ?? 1;
+      lines.push(`    [${c.id}] 注入 ${n} 次 · 最近 ${fmtTs(store.injectedAtOf(c.id)!)} · ${String(c.summary).slice(0, 60)}`);
+    }
+  }
+
+  // 最近 10 条 memory_injected 事件（best-effort：查不到会话则跳过该区）
+  try {
+    let sid = readFlag(args, '--session') ?? process.env.PANSHA_SESSION_ID?.trim();
+    if (!sid) {
+      const recent = listRecent(1);
+      if (recent.length > 0) sid = recent[0].id;
+    }
+    if (sid) {
+      const events = new MemoryEventStore(sid).query({ kind: 'memory_injected' as AgentEventKind, limit: 10 });
+      lines.push('', `最近 memory_injected 事件（会话 ${sid}，${events.length} 条）：`);
+      for (const e of events) {
+        const refs = e.refs?.length ? ` refs=${e.refs.join(',')}` : '';
+        lines.push(`    [${fmtTs(e.ts)}] ${e.summary}${refs}`);
+      }
+    }
+  } catch { /* 事件查询 best-effort */ }
+
+  return lines.join('\n');
+}
+
 function renderHelp(): string {
   return `
 Panshalach memory 子命令:
 
   memory list [--kind failure|success|preference]  列出教训卡片（可按 kind 过滤）
+  memory stats [--session <id>]                    记忆统计：按 kind 卡数 / 注入账本 / 最近注入事件
   memory remember [--pin] <内容>                    记住用户偏好（--pin 冻结衰减）
   memory forget <id>                               删除卡片
   memory clear [--category X]                      清空（可指定类别）

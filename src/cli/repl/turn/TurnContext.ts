@@ -11,6 +11,7 @@ import { InputQueue } from '../InputQueue.js';
 import { AgentTree } from '../AgentTree.js';
 import type { ModeRing } from '../ModeRing.js';
 import type { ModelProvider } from '../types.js';
+import { resolveWindowTokens } from '../tokenEstimate.js';
 
 export type OutputRendererLike = ReturnType<typeof createOutputRenderer>;
 
@@ -177,14 +178,8 @@ export function clearInlineLine(ctx: TurnContext) {
 }
 
 export function resolveCtxWindowTokens(ctx: TurnContext): number {
-  const env = Number(process.env.PANSHA_CTX_WINDOW || 0);
-  if (Number.isFinite(env) && env > 0) return env;
-  try {
-    const p = (ctx.provider ?? (ctx.session as any).provider) as any;
-    const n = Number(p?.getModelContextLength?.(ctx.session.model));
-    if (Number.isFinite(n) && n > 0 && n !== 256000) return n;
-  } catch {}
-  return 32768;
+  // 委托共享实现（与 runAgentTask / loop 预算同源，env 覆盖优先）。
+  return resolveWindowTokens(ctx.provider ?? (ctx.session as any).provider, ctx.session.model);
 }
 
 export function bumpCtx(ctx: TurnContext, text: any) {

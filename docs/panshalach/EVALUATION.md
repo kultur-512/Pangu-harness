@@ -68,6 +68,8 @@
 
 ## 4. 结果表（占位 — 待真实 openPangu 数据）
 
+> **外部基准已完成（2026-09-14）**：LongMemEval-90 交叉对比（六格 harness 矩阵 + 0.8.3→0.8.5 修复轨迹 strict 9→13→15→16）已出成绩，见 [`scripts/eval/longmemeval-90/COMPARE-90.md`](../../scripts/eval/longmemeval-90/COMPARE-90.md)。该基准与本章 T1-T5 消融（R6 真机待跑）互为补充：LME 量长程记忆召回，T1-T5 量执行纪律与溢出治理。
+
 <!-- R6-AUTO-FILL §4 START -->
 
 > 自动生成于 2026-09-08T07:08:19.711Z | 来源: mock-smoke | 模型: mock://smoke

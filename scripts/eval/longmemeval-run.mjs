@@ -2,6 +2,12 @@
 // scripts/eval/longmemeval-run.mjs
 // LongMemEval (oracle 剖分) 真实路径评测 runner（0.8.2 · EVAL-FEASIBILITY P3）。
 //
+// ── 口径冻结声明（2026-09-13）────────────────────────────────────────
+// 本 runner 的评测口径冻结于 2026-09-13，仅用于复现已入库基线成绩，不再扩展：
+// 重放经 recordChatFact 且不传 sessionDate → 卡的事实时间被写为运行当天
+// （以真实今天冒充事实时间，temporal 口径失真）。
+// 【新评测一律走 longmemeval-90/run-product.mjs】（产品同源 + 事实时间锚齐备）。
+//
 // 与 T1-T5 runner 的关键区别——**不走适配器**（控制人裁决：适配器测的是转换器
 // 不是产品）。历史重放走产品自身的"对话事实记忆"链路：
 //   重放阶段：haystack 会话逐轮喂 recordChatFact（chatFactMemory.ts，产品功能，
@@ -163,7 +169,7 @@ async function replaySessions(q, wsDir) {
       const turn = session[i];
       const next = session[i + 1];
       if (turn.role !== 'user' || next.role !== 'assistant') continue;
-      const r = await recordChatFact(wsDir, turn.content, next.content);
+      const r = await recordChatFact(wsDir, turn.content, next.content); // 口径冻结 2026-09-13：未传 sessionDate → 卡事实时间=运行当天（真实今天冒充事实时间）；仅复现基线用，新评测走 longmemeval-90/run-product.mjs
       if (r.recorded) facts++;
       if (facts >= MAX_FACTS) break outer;
     }

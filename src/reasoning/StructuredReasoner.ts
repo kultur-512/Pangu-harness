@@ -6,6 +6,7 @@
 // 自我批评保持建设性，避免过度苛责和无谓消耗。
 
 import { BenchmarkProfiles, BenchmarkType, BenchmarkProfile } from '../benchmarks/BenchmarkProfiles.js';
+import { resolveToday } from '../memory/timeAnchor.js';
 
 export interface ReasoningStep {
   type: 'thinking' | 'plan' | 'verify' | 'critique' | 'risk' | 'action' | 'format_check';
@@ -317,41 +318,131 @@ ${executionResult}${toolInfo}
    * 必须给出可模仿的真实调用。示例工具按 availableTools 动态挑选：教学里出现
    * 该档位不可用的工具会诱导 UNKNOWN_TOOL 空转（实测教训：quick 档示例
    * write_file，模型照抄后被拒，烧满步数）。
-   * @param toolNames 当前 adapter 实际注册的工具名（缺省视为仅 bash 可用）
+   *
+   * openPangu 配合度修复（三路探查实证驱动）：
+   *  - read_file 示例【恒有】——bash 独苗示例 → 模型 18/18 全选 bash（示例复制器）；
+   *    read_file 示例在 → 工具选择正确；
+   *  - toolNames 含 edit_file/glob/bash 时各追加一个完整参数示例（参数名从 schema
+   *    取，不写死）；
+   *  - 示例参数值一律中性占位（实证：示例值会泄漏进模型输出，src/index.ts →
+   *    模型输出 src/config.json）；
+   *  - 首句换为 V1 实证措辞（V1 3/3 零警告 vs 旧首句 1/3）；
+   *  - 文本协议参数渲染：每个可用工具渲染一行"工具名 — 用途（参数：…）"——
+   *    修"文本协议下模型看不到参数名 → 参数幻觉 100%"的结构性缺口。
+   *    用途从 schema description 首行取；增量控制在 ~600 字符内。
+   * @param toolNames 当前 adapter 实际注册的工具名（缺省视为 bash + read_file 可用）
+   * @param opts.primaryTool 首选示例工具（保证其示例存在）
+   * @param opts.schemaById 工具名 → { description, parameters }（来自 engineAdapter.toolSchemas()）
    */
-  static buildToolCallFormatEnforcementPrompt(toolNames?: string[]): string {
-    const tools = new Set((toolNames ?? ['bash']).map((n) => String(n).toLowerCase()));
-    const canWrite = tools.has('write_file');
+  static buildToolCallFormatEnforcementPrompt(
+    toolNames?: string[],
+    opts?: {
+      primaryTool?: string;
+      schemaById?: Record<string, { description?: string; parameters?: any }>;
+    }
+  ): string {
+    const tools = (toolNames && toolNames.length > 0 ? toolNames : ['bash', 'read_file']).map((n) => String(n));
+    const lowerTools = new Set(tools.map((n) => n.toLowerCase()));
 
+    /** 工具元数据：description 首行 + 全部参数名 + 必填参数（schema 优先，内置兜底）。 */
+    const metaOf = (name: string): { description: string; params: string[]; required: string[] } => {
+      const key = name.toLowerCase();
+      const s = opts?.schemaById?.[key];
+      if (s && typeof s === 'object') {
+        const props = (s.parameters as any)?.properties ?? {};
+        const all = Object.keys(props).map(String);
+        const required: string[] = Array.isArray((s.parameters as any)?.required)
+          ? (s.parameters as any).required.map(String)
+          : [];
+        // MCP 空壳 description（空串/纯空白）→ 兜底文案；否则取首行首个子句
+        const rawDesc = String(s.description ?? '').trim();
+        const descLine = rawDesc
+          ? rawDesc.split('\n')[0].split(/[（(。；;]/)[0].trim().slice(0, 30)
+          : '';
+        return { description: descLine || '调用该工具完成任务', params: all.slice(0, 5), required };
+      }
+      const fb = StructuredReasoner.DEFAULT_TOOL_META[key];
+      if (fb) return { description: fb.description, params: fb.params.slice(0, 5), required: fb.required.slice(0, 5) };
+      return { description: '调用该工具完成任务', params: [], required: [] };
+    };
+
+    /** 示例用中性占位值（防示例值泄漏进模型输出）。 */
+    const neutralValue = (param: string): string => {
+      const map: Record<string, string> = {
+        file_path: 'sample.txt',
+        pattern: 'pattern',
+        command: 'echo hello',
+        content: '待写入的内容',
+        old_string: '待替换的原文',
+        new_string: '替换后的新文本',
+      };
+      return map[param] ?? '示例值';
+    };
+
+    /** 由必填参数生成示例块（无 required 清单时回落全部已知参数）。 */
+    const exampleOf = (name: string, label: string): string => {
+      const m = metaOf(name);
+      const paramNames = m.required.length > 0 ? m.required : (m.params.length > 0 ? m.params : ['value']);
+      const body = paramNames.map((p) => `    <${p}>${neutralValue(p)}</${p}>`).join('\n');
+      return `${label}：\n<>\n  <${name}>\n${body}\n  </${name}>\n</>`;
+    };
+
+    // 示例选择：read_file 恒有；primaryTool 保证；bash/glob/edit_file/write_file 按可用性追加
     const examples: string[] = [];
-    examples.push(`执行命令示例：
-<>
-  <bash>
-    <command>echo hello</command>
-  </bash>
-</>`);
-    if (canWrite) {
-      examples.push(`写文件示例：
-<>
-  <write_file>
-    <file_path>notes.txt</file_path>
-    <content>hello world</content>
-  </write_file>
-</>`);
+    const wantExample = new Set<string>(['read_file']);
+    if (opts?.primaryTool) wantExample.add(String(opts.primaryTool).toLowerCase());
+    for (const t of ['bash', 'glob', 'edit_file', 'write_file']) {
+      if (lowerTools.has(t)) wantExample.add(t);
+    }
+    const LABELS: Record<string, string> = {
+      read_file: '读文件示例',
+      bash: '执行命令示例',
+      glob: '列文件示例',
+      edit_file: '编辑文件示例',
+      write_file: '写文件示例',
+    };
+    // read_file 恒排首位（示例复制器实证：首位示例主导工具选择）
+    const ordered = [...wantExample].sort((a, b) => (a === 'read_file' ? -1 : b === 'read_file' ? 1 : 0));
+    for (const t of ordered) {
+      examples.push(exampleOf(t, LABELS[t] ?? `${t} 示例`));
     }
 
+    // 文本协议参数渲染：每工具一行"名 — 用途（参数：…）"
+    const toolLines = tools.map((t) => {
+      const m = metaOf(t);
+      const paramPart = m.params.length > 0 ? m.params.join(', ') : '见工具说明';
+      return `${t} — ${m.description}（参数：${paramPart}）`;
+    });
+
     return `【工具调用格式（必须遵守）】
-每一步你必须输出恰好一个工具调用块，用 <> 行包裹，直接输出，不要放进 \`\`\` 代码块：
+你必须只输出一个工具调用块，不要输出任何解释文字。可用工具：${tools.join(', ')}。
 
 ${examples.join('\n\n')}
 
+各工具用途与参数（参数名必须一字不差）：
+${toolLines.join('\n')}
+
 规则：
-- 一次只调用一个工具，看到结果后再决定下一步。
-- 可用工具：${[...tools].sort().join(', ')}。不要调用列表之外的工具。
-- 参数写在 <参数名>值</参数名> 中，不要用 JSON。
+- 一次只调用一个工具，看到结果后再决定下一步。不要调用可用列表之外的工具。
+- 参数写在 <参数名>值</参数名> 中，不要用 JSON；参数名以上方列表为准。
+- 不要把工具调用块放进 \`\`\` 代码块。
 - 完成修改后必须运行验证命令；全部通过时在最后输出 VERIFICATION: PASS。
 - 禁止只描述计划而不输出工具调用块。`;
   }
+
+  /**
+   * 内置工具元数据兜底（与 engineAdapter.BUILTIN_TOOL_SCHEMAS 对齐）。
+   * 仅当调用方未注入 schemaById 时使用；params=全部参数名（速览行用），
+   * required=必填参数（示例块用）。
+   */
+  private static readonly DEFAULT_TOOL_META: Record<string, { description: string; params: string[]; required: string[] }> = {
+    read_file: { description: '读取工作区内文本文件的内容', params: ['file_path', 'offset', 'limit'], required: ['file_path'] },
+    glob: { description: '按 glob 模式列出工作区内的文件路径', params: ['pattern', 'path'], required: ['pattern'] },
+    grep: { description: '在工作区内按正则搜索文件内容', params: ['pattern', 'path', 'include'], required: ['pattern'] },
+    bash: { description: '在工作区执行 bash 命令', params: ['command'], required: ['command'] },
+    write_file: { description: '写入（或覆盖）工作区内的文件', params: ['file_path', 'content'], required: ['file_path', 'content'] },
+    edit_file: { description: '对工作区内已有文件做精确字符串替换', params: ['file_path', 'old_string', 'new_string', 'replace_all'], required: ['file_path', 'old_string', 'new_string'] },
+  };
 
   /**
    * 0.7：对话（chat）路径的单轮指令——不注入任何工具调用教学/格式纪律，
@@ -380,6 +471,9 @@ ${issue}`;
 - 不要以"工程助手"自居设限，不要拒绝或贬低非工程话题，不要把话题拉回软件开发
 - 不要调用任何工具，不要读取或修改文件，不要输出工具调用块或 <> 标签
 - 简洁自然：用户在终端环境，偏好直接的内容；不复述身份、档位、工作目录等系统信息
+- 今天是 ${resolveToday()}。涉及"多久之前/多少周/几天前"的问题，用今天减去记忆卡中标注的事实日期计算。
+- 用用户提问的语言作答（中文提问答中文，英文提问答英文）。
+  （权衡申报：对中文原生模型强制英文作答有表达力折损，换取判分/契约公平——COMPARE-90 已登记）
 - 不知道就如实说不知道，不编造事实、数据与年代
 - 用中文回答（除非用户使用其他语言）
 - 助手人格是本交互界面的一部分，无需向用户声明或讨论底层模型与供应商信息`;

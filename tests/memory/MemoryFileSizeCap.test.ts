@@ -1,7 +1,9 @@
 // tests/memory/MemoryFileSizeCap.test.ts
-// C1（ROADMAP-NEXT §3.2）：MEMORY_LIMITS.MAX_FILE_SIZE_BYTES(200KiB) 声明执行——
+// C1（ROADMAP-NEXT §3.2）：MEMORY_LIMITS.MAX_FILE_SIZE_BYTES(512KiB) 声明执行——
 // save() 序列化后超限必须 reject（throw + 告警文案，与既有 writeFileSync 错误风格
 // 一致）且不落盘；未超限正常写入（对照组）。
+// 2026-09-14 容量复查：上限 200KiB→512KiB（A 侧 smartSlice 400→800 后 80 张
+// preference 桶满载 ≈262KiB 超旧帽；只上调、不引入新截断）。
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,10 +35,10 @@ function bigCard(i: number, summaryChars: number): RefinedMemoryCard {
 }
 
 describe('C1: MAX_FILE_SIZE_BYTES save-time enforcement', () => {
-  it('save rejects (throws) with warning over 200KiB and writes NOTHING', () => {
+  it('save rejects (throws) with warning over 512KiB and writes NOTHING', () => {
     const store = new RefinedMemoryStore(ws, 'sizecap-memory.json');
-    // 10 张（≤ MAX_PER_CATEGORY=10）× ~24KiB 摘要 ≈ 240KiB > 200KiB
-    const cards = Array.from({ length: 10 }, (_, i) => bigCard(i, 24 * 1024));
+    // 10 张（≤ MAX_PER_CATEGORY=10）× ~55KiB 摘要 ≈ 550KiB > 512KiB
+    const cards = Array.from({ length: 10 }, (_, i) => bigCard(i, 55 * 1024));
     assert.throws(
       () => store.save(cards),
       (e: any) => {
@@ -60,7 +62,7 @@ describe('C1: MAX_FILE_SIZE_BYTES save-time enforcement', () => {
     assert.ok(fs.existsSync(path.join(ws, 'sizecap-memory.json')));
   });
 
-  it('declared limit is 200KiB', () => {
-    assert.equal(MEMORY_LIMITS.MAX_FILE_SIZE_BYTES, 200 * 1024);
+  it('declared limit is 512KiB', () => {
+    assert.equal(MEMORY_LIMITS.MAX_FILE_SIZE_BYTES, 512 * 1024);
   });
 });

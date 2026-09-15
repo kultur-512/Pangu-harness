@@ -5,6 +5,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { compactSession, estimateSessionTokens, shouldAutoCompact } from '../../src/cli/repl/compactService.js';
+import { measuredContextTokens } from '../../src/cli/repl/compactService.js';
 import { Session } from '../../src/cli/repl/Session.js';
 import type { Turn } from '../../src/cli/repl/types.js';
 
@@ -87,9 +88,39 @@ describe('compactService', () => {
   });
 });
 
+// ==================== A2 计量修复：实测锚点 + CJK-aware 估算 ====================
+describe('A2 计量：measuredContextTokens + estimateSessionTokens', () => {
+  it('取末尾最近一次实测 lastPromptTokens；无实测 → null', () => {
+    const s = new Session({ tier: 'high', workspace: '/tmp/ws-a2' });
+    s.addTurn({ ...mkTurn(1), result: { success: true, summary: 'x', budgetReport: { usageMeasured: true, lastPromptTokens: 12000 } as any } });
+    s.addTurn({ ...mkTurn(2), result: { success: true, summary: 'x', budgetReport: { usageMeasured: false, estimatedUsedTokens: 999 } as any } });
+    assert.equal(measuredContextTokens(s), 12000, 'usageMeasured=false 的估算值不可作锚点');
+    s.addTurn({ ...mkTurn(3), result: { success: true, summary: 'x', budgetReport: { usageMeasured: true, lastPromptTokens: 15000 } as any } });
+    assert.equal(measuredContextTokens(s), 15000, '取最近的实测锚点');
+    const bare = new Session();
+    bare.addTurn(mkTurn(1));
+    assert.equal(measuredContextTokens(bare), null, '无实测 → 调用方回落估算');
+  });
+
+  it('estimateSessionTokens：CJK 按 1.0 token/字 + answerText 计入', () => {
+    const s = new Session();
+    s.addTurn({
+      id: 'c1', timestamp: 1, userInput: '中'.repeat(100), userInputType: 'task', tier: 'high', durationMs: 1,
+      result: { success: true, summary: '' },
+    });
+    const t1 = estimateSessionTokens(s);
+    assert.ok(t1 >= 1000 + 100, `CJK 100 字必须 ≥100 tokens（旧 chars/4 只有 25）：got ${t1}`);
+    s.addTurn({
+      id: 'c2', timestamp: 2, userInput: 'answer turn', userInputType: 'task', tier: 'high', durationMs: 1,
+      result: { success: true, summary: '', answerText: 'a'.repeat(400) },
+    });
+    assert.ok(estimateSessionTokens(s) - t1 >= 100, 'answerText（400 ascii ≈ 100 tokens）必须计入估算');
+  });
+});
+
 // ==================== P3-3.7: background pre-compaction ====================
 import { startBackgroundCompact, applyCompactResult } from '../../src/cli/repl/compactService.js';
-import { registerStrategy, getStrategy, listStrategies, turnBrief } from '../../src/cli/repl/compactStrategies.js';
+import { registerStrategy, getStrategy, listStrategies, turnBrief, turnFullBrief, TURN_BRIEF_MAX_CHARS } from '../../src/cli/repl/compactStrategies.js';
 
 // ==================== P1-T15: pluggable compaction strategies ====================
 describe('compact strategies (P1-T15)', () => {
@@ -123,6 +154,16 @@ describe('compact strategies (P1-T15)', () => {
     const b = turnBrief(t);
     assert.ok(b.includes('hello world task'));
     assert.ok(b.includes('score=88'));
+  });
+
+  it('B2 turnFullBrief：完整保留用户指令（≤2000），超长显式标记（不再 80 字符静默截断）', () => {
+    const long = '修复登录模块的会话保持问题，要求：'.padEnd(300, '细') + 'END-MARKER';
+    const t = { id: 'x', timestamp: 1, userInput: long, userInputType: 'task', tier: 'high', durationMs: 1, result: { success: true, summary: 'ok' } } as any;
+    const full = turnFullBrief(t);
+    assert.ok(full.includes('END-MARKER'), '300+ 字符指令必须完整进入摘要 prompt');
+    assert.ok(!full.includes('…[超长已截断]'), '未超上限不截断');
+    const giant = { ...t, userInput: 'A'.repeat(TURN_BRIEF_MAX_CHARS + 500) } as any;
+    assert.ok(turnFullBrief(giant).includes('…[超长已截断]'), '超上限必须显式标记');
   });
 });
 describe('background compact (P3-3.7)', () => {
@@ -228,6 +269,120 @@ describe('compact 补漏提炼（0.7 stopReason 收紧）', () => {
       assert.ok(!successCards.some((c) => c.summary.includes('ANSWERED-KEY')), 'answered 轮绝不补提 success 卡');
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ==================== B1/B2/B4：路径统一 / 嵌套封顶 / kept 收缩 ====================
+describe('B1 补漏提炼统一路径', () => {
+  const tmpWs = () => join(tmpdir(), 'pangu-compact-b1-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  const mkDone = (id: string, input: string): Turn => ({
+    id, timestamp: Date.now(), userInput: input, userInputType: 'task', tier: 'high',
+    result: { success: true, summary: '已通过验证', stopReason: 'completed' },
+  });
+
+  it('后台压缩 applyCompactResult 同样补提 success 卡（旧后台路径完全漏提炼）', async () => {
+    const dir = tmpWs();
+    mkdirSync(dir, { recursive: true });
+    try {
+      const sess = new Session({ tier: 'high', workspace: dir });
+      sess.addTurn(mkDone('done-1', 'B1-BG-KEY 修复 beta 模块并跑测试'));
+      for (let i = 2; i <= 20; i++) sess.addTurn(mkDone('k' + i, `填充轮 ${i}`));
+      const h = startBackgroundCompact(sess, fakeModelClient)!;
+      await new Promise((r) => setTimeout(r, 50));
+      const applied = applyCompactResult(sess, h.result()!);
+      assert.ok(applied.ok, applied.message);
+      const store = new RefinedMemoryStore(dir);
+      const cards = store.list().filter((c) => c.kind === 'success');
+      assert.ok(cards.length >= 1, '后台路径必须补提');
+      assert.ok(cards.some((c) => c.summary.includes('B1-BG-KEY')), '被移除的 completed 轮产卡');
+    } finally {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('marker 写盘失败 → 不落任何 success 卡（修重试 count 虚增）', async () => {
+    const dir = tmpWs();
+    mkdirSync(dir, { recursive: true });
+    const evilId = 'b1-evil-' + Date.now().toString(36);
+    try {
+      const sess = new Session({ tier: 'high', workspace: dir });
+      sess.id = C2_EVIL_ID;
+      for (let i = 1; i <= 20; i++) sess.addTurn(mkDone('k' + i, `B1-EVIL-KEY 填充轮 ${i}`));
+      const r = await compactSession(sess, fakeModelClient);
+      assert.equal(r.ok, false, 'marker 写盘失败必须拒绝');
+      const store = new RefinedMemoryStore(dir);
+      assert.equal(
+        store.list().filter((c) => c.kind === 'success' && c.summary.includes('B1-EVIL-KEY')).length,
+        0,
+        '提炼必须在 marker 成功之后——失败路径绝不落卡',
+      );
+    } finally {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+      deleteRollout(C2_EVIL_ID);
+      resetAuditStatus(C2_EVIL_ID);
+    }
+  });
+});
+
+describe('B2 嵌套压缩治理', () => {
+  it('fallback 不再内联上一代摘要全文（>400 字符截断标记）', async () => {
+    const s = new Session({ tier: 'high', workspace: '/tmp/ws-b2' });
+    const id = 'b2-nest-' + Date.now().toString(36);
+    s.id = id;
+    try {
+      for (let i = 1; i <= 20; i++) s.addTurn(mkTurn(i));
+      const LONG = '[摘要] ' + 'Z'.repeat(600);
+      const r1 = await compactSession(s, { async complete() { return LONG; } });
+      assert.ok(r1.ok, r1.message);
+      for (let i = 21; i <= 28; i++) s.addTurn(mkTurn(i));
+      const r2 = await compactSession(s, { async complete() { throw new Error('down'); } });
+      assert.ok(r2.ok, r2.message);
+      assert.ok(r2.summary.includes('上一代摘要已截断'), '嵌套 [COMPACT] 轮的旧摘要必须截断，防代代膨胀');
+    } finally {
+      deleteRollout(id);
+    }
+  });
+});
+
+describe('B4 kept 字节感知收缩', () => {
+  it('kept 巨轮超 60% 窗口 → 从最旧收缩到下限 2 轮，消息标注', async () => {
+    const s = new Session({ tier: 'high', workspace: '/tmp/ws-b4' });
+    const id = 'b4-shrink-' + Date.now().toString(36);
+    s.id = id;
+    try {
+      for (let i = 1; i <= 18; i++) s.addTurn(mkTurn(i));
+      // 最后 6 轮（kept 区）替换为 50K 巨轮（≈12.5K tokens/轮）
+      for (let idx = s.turns.length - 6; idx < s.turns.length; idx++) {
+        s.turns[idx] = { ...s.turns[idx], userInput: 'GIANT: ' + 'Y'.repeat(50000) };
+      }
+      const h = startBackgroundCompact(s, fakeModelClient)!;
+      await new Promise((r) => setTimeout(r, 50));
+      const applied = applyCompactResult(s, h.result()!, 2000); // cap = 1200 tokens
+      assert.ok(applied.ok, applied.message);
+      assert.equal(s.turns.length, 3, '1 synthetic + 2 kept（下限）');
+      assert.ok(applied.message.includes('再收缩'), applied.message);
+    } finally {
+      deleteRollout(id);
+    }
+  });
+
+  it('不传 windowTokens：保持按条数压缩的旧行为', async () => {
+    const s = new Session({ tier: 'high', workspace: '/tmp/ws-b4b' });
+    const id = 'b4-noWindow-' + Date.now().toString(36);
+    s.id = id;
+    try {
+      for (let i = 1; i <= 18; i++) s.addTurn(mkTurn(i));
+      for (let idx = s.turns.length - 6; idx < s.turns.length; idx++) {
+        s.turns[idx] = { ...s.turns[idx], userInput: 'GIANT: ' + 'Y'.repeat(50000) };
+      }
+      const h = startBackgroundCompact(s, fakeModelClient)!;
+      await new Promise((r) => setTimeout(r, 50));
+      const applied = applyCompactResult(s, h.result()!);
+      assert.ok(applied.ok);
+      assert.equal(s.turns.length, 7, '1 synthetic + 6 kept（无窗口信息不收缩）');
+    } finally {
+      deleteRollout(id);
     }
   });
 });

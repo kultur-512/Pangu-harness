@@ -130,8 +130,8 @@ describe('0.7.3 T2#5 answered 空转防呆（execution 意图）', () => {
   });
 });
 
-describe('0.7.3 T2#6 loop 窗口预算（70% 裁中段）', () => {
-  it('history 组装超 windowTokens*70% → 保前 2 步 + 后 2 步，中段替换为裁剪标记', async () => {
+describe('0.7.3 T2#6 loop 窗口预算（70% 预算线）', () => {
+  it('history 组装超 windowTokens*70% → 单步封顶 + 迭代裁中段，复查后在预算内（A4）', async () => {
     const captured: string[] = [];
     const bigResult = 'X'.repeat(2600) + '\nVERIFICATION: NEUTRAL'; // 每步 ~2.6k+ 字符，≤4000 不触发 T2#9 结果修剪
     const toolBlock = `
@@ -157,11 +157,13 @@ describe('0.7.3 T2#6 loop 窗口预算（70% 裁中段）', () => {
     await loop.run('循环任务');
 
     const last = captured[captured.length - 1];
-    // 末次 prompt 是第 6 步，其 history 含第 1..5 步：裁中段后保 1、2 + 4、5
-    assert.ok(last.includes('步已裁剪'), '超预算 history 必须裁中段');
-    assert.ok(last.includes('Step 1 [') && last.includes('Step 2 ['), '前 2 步必须保留');
-    assert.ok(last.includes('Step 4 [') && last.includes('Step 5 ['), '后 2 步必须保留');
-    assert.ok(!last.includes('Step 3 ['), '中段步（3）被裁');
+    // A4 新语义：每步 ~2.6k 字符 > 单步预算（5734×0.2≈1147）→ 先单步封顶；
+    // 5 步封顶后 ≈5k ≤ 5734 → 无需裁中段。复查保证总长在预算内。
+    const budgetChars = 2048 * 4 * 0.7;
+    assert.ok(last.length <= budgetChars, `裁剪后复查必须在预算内：${last.length} > ${budgetChars}`);
+    assert.ok(last.includes('本步内容过长已截断（单步窗口预算）'), '巨步必须单步封顶');
+    assert.ok(last.includes('VERIFICATION: NEUTRAL'), '封顶保留尾段（验证信号可见）');
+    assert.ok(last.includes('Step 1 [') && last.includes('Step 5 ['), '首尾步保留');
     assert.equal(captured.length, 6);
   });
 

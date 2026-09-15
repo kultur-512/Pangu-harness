@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { applyConfigModel, envApprovalMode } from '../../src/cli/repl/modelSeed.js';
+import { applyConfigModel, envApprovalMode, envTier } from '../../src/cli/repl/modelSeed.js';
 
 test('applyConfigModel seeds model from project config when session is default', () => {
   const root = mkdtempSync(join(tmpdir(), 'pansa-seed-'));
@@ -45,5 +45,24 @@ test('envApprovalMode parses PANSHA_APPROVAL and rejects invalid values', () => 
   } finally {
     if (prev === undefined) delete process.env.PANSHA_APPROVAL;
     else process.env.PANSHA_APPROVAL = prev;
+  }
+});
+
+test('envTier parses PANSHA_TIER（六档 + 别名）and rejects invalid values', () => {
+  const prev = process.env.PANSHA_TIER;
+  try {
+    delete process.env.PANSHA_TIER;
+    assert.equal(envTier(), undefined);
+    process.env.PANSHA_TIER = 'max';
+    assert.equal(envTier(), 'max');
+    process.env.PANSHA_TIER = 'PANGU';
+    assert.equal(envTier(), 'pangu');
+    process.env.PANSHA_TIER = 'rapid'; // 旧别名 → 合法（TierRegistry 解析为 quick）
+    assert.equal(envTier(), 'rapid');
+    process.env.PANSHA_TIER = 'yolo';
+    assert.equal(envTier(), undefined);
+  } finally {
+    if (prev === undefined) delete process.env.PANSHA_TIER;
+    else process.env.PANSHA_TIER = prev;
   }
 });

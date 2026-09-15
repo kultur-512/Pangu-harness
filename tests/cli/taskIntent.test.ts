@@ -120,3 +120,29 @@ describe('R7 英文疑问与第一人称回忆分类', () => {
     assert.equal(classifyTaskIntent('继续完成 memo.txt 任务'), 'execution');
   });
 });
+
+// ==================== T6（openPangu 配合度修复）：检索/枚举类动词 → execution ====================
+// 实证："列出 src 文件"/"搜 TODO" 被误判 chat → 零动作记 success（假完成）。
+// EXECUTION_VERBS 补 列出|搜索|查找|列举|查看|list|search|find。
+describe('T6 检索/枚举类动词分类', () => {
+  it('列出/搜索/查找/列举/查看 + list/search/find → execution', () => {
+    assert.equal(classifyTaskIntent('列出 src 下的所有文件'), 'execution', '列出');
+    assert.equal(classifyTaskIntent('搜索 TODO 标记并汇总'), 'execution', '搜索');
+    assert.equal(classifyTaskIntent('查找 config.json 里的超时配置'), 'execution', '查找');
+    assert.equal(classifyTaskIntent('列举 tests 目录下的用例'), 'execution', '列举');
+    assert.equal(classifyTaskIntent('查看 package.json 的内容'), 'execution', '查看');
+    assert.equal(classifyTaskIntent('list all TODO comments'), 'execution', 'list');
+    assert.equal(classifyTaskIntent('search for memory leaks'), 'execution', 'search');
+    assert.equal(classifyTaskIntent('find the entry point'), 'execution', 'find');
+  });
+
+  it('不过度捕获：疑问/概念/文创类仍 chat（既有反例不回归）', () => {
+    assert.equal(classifyTaskIntent('什么是查找算法'), 'chat', '疑问标记优先');
+    assert.equal(classifyTaskIntent('帮我写一首关于秋天的诗'), 'chat', '文创优先');
+    assert.equal(classifyTaskIntent('这首歌在名单里吗'), 'chat', '吗 结尾疑问');
+    assert.equal(classifyTaskIntent('什么是 list comprehension'), 'chat', '英文概念提问');
+    assert.equal(classifyTaskIntent('how do I find my purpose'), 'chat', '英文疑问词开头');
+    assert.equal(classifyTaskIntent('看看 src/foo.ts 里有什么'), 'search', '文件存在性疑问仍 search');
+    assert.equal(classifyTaskIntent('memo.txt 在哪'), 'search', '位置疑问仍 search');
+  });
+});

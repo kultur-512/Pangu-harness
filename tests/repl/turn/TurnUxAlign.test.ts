@@ -285,13 +285,18 @@ describe('U4 buildIdleStatusLine', () => {
     session.updateModel('openpangu:glm-5');
     ctx.ctxUsedChars = 6554;
     ctx.ctxWindowTokens = 32768;
+    // A2 计量口径：任务落定后 ctxUsedChars 以实测锚点重校准——fake 返回
+    // usageMeasured budgetReport（lastPromptTokens=1638 → ×4=6554 → 5%）。
     ctx.loadRunAgentTask = async () => ({
-      runAgentTask: (async () => ({ success: true, stopReason: 'completed', durationMs: 5 })) as any,
+      runAgentTask: (async () => ({
+        success: true, stopReason: 'completed', durationMs: 5,
+        budgetReport: { usageMeasured: true, lastPromptTokens: 1638 },
+      })) as any,
     });
     await controller.runTask('任务一');
     const status = renderer.lines.find((l: string) => /ctx ~\d+%$/.test(l));
     assert.ok(status, `空闲状态行存在，got: ${JSON.stringify(renderer.lines)}`);
-    assert.equal(status, 'glm-5 · high · default · ctx ~5%', '回合边界刷新一次内容');
+    assert.equal(status, 'glm-5 · high · default · ctx ~5%', '回合边界按实测锚点刷新');
   });
 
   it('drain 中间轮不打状态行（队列非空即跑下一个），只在回到空闲打一次', async () => {

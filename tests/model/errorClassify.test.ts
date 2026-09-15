@@ -7,7 +7,7 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyApiError, ApiErrorClass } from '../../src/model/errorClassify.js';
+import { classifyApiError, ApiErrorClass, isRetryableErrorClass } from '../../src/model/errorClassify.js';
 import { createOpenAICompatClient } from '../../src/model/openai-compatible.js';
 
 const origFetch = (globalThis as any).fetch;
@@ -58,6 +58,43 @@ describe('M2-5 classifyApiError 分类表', () => {
 
   it('显式 apiErrorClass 标注优先', () => {
     assert.equal(classifyApiError({ apiErrorClass: 'billing', status: 500 }), 'billing');
+  });
+});
+
+// ==================== 包B：无 status 溢出漏判 + billing 误杀限流 ====================
+// 【原缺陷1】头注释称"无 status 时退回 body/message 模式匹配"，但 overflow 分支
+// 要求 `status !== undefined && OVERFLOW_STATUS.has(status)`——含 "maximum context
+// length" 的无 status 网关错误永不归类 context_overflow（漏掉强制 compact 重试）。
+// 【原缺陷2】BILLING_PATTERNS 的 /billing/i 过宽——429 限流文案含 billing 字样
+// （如 "see billing dashboard"）被判 billing → 不可重试 → 假性任务失败。
+describe('包B errorClassify：无 status 溢出 + billing 收窄', () => {
+  it('【原缺陷】无 status + body 含 maximum context length → context_overflow', () => {
+    assert.equal(
+      classifyApiError({
+        message: "Request failed: This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens.",
+      }),
+      'context_overflow'
+    );
+  });
+
+  it('无 status + 中文网关超窗文案 → context_overflow', () => {
+    assert.equal(classifyApiError({ message: '错误：输入超出上下文长度限制' }), 'context_overflow');
+  });
+
+  it('有 status 时维持双条件：500 + overflow 字样不判溢出（仍 server）', () => {
+    assert.equal(classifyApiError({ status: 500, body: 'maximum context length exceeded' }), 'server');
+  });
+
+  it('【原缺陷】429 + body 含 billing 字样（非欠费文案）→ rate_limit 且可重试', () => {
+    const cls = classifyApiError({ status: 429, body: 'rate limit exceeded, see billing dashboard for usage' });
+    assert.equal(cls, 'rate_limit');
+    assert.equal(isRetryableErrorClass(cls), true, '限流必须保持可重试（billing 快速失败会假性终止任务）');
+  });
+
+  it('欠费文案仍判 billing：429 + insufficient balance/credits → billing（回归）', () => {
+    assert.equal(classifyApiError({ status: 429, body: 'insufficient balance' }), 'billing');
+    assert.equal(classifyApiError({ status: 429, body: 'your account has insufficient credits (billing)' }), 'billing');
+    assert.equal(isRetryableErrorClass('billing'), false, 'billing 仍快速失败');
   });
 });
 

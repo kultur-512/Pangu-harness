@@ -12,9 +12,9 @@
 import path from 'path';
 
 /** Directory names — the directory itself and every descendant are protected. */
-const SENSITIVE_DIRS = ['.ssh', '.aws', '.kube'];
+const SENSITIVE_DIRS = ['.ssh', '.aws', '.kube', '.git'];
 /** Exact file names — protected at any depth. */
-const SENSITIVE_FILES = ['.git-credentials', '.netrc'];
+const SENSITIVE_FILES = ['.git-credentials', '.netrc', '.panshalach.json'];
 /** Trailing-`*` globs matched against each path segment (`.env`, `.env.local`, `id_rsa`, `id_rsa.pub`, …). */
 const SENSITIVE_SEGMENT_GLOBS = ['id_rsa*', '.env*'];
 

@@ -6,6 +6,63 @@ import type { Session } from './Session.js';
 import type { Turn } from './types.js';
 import type { TierConfig, IronLawInjectionLevel, Tier } from '../../tiers/TierConfig.js';
 import type { TaskIntent } from '../taskIntent.js';
+import { estTokens, resolveWindowTokens } from './tokenEstimate.js';
+import { resolveToday } from '../../memory/timeAnchor.js';
+// 写侧/渲染侧共享字符帽（SENTENCE_HARD_CUT_CHARS=普通卡渲染帽=句切分硬切；
+// PAIR_Q_CHARS=对卡 Q 行上限）——渲染侧与 chatFactMemory 写侧同源，防
+// "写 800/渲 400"或"写 240/渲 120"的失配（上一轮 review 揪过的复发现象）。
+// C2（2026-09-14）：对卡 A 行渲染用 smartSlice + PAIR_A_RENDER_CHARS(400) 做数字句
+// 优先二次裁剪（写侧 PAIR_A_CHARS=800 不动——盘上数据不丢，渲染时才裁）。
+import { SENTENCE_HARD_CUT_CHARS, PAIR_Q_CHARS, PAIR_A_CHARS, PAIR_A_RENDER_CHARS, smartSlice } from '../../memory/chatFactMemory.js';
+
+// estTokens 收口到共享模块 ./tokenEstimate.ts（压缩触发/loop 预算/REPL 计量
+// 三处必须同源）；此处 re-export 维持既有导入路径兼容（tests/memory/*）。
+export { estTokens };
+
+/**
+ * G6：句边界截断——预算内截到最后一个句末标点（句号/问号/叹号/省略号）；
+ * 找不到足够长的句边界才硬切。修复：旧 slice(0,117) 会把卡的后半段答案剪掉
+ * （实测 18.5% 的可播种句超 120 字符，LongMemEval 恰是"答案就在某句里"）。
+ */
+export function truncateAtSentence(text: string, budget: number): string {
+  const t = String(text ?? '');
+  if (t.length <= budget) return t;
+  const head = t.slice(0, budget + 3);
+  const m = head.match(/[\s\S]*[。．！？!?]/);
+  const cut = m && m[0].length >= Math.floor(budget * 0.5) ? m[0] : t.slice(0, budget);
+  return cut.trimEnd() + '...';
+}
+
+/**
+ * C1（2026-09-13 对卡渲染）：source==='dialogue-pair' 的卡不走 truncateAtSentence
+ * （句边界截断曾把已落卡事实腰斩），改为分行渲染——Q 行 ≤160 字 + A 行 ≤400 字
+ * （smartSlice 数字句优先），label 用 [对话记忆]。其他卡渲染不变（单行、句边界截断）。
+ * 2026-09-14：普通卡渲染帽 120→SENTENCE_HARD_CUT_CHARS(240)（ZL vs CC 头号杀手
+ * ——gold 数字/专名在第 120-400 字符段被 120 切线截掉）；对卡 Q 行用 PAIR_Q_CHARS。
+ * C2（2026-09-14 LME 归因）：A 行由 slice(0,800) 改 smartSlice(400)——写侧 800
+ * 落盘不丢数据，渲染时数字句优先裁进 400 段（配合 C4 数字句前置，单卡注入成本
+ * 下降、819→1229 预算能装更多张对卡）。
+ * 返回行数组（对卡 1-2 行，普通卡 1 行）。
+ */
+function renderMemoryCardLines(
+  card: any,
+  seq: number,
+  label: (c: any) => string,
+  factTag: (c: any) => string
+): string[] {
+  const head = `  - [M${seq}] ${label(card)}${factTag(card)} `;
+  if (card?.source === 'dialogue-pair') {
+    const s = String(card.summary ?? '');
+    const nl = s.indexOf('\n');
+    const q = (nl >= 0 ? s.slice(0, nl) : s).replace(/^Q:\s*/i, '').slice(0, PAIR_Q_CHARS);
+    // C2 迭代回退（it2-1b 实证 assistant 8→5/user 7→5 回退）：400 裁剪对 gold
+    // 位于长答复中后段的题型是净损失——渲染与写侧 PAIR_A_CHARS(800) 同源不裁
+    const a = smartSlice((nl >= 0 ? s.slice(nl + 1) : '').replace(/^A:\s*/i, ''), PAIR_A_CHARS);
+    void PAIR_A_RENDER_CHARS;
+    return a ? [`${head}Q: ${q}`, `    A: ${a}`] : [`${head}Q: ${q}`];
+  }
+  return [`${head}${truncateAtSentence(card?.summary, SENTENCE_HARD_CUT_CHARS)}`];
+}
 
 // ==================== L0 硬约束（≤3 条，非整段注入） ====================
 export const L0_INVARIANTS: string[] = [
@@ -17,18 +74,6 @@ export const L0_INVARIANTS: string[] = [
 /** M2.1 预算红线断言：L0 超过 3 条即失败（测试调用）。 */
 export function assertL0Count(): void {
   if (L0_INVARIANTS.length > 3) throw new Error('L0_INVARIANTS 超过 3 条（M2.1 预算红线）');
-}
-
-/** 确定性 token 估算 — ceil(asciiLen/4 + cjkLen×1.5)。纯函数。 */
-export function estTokens(text: string): number {
-  let ascii = 0;
-  let cjk = 0;
-  for (const ch of String(text ?? '')) {
-    const code = ch.codePointAt(0)!;
-    if (code >= 0x4e00 && code <= 0x9fff) cjk++;
-    else ascii++;
-  }
-  return Math.ceil(ascii / 4 + cjk * 1.5);
 }
 
 export interface TierConstraint {
@@ -144,6 +189,87 @@ export interface BuildResult {
   injectedCardIds: string[];
 }
 
+// ==================== 关键词抽取（检索通路迭代包 2026-09-13） ====================
+
+// 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
+// 停用词占满相关性命中，区分度归零）；中文走 CJK 分支（下方）。
+const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
+
+/** CJK 判定：[一-龥]（URO 4E00-9FA5）放宽为 \u3000-\u9fff（含 CJK 符号/标点，
+ * 对齐 chatFactMemory confidenceOf 的包C 缺陷6b 修正）。 */
+const CJK_CHAR_RE = /[\u3000-\u9fff]/;
+/** 短句切分边界：中英文常用标点 + 空白。 */
+const CJK_PHRASE_SPLIT_RE = /[\s，。！？!?；;、：:…]+/;
+/** CJK 停用 2-gram（虚词组合——2-gram 兜底时跳过，对记忆检索零区分度）。 */
+/** 最近对话轮窗口（buildMemoryQueryText 与 runAgentTask.buildChatRecentTurnsBlock 同源）。 */
+export const RECENT_TURN_WINDOW = 2;
+
+const CJK_STOP_2GRAMS = new Set([
+  '的呢', '了吗', '是的', '一个', '什么', '怎么', '可以', '我们', '你们', '没有',
+  '就是', '这个', '那个', '这是', '不是', '还是', '但是', '所以', '如果', '而且',
+  '或者', '自己', '时候', '这样', '那样', '你的', '我的', '他们',
+]);
+const MAX_CJK_KEYWORDS = 16;
+// 短句直采上限 8 字（2026-09-14 迭代：20→8）——9-20 字短语降为 2-gram 词粒度：
+// 整句短语做 summary.includes 永不命中（"北京那边有多少同事"整句不在任何卡里），
+// 词粒度才能让 Q 侧加权/词面通道在共享词干扰下区分 gold（ChineseRetrieval 干扰卡
+// 用例实证：粒度不足时双方 rel=0，新近度决胜顶掉 gold）。
+const MAX_PHRASE_CHARS = 8;
+const MAX_2GRAMS_PER_PHRASE = 12;
+
+/**
+ * 单个含 CJK token 的关键词展开（无空格中文此前恒整句 token → 词面永不命中）：
+ *  - 数字串（含"3月"）单独成关键词；数字位从余文剔除、前后文拼回（避免碎词）；
+ *  - 余文按标点切短句，每个短句一个关键词（CJK 总数 cap 16）；
+ *  - 短句仍 >20 字 → 字符 2-gram 滑窗兜底（cap 12，跳过含非汉字/虚词的组）。
+ */
+function extractCjkTokenKeywords(token: string, out: string[]): void {
+  const add = (kw: string): void => {
+    const t = kw.trim();
+    if (t.length < 2 || out.length >= MAX_CJK_KEYWORDS || out.includes(t)) return;
+    out.push(t);
+  };
+  // 数字后吞单位词（审查建议-1：旧只吞 1 个 CJK 把"5公里"撕成"5公"+"跑步里每周六"）
+  const NUM_RE = /\d+(?:公里|千米|米|年|个月|月|日|天|号|点|周|次|个|小时|分钟|秒|元|块|岁|层|度|%|％)?/g;
+  for (const d of token.match(NUM_RE) ?? []) add(d);
+  const rest = token.replace(NUM_RE, '');
+  for (const phrase of rest.split(CJK_PHRASE_SPLIT_RE)) {
+    const p = phrase.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (p.length < 2) continue;
+    // 审查建议-1：中英混排长 token 的 ASCII 连续段（AuthModule/bug）独立成关键词——
+    // 下方 2-gram 只收纯汉字，不提取会整段丢失（旧整句 token 也永不命中，此处是真增益）
+    for (const ascii of p.match(/[A-Za-z][A-Za-z0-9_.-]+/g) ?? []) {
+      if (ascii.length >= 2) add(ascii);
+    }
+    if (p.length <= MAX_PHRASE_CHARS) {
+      add(p);
+      continue;
+    }
+    let grams = 0;
+    for (let i = 0; i + 1 < p.length && grams < MAX_2GRAMS_PER_PHRASE && out.length < MAX_CJK_KEYWORDS; i++) {
+      const g = p.slice(i, i + 2);
+      if (!/^[\u4e00-\u9fff]{2}$/.test(g)) continue; // 含非汉字（标点/数字/字母）的组跳过
+      if (CJK_STOP_2GRAMS.has(g)) continue;          // 虚词 2-gram 跳过
+      add(g);
+      grams++;
+    }
+  }
+}
+
+/**
+ * 任务关键词抽取：ASCII token 走既有逻辑（STOPWORDS 过滤——英文行为逐字节
+ * 不变）；含 CJK 的 token 走 extractCjkTokenKeywords（中文检索通路修复）。
+ */
+export function extractKeywordsFromIssue(issue: string): string[] {
+  const keywords: string[] = [];
+  for (const raw of String(issue ?? '').split(/\s+/)) {
+    const w = raw.replace(/^[/@#]/, '');
+    if (CJK_CHAR_RE.test(w)) extractCjkTokenKeywords(w, keywords);
+    else if (w.length >= 2 && !STOPWORDS.has(w.toLowerCase())) keywords.push(w);
+  }
+  return keywords;
+}
+
 export class PromptBuilder {
   constructor(
     private session: Session,
@@ -187,7 +313,7 @@ export class PromptBuilder {
       if (m[1]) files.push(m[1]);
     }
     // also consider recent turn inputs for last context files
-    const recent = this.session.turns.slice(-2);
+    const recent = this.session.turns.slice(-RECENT_TURN_WINDOW);
     for (const t of recent) {
       if (t.userInput) {
         let m2: RegExpExecArray | null;
@@ -261,7 +387,10 @@ export class PromptBuilder {
     // 身份画像（2026-09-12 真机反馈）：通用全能智能体，工程是强项不是边界——
     // 1B 小模型曾把"面向软件工程长期维护场景"理解成"只答工程"（真机实证：英国
     // 历史追问被拒、话题被拉回 CI/CD）。档位语义显式限定为工程执行参数，防复读。
-    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。`;
+    // 时间锚定（0.8.3）：身份行带"今天是 …"——QA prompt 此前没有今天是几号，
+    // "多久之前/多少周"类问题无从计算（temporal-reasoning 0/15 主因之二）。
+    // 放 stable 段：resolveToday() 天内不变 → 天内字节稳定（前缀缓存友好）。
+    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。今天是 ${resolveToday()}。`;
     this.buildLines.push(systemLine);
 
     // === L0 硬约束（≤3 条精选，非整段注入） ===
@@ -496,40 +625,80 @@ export class PromptBuilder {
     // === Current task — dedup (in case of weird re-entrancy) ===
     this.tryInject('current-task', [`\n【当前任务】\n${issue}`], lines);
 
-    // === Optional: crude compaction note — dedup ===
-    if (this.session.turns.length > 12) {
-      this.tryInject('compaction-note', '\n（历史较长，已做内部压缩，保留关键决策与用户原文要点）', lines);
+    // === 历史压缩摘要（B3：接真——压缩收益从此真正进入 prompt）===
+    // 合成轮 userInput 以 [COMPACT] 开头、result.summary 为摘要正文；压缩后
+    // 合成轮固定在 turns 前端，getRecentContext(3) 永远取不到——在此显式注入。
+    // 无合成轮且历史较长时给诚实提示（旧行为是无压缩却声称"已做内部压缩"）。
+    {
+      const synthetic = this.session.turns.find((t) => String(t.userInput || '').startsWith('[COMPACT]'));
+      if (synthetic && synthetic.result?.summary) {
+        const summary = String(synthetic.result.summary);
+        // C3（0.8.2 审查）：注入 cap 从固定 1500 字符改窗口比例预算
+        // min(6000 字符, 15% 窗口 tokens×4)——旧 cap ÷ 24 轮 ≈ 62 字符/轮，
+        // "逐字保留"的用户指令在注入面全灭（30 轮会话跨任务带宽仅窗口 4-8%）。
+        let budgetChars = 6000;
+        try {
+          const w = resolveWindowTokens((this.session as any).provider, this.session.model);
+          budgetChars = Math.min(6000, Math.floor(w * 0.15 * 4));
+        } catch {}
+        const capped = summary.length > budgetChars ? summary.slice(0, budgetChars) + '…[摘要已截断]' : summary;
+        this.tryInject('compaction-note', [`\n【历史压缩摘要】`, capped], lines);
+      } else if (this.session.turns.length > 12) {
+        this.tryInject('compaction-note', `\n（历史较长：${this.session.turns.length} 轮，更早轮次未注入。如需把早期关键背景带进上下文，可用 /compact 生成压缩摘要。）`, lines);
+      }
     }
 
-    // === 探索阶段自动拉取（standard/high 触发一次；预算 ≤700 token；ghost 状态机）===
+    // === 探索阶段自动拉取（standard/high 触发一次；预算 = L1 预算 tokens（窗口未知回退 700）；ghost 状态机）===
+    // 【2】auto-pull 审计如实（2026-09-13 迭代包）：chat 意图不做 auto-pull——
+    // chat user 只含 lastMemoryBlockText（L1 块），额外卡本就进不了 chat 净荷，
+    // 拉取只白耗嵌入计算，且 lastInjectedCardIds 照常并入使注入审计虚报
+    // （实测 8K 窗 ids=17 vs chat 块可见 12）。选择申报：采用"intent 门禁"
+    // 方案而非"lastMemoryBlockText 组装后移"——后者会让 chat 净荷膨胀、违反
+    // 0.8.2 chat 净化的预算纪律。intent 参数在 buildVolatileSegment 签名内可用。
     const AUTO_PULL_TIERS = new Set(['standard', 'high']);
     const preAutoPullCount = this.lastInjectedCardIds.length; // L1 已注入 ids 数
-    if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier)) {
+    if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier) && intent !== 'chat') {
       try {
         const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
         const memStore = new RefinedMemoryStore(this.session.workspace);
         const overflow = memStore.getOverflowCards(
-          { tier: this.session.tier, keywords: this.lastKeywords, currentWorkspaceFiles: currentWsFiles.length ? currentWsFiles : undefined },
+          {
+            tier: this.session.tier,
+            keywords: this.lastKeywords,
+            currentWorkspaceFiles: currentWsFiles.length ? currentWsFiles : undefined,
+            // C3/B5：溢出拉取与 L1 同源查询（投影 key 已含查询文本，不串槽）
+            queryText: this.buildMemoryQueryText(issue),
+            semantic: process.env.PANSHA_SEMANTIC_SEARCH !== '0',
+          },
           this.lastInjectedCardIds
         );
         if (overflow.pulled.length > 0) {
-          const label = (c: any): string => c.kind === 'preference' ? '[用户偏好]' : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
+          const label = (c: any): string =>
+            c.source === 'dialogue-pair' ? '[对话记忆]'
+              : c.kind === 'preference' ? '[用户偏好]'
+              : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
+          // 0.8.3 时间锚定：卡带 factDateText → 渲染 [事实时间:…]（老卡无字段不变）
+          const factTag = (c: any): string => c?.factDateText ? ` [事实时间:${c.factDateText}]` : '';
           const lines2: string[] = [];
           const l1Tokens = estTokens(lines.filter((l) => l.includes('相关记忆')).join('\n'));
-          let budget = 700 - l1Tokens;
+          // C2：溢出块预算与 L1 同源（window 感知），700 仅作窗口未知回退
+          let budget = this.memoryBudgetTokens() - l1Tokens;
           const addedCards: string[] = [];
           const n0 = this.memoryNumberSeq;
           let accepted = 0;
           for (const c of overflow.pulled) {
-            const line = `  - [M${n0 + accepted + 1}] ${label(c)} ${c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary}`;
-            const cost = estTokens(line);
+            const cardLines = renderMemoryCardLines(c, n0 + accepted + 1, label, factTag);
+            const cost = estTokens(cardLines.join('\n'));
             if (budget - cost < 0) break; // 超预算放弃（不降级不重试）
-            lines2.push(line);
+            lines2.push(...cardLines);
             addedCards.push(c.id);
             accepted++;
             budget -= cost;
           }
           if (addedCards.length > 0) {
+            // 注意：此处 ghost 有意保留 \n 前缀——lastMemoryBlockText 过滤器靠
+            // startsWith('（另有') 只放行 L1 ghost；去掉 \n 会把溢出 ghost 泄进
+            // chat 净荷（与 L1 的去 \n 修复方向相反，勿顺手统一）。
             const ghost = overflow.pulled.length > addedCards.length || overflow.totalRemaining > 0
               ? `\n（另有 ${overflow.totalRemaining + (overflow.pulled.length - addedCards.length)} 张相关，/memory 查看）`
               : '';
@@ -582,49 +751,114 @@ export class PromptBuilder {
       // use pre-collected relevant files (from caller) for reference filtering
       const currentFiles = currentWorkspaceFiles && currentWorkspaceFiles.length ? currentWorkspaceFiles : undefined;
       // 任务关键词 → 相关性排序（0.7×weight + 0.3×relevance）
-      // 0.8.2：stopword 过滤（LME 真机实证——英文疑问句切出的 what/was/my 等
-      // 停用词占满相关性命中，区分度归零）；中文 2 字词保留。
-      const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which', 'did', 'do', 'does', 'did', 'have', 'has', 'had', 'i', 'my', 'me', 'we', 'our', 'you', 'your', 'it', 'in', 'on', 'at', 'to', 'of', 'for', 'with', 'and', 'or', 'that', 'this', 'there', 'was', 'first', 'last', 'can', 'will', 'would', 'should', 'did']);
-      const keywords = (issue ?? '')
-        .split(/\s+/)
-        .map(w => w.replace(/^[/@#]/, ''))
-        .filter(w => {
-          const lw = w.toLowerCase();
-          if (/[一-龥]/.test(w)) return w.length >= 2;
-          return w.length >= 2 && !STOPWORDS.has(lw);
-        });
+      // 0.8.2：stopword 过滤（英文）；【1】检索通路迭代包（2026-09-13）：
+      // 无空格中文此前恒整句 token → 词面永不命中，改为 CJK 分支（数字串/短句/
+      // 2-gram 兜底，见 extractKeywordsFromIssue）——ASCII 路径逐字节不变。
+      const keywords = extractKeywordsFromIssue(issue ?? '');
       this.lastKeywords = keywords;
+      // C3（2026-09-13 混合检索接线）：查询侧从只有 issue 扩为
+      // "issue + 最近 2 轮 userInput/answerText 各前 200 字符"，传 loadFiltered 的
+      // queryText；语义通道默认开（PANSHA_SEMANTIC_SEARCH=0 显式关闭）。
+      const queryText = this.buildMemoryQueryText(issue ?? '');
+      const semantic = process.env.PANSHA_SEMANTIC_SEARCH !== '0';
       const allCards = memStore.loadFiltered({
         tier: this.session.tier,
         currentWorkspaceFiles: currentFiles,
         keywords,
+        queryText,
+        semantic,
       });
       const maxCards = this.memoryCardLimitForLevel(level);
-      const overflow = allCards.length > maxCards;
-      const cards = allCards.slice(0, maxCards);
+      // 审查 FAIL-1：对卡实际成本 122-470 token/张（英文/中文），41 系数张数帽
+      // 在小窗口+对卡多时超发 3-11 倍（8K 窗极端可注满整个窗口）。改为按渲染后
+      // 实测 token 贪心装入窗口比例预算；张数帽仅作上限，至少保 1 张。
+      const budgetTokens = this.memoryBudgetTokens();
+      const label = (c: any): string =>
+        c.source === 'dialogue-pair' ? '[对话记忆]'
+          : c.kind === 'preference' ? '[用户偏好]'
+          : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
+      // 0.8.3 时间锚定：卡带 factDateText → 渲染 [事实时间:…]（老卡无字段不变）
+      const factTag = (c: any): string => c?.factDateText ? ` [事实时间:${c.factDateText}]` : '';
+      const chosen: Array<{ card: any; lines: string[]; tokens: number }> = [];
+      let usedTokens = 0;
+      for (let i = 0; i < allCards.length && chosen.length < maxCards; i++) {
+        const ls = renderMemoryCardLines(allCards[i], this.memoryNumberSeq + chosen.length + 1, label, factTag);
+        const t = ls.reduce((acc, l) => acc + estTokens(l), 0);
+        // R1（2026-09-14 LME 归因）：装不下的大卡跳过（continue）而非终止（旧
+        // break 让一张大卡后面的所有小卡全部落选——819 token 预算实际只装 3.8 张
+        // 对卡的第一瓶颈）。首卡超预算仍收（chosen.length===0 短路）="至少保 1 张"
+        // 语义保留。
+        if (chosen.length > 0 && usedTokens + t > budgetTokens) continue;
+        chosen.push({ card: allCards[i], lines: ls, tokens: t });
+        usedTokens += t;
+      }
+      // C1(a)（2026-09-14 LME 归因）：注入渲染按 factDate 升序稳定重排——后注入者
+      // = 事实时间更新者，配合规则行"以[事实时间]最新的一条为准"（C1b）让 1B 的
+      // "取最后一条"启发式指向新值（KU 新旧值选错是管道主动误导）。无 factDate 的
+      // 老卡排最后、之间保持原序；重排只影响渲染顺序与编号，不改入选集合与 token
+      // 预算账（chosen/tokens 在重排前已定）。
+      const ordered = chosen
+        .map((e, idx) => ({ e, idx }))
+        .sort((a, b) => {
+          const da = a.e.card?.factDate;
+          const db = b.e.card?.factDate;
+          const hasA = typeof da === 'number' && Number.isFinite(da);
+          const hasB = typeof db === 'number' && Number.isFinite(db);
+          if (hasA !== hasB) return hasA ? -1 : 1; // 有 factDate 在前，无者排最后
+          if (hasA && hasB && da !== db) return (da as number) - (db as number); // 升序
+          return a.idx - b.idx; // 稳定：同日期/均无日期保持原序
+        })
+        .map((x) => x.e);
+      const cards: any[] = [];
+      const rendered: string[][] = [];
+      ordered.forEach((e, j) => {
+        cards.push(e.card);
+        // [M*] 编号按重排后顺序连续编（契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序）
+        rendered.push(renderMemoryCardLines(e.card, this.memoryNumberSeq + j + 1, label, factTag));
+      });
+      const overflow = cards.length < allCards.length;
       if (cards.length > 0) {
-        // 来源标签（注入安全：preference 必须有 [用户偏好] 标签）
-        const label = (c: any): string => c.kind === 'preference' ? '[用户偏好]' : c.kind === 'success' ? '[成功经验]' : '[失败教训]';
-        const ghost = overflow ? `\n（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
+        // 【3】ghost 行修复（2026-09-13 迭代包）：模板原来的 '\n' 前缀让
+        // lastMemoryBlockText 过滤器的 l.startsWith('（另有') 永不匹配 → chat 块
+        // 永远没有"另有 N 张"提示。tryInject 的 lines 数组本身分行（join('\n')），
+        // 前导 '\n' 多余且破坏 startsWith 过滤——去掉后 rich 渲染不变（仍换行）。
+        const ghost = overflow ? `（另有 ${allCards.length - cards.length} 张相关记忆未注入，/memory 查看）` : '';
         const n0 = this.memoryNumberSeq;
         const added = this.tryInject('memory-cards', [
           '\n【相关记忆】',
-          ...cards.map((c, i) => {
-            const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
-            return `  - [M${n0 + i + 1}] ${label(c)} ${one}`;
-          }),
+          // G3 最小版：知识更新指令——冲突事实并存时以后注入者为准（配合
+          // 卡内日期前缀，1B 级模型也能据此选新弃旧；此前旧事实因插入序靠前
+          // 被优先采纳，knowledge-update 题全 0 的直接原因之一）。
+          // 0.8.3：原"带 [S日期] 前缀的以日期较新者为准"是悬空规则——全代码库
+          // 无任何路径产出 [S日期] 前缀（grep 证实）。替换为事实时间差值规则，
+          // 与今天（身份行）+ [事实时间:…] 标注配套，"多久之前/多少周"可计算。
+          // C1b（2026-09-14 LME 归因）：追加冲突规则——配合 C1a 的 factDate 升序
+          // 注入，"取最后一条"启发式即指向[事实时间]最新的新值。
+          // L1（2026-09-14 LME 归因）：追加答案语言镜像——语言/单位不匹配 6 题
+          // （提问英文而答复中文数字单位）。仍在同一行（chat 块过滤器按
+          // l.includes('（规则：') 整行放行，拆行会从 chat 净荷丢失）。
+          '（规则：记忆卡【】内的日期与[事实时间:...]标注的是事实发生时间；计算"多久之前/多少周"时用它与今天的差值，不要用其他时间戳。同一事实出现新旧不同数值时，以[事实时间]最新的一条为准。以用户提问的语言作答，数字与单位保留提问原文的写法（如提问为英文则以英文数字+单位作答）。）',
+          // C1：对卡分行渲染（Q ≤160；A 行 smartSlice 400 数字句优先——写侧 800
+          // 不动，见 renderMemoryCardLines），普通卡单行截 240；
+          // 行集已在 token 门按预算贪心生成并按 factDate 升序重排（rendered），此处只拼接
+          ...rendered.flat(),
           ghost,
         ], lines);
-        if (added) this.memoryNumberSeq += cards.length;
-        // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
-        this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        if (added) {
+          this.memoryNumberSeq += cards.length;
+          // 包C 缺陷12：concat 必须在 if 内——tryInject 因 key 去重跳过时块未
+          // 渲染，先行 concat 会产出没有 [M*] 行对应的孤儿 id（下游 markInjected /
+          // ContextSnapshot 审计到"注入了看不见的卡"）。
+          // 注入编号契约：lastInjectedCardIds 顺序 == [M*] 渲染顺序（含溢出块续号）
+          this.lastInjectedCardIds = this.lastInjectedCardIds.concat(cards.map(c => c.id));
+        }
         // 0.8.2：独立记忆块文本（chat 直答干净组装用——chat 的 user 应是
         // "记忆块 + 用户原话"，而不是整段 enriched prompt 外壳，否则 1B 被
         // 结构块噪音拖垮、元话语复发）。非 chat 也存，无副作用。
         const memStart = lines.findIndex((l) => l.includes('【相关记忆】'));
         if (memStart >= 0) {
           this.lastMemoryBlockText = lines.slice(memStart)
-            .filter((l) => l.includes('【相关记忆】') || l.startsWith('  - [M') || l.startsWith('（另有'))
+            .filter((l) => l.includes('【相关记忆】') || l.includes('（规则：') || l.startsWith('  - [M') || l.startsWith('    A: ') || l.startsWith('（另有'))
             .join('\n');
         }
         return added;
@@ -667,7 +901,7 @@ export class PromptBuilder {
       if (cards.length > 0) {
         lines.push('\n【提炼后的教训（来自历史项目记忆）】');
         for (const c of cards) {
-          const one = c.summary.length > 120 ? c.summary.slice(0, 117) + '...' : c.summary;
+          const one = truncateAtSentence(c.summary, SENTENCE_HARD_CUT_CHARS);
           lines.push(`  - [${c.category}] ${one}`);
         }
       }
@@ -676,12 +910,69 @@ export class PromptBuilder {
     }
   }
 
+  /**
+   * C2（2026-09-13 注入预算 token 化）+ 2026-09-14 随窗口放大 + R2 统一 15%：
+   * 注入预算 tokens = min(ceil(window×15%), max(1600, floor(window/64)))。
+   *   - R2（2026-09-14 LME 归因）：旧 8K 档 10% 删除、统一 15%。归因数据：819
+   *     token 预算实际只装 3.8 张对卡，是注入面第一瓶颈；8192→1229（+R1 贪心
+   *     skip + 对卡 A 行渲染 400/C2）≈ 6-7 张。比例项用 ceil：floor(8192×0.15)
+   *     =1228，归因报告按 1229 锚定（预算利用率优先）；大窗口比例项远超帽，
+   *     ceil/floor 不影响结果（32K→1600 帽不变、1M→15625 不变）。
+   *   - 固定卡数帽不随窗口伸缩是错的——8K 与 128K 窗口给同样的 8 张，要么撑爆
+   *     小窗要么浪费大窗。
+   *   - 上限由固定 1600 改为 max(1600, floor(w/64))：1M 窗→15625（多会话大库
+   *     73-80 卡可全注，旧帽只放进 ~15%）；32K 窗→floor(32768/64)=512→仍 1600、
+   *     8K 窗→128→仍 1600>1229（帽不 binding）。
+   * 窗口未知/异常回退 700（旧溢出块常量，语义=保守小预算）。
+   */
+  private memoryBudgetTokens(): number {
+    try {
+      const w = resolveWindowTokens((this.session as any).provider, this.session.model);
+      return Math.min(Math.ceil(w * 0.15), Math.max(1600, Math.floor(w / 64)));
+    } catch {
+      return 700;
+    }
+  }
+
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
-    if (level === 'light') return 3;
-    if (level === 'medium') return 6;
-    if (level === 'high') return 8;
-    if (level === 'full') return 10;
-    return 4;
+    // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
+    // （Pi/CC 实验把整个 memory 文件塞进上下文）。评测格依赖它——env 显式
+    // 设置时张数帽完全维持现状；注意 >100K 窗口下 token 门预算仍随窗口放大
+    // （memoryBudgetTokens 的 max(1600, w/64)），env 仅覆盖张数帽（review 申报）。
+    const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
+    if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
+    // C2：窗口感知张数——budget/41（41 为混合短卡经验值；对卡/Q/A 双行由渲染后
+    // estTokens 门实际约束，张数帽仅作上限），
+    // clamp 到 [6, 200]：下限 6 保证轻量档最小可见性，上限 200 让 1M 窗下大库
+    // （73-80 卡）可全注（旧 40 帽 32K 窗仍 39 不变；1M 窗 381→cap 200）。
+    // level 参数保留（'none' 档在调用方已拦截；light/medium/high/full 的旧固定
+    // 帽 3/6/8/10 由窗口预算取代）。
+    void level;
+    const budget = this.memoryBudgetTokens();
+    return Math.max(6, Math.min(Math.floor(budget / 41), 200));
+  }
+
+  /**
+   * C3（2026-09-13 混合检索接线）：记忆检索查询文本 = 当前任务 + 最近 2 轮的
+   * userInput/answerText。
+   * 【3】查询稀释修复（2026-09-13 迭代包）：探查实证 77 字无关历史前缀把 gold
+   * cos 0.119 砸到 0.030——改为 issue 权重主导：issue 重复拼接两次置顶（嵌入
+   * 权重加倍）+ 最近 2 轮 userInput/answerText 各截前 60 字符（原 200）；长
+   * issue 时 issue 字符占比 ≥2/3。保留函数签名（仅查询文本形状变化）。
+   */
+  private buildMemoryQueryText(issue: string): string {
+    // 审查建议-6 诚实申报：短 issue 场景稀释仍存（issue 双拼只把"9 字 issue +
+    // 240 字历史"的占比从 ~4% 提到 ~7%），彻底解需语义通道按段加权（ROADMAP）。
+    // 窗口常量 RECENT_TURN_WINDOW 与 runAgentTask.buildChatRecentTurnsBlock 同源。
+    const iss = String(issue ?? '').replace(/\s+/g, ' ').trim();
+    const parts: string[] = [iss, iss];
+    for (const t of this.session.turns.slice(-RECENT_TURN_WINDOW)) {
+      const u = String(t?.userInput ?? '').replace(/\s+/g, ' ').trim();
+      if (u) parts.push(u.slice(0, 60));
+      const a = String((t as any)?.result?.answerText ?? '').replace(/\s+/g, ' ').trim();
+      if (a) parts.push(a.slice(0, 60));
+    }
+    return parts.filter(Boolean).join(' ');
   }
 
   /**
@@ -724,10 +1015,11 @@ export class PromptBuilder {
   private describeMemory(level: TierConfig['memoryLoadLevel']): string {
     switch (level) {
       case 'none': return '不加载历史记忆';
-      case 'light': return '轻量（3 条以内）';
-      case 'medium': return '中等（~6 条）';
-      case 'high': return '高强度（~8 条）';
-      case 'full': return '全量（~10 条 + 强过滤）';
+      // 0.8.3 注入量已窗口感知（窗口比例预算 + 实测 token 门），固定条数自描述失真（审查建议-8）
+      case 'light': return '轻量（小预算）';
+      case 'medium': return '中等（中等预算）';
+      case 'high': return '高强度（较大预算）';
+      case 'full': return '全量（最大预算 + 强过滤）';
       default: return String(level);
     }
   }

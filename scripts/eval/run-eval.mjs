@@ -778,7 +778,15 @@ async function runOne(fixture, ablation, opts) {
         result.stopReason = 'no-verification';
         result.failureTaxonomy = { primary: 'memory-not-cited' };
       } else if (overflowRequired && ablation.overflowWindow
-                 && !/(overflow|truncat|窗口|截断|compact|压缩)/i.test(stdout)) {
+                 // 溢出证据两级来源（同源纪律）：
+                 // ① [ctx] contextOverflowCompacted=1 —— loop 触发过溢出重试的
+                 //    机器可读标记（权威，RunCommand 证据行）；
+                 // ② 网关报错正文模式 —— 与 src/model/errorClassify.ts 的
+                 //    OVERFLOW_PATTERNS 同步（context length/too many tokens/
+                 //    token limit/prompt too long）。旧正则 (overflow|truncat|…)
+                 //    与真实报错文案不匹配 → 真溢出被误翻 overflow-skipped。
+                 && !/\[ctx\] contextOverflowCompacted=1/i.test(stdout)
+                 && !/(context length|maximum context|too many tokens|token limit|prompt (?:is )?too long|input (?:is )?too long|overflow|truncat|窗口|截断|超出.{0,8}(?:上下文|长度|令牌)|上下文.{0,8}(?:超|过长|上限|溢出))/i.test(stdout)) {
         result.tags.push('overflow-skipped');
         result.verdict = 'not_applicable';    // EVAL_VERDICTS：A 档未溢出
         result.stopReason = 'no-verification';

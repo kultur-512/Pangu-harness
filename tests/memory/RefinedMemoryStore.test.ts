@@ -23,6 +23,10 @@ function makeCard(overrides: Partial<RefinedMemoryCard> = {}): RefinedMemoryCard
   const now = Date.now();
   return {
     id: 'card-' + Math.random().toString(36).slice(2),
+    // 包C 缺陷1：容量分桶改按 kind 治理（MAX_PER_KIND）——fixture 显式声明
+    // kind:'failure'（旧 'OTHER' category fixture 语义上等价于 failure 桶，落卡
+    // 缺 kind 时容量归一化也按 failure，见 applyCapacityLimits/loadFiltered）。
+    kind: 'failure',
     category: 'OTHER',
     memoryCategory: 'general',
     summary: 'test',

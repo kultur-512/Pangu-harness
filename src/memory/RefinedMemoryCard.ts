@@ -69,6 +69,17 @@ export interface RefinedMemoryCard {
   status?: 'active' | 'archived';
   /** 合并卡记录来源卡 id（可回滚）；本期只写不读 */
   mergedFrom?: string[];
+
+  // ===== 宽进严排字段（2026-09-13 写路径改造，加性字段：旧文件无此字段照常加载） =====
+  /** 产出来源标记（'dialogue-pair' = 对话对卡，摘要为 'Q: …\nA: …' 双段；缺省 = 旧卡/其他路径） */
+  source?: string;
+  /**
+   * 分类器置信度 ∈ [0,1]（chatFactMemory.confidenceOf 产出的写入侧软信号）。
+   * 检索端按 (0.5 + 0.5×confidence) 软惩罚有效权重（B1）——0.4 置信闲聊 ×0.7、
+   * 数字事实 ×1.0；无字段老卡不乘（行为不变）。质量判断后移到检索排序，
+   * 替代旧"低置信写入侧硬拒绝"。
+   */
+  confidence?: number;
 }
 
 /**
@@ -87,16 +98,33 @@ export interface RefinedMemoryFile {
  * 默认容量与衰减参数
  */
 export const MEMORY_LIMITS = {
-  /** 单类别最大卡片数 */
+  /** 单类别最大卡片数（历史常量；容量治理已改按 kind 分桶，见 MAX_PER_KIND） */
   MAX_PER_CATEGORY: 10,
+  /**
+   * 按 kind 分桶的容量帽（包C 缺陷1 修复，2026-09-13）：
+   * 旧 applyCapacityLimits 按 category 分桶各留 MAX_PER_CATEGORY=10，而
+   * success / preference(/remember) / merged / chat-fact 卡全部 category:'OTHER'
+   * → 三类卡挤一个 10 张桶，第 11 张起静默截断最旧；chat-fact 声称的 80 张帽
+   * （chatFactMemory MAX_TOTAL_CARDS=80）与全局 200 帽不可达。
+   * 按 kind 实际取值集合（RefinedMemoryCard.kind: 'failure' | 'success' |
+   * 'preference'）映射；chat-fact 卡（chatFactMemory）kind 即 'preference'，
+   * 其 80 帽以该桶承载。无 kind 的旧卡在容量归一为 'failure'（对齐 loadFiltered）。
+   */
+  MAX_PER_KIND: { failure: 40, success: 10, preference: 80 } as Record<string, number>,
+  /** failure kind 内每 category 细分帽（category 多样时防单 category 刷爆类帽） */
+  MAX_PER_KIND_PER_CATEGORY: 10,
   /** 全局硬上限（卡片数） */
   MAX_TOTAL_CARDS: 200,
   /** 衰减半衰期（天）—— 30 天未被触发的卡片权重衰减为 50% */
   DECAY_HALF_LIFE_DAYS: 30,
   /** 最小权重（衰减后低于此值会被清理） */
   MIN_WEIGHT: 0.5,
-  /** 文件大小软上限（字节） */
-  MAX_FILE_SIZE_BYTES: 200 * 1024,
+  /** 文件大小软上限（字节）。
+   *  2026-09-14 容量复查：A 侧 smartSlice 400→800（PAIR_A_CHARS）后，80 张
+   *  preference 桶满载（对卡 Q160+A800，CJK 3 字节/字 ≈ 3.3KiB/张）≈ 262KiB，
+   *  超旧帽 200KiB → save() 会 reject（写侧静默丢数据）。上调至 512KiB 给
+   *  桶满载留 ~2 倍余量；只上调、不引入新截断。 */
+  MAX_FILE_SIZE_BYTES: 512 * 1024,
   /** 默认持久化文件名 */
   DEFAULT_FILENAME: '.panshalach-memory.json',
   /** 默认 .gitignore 追加行 */
