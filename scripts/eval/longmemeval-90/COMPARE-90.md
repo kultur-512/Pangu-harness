@@ -144,3 +144,40 @@ token 估算器口径收口（`9fe0cf9`：文本路径裁剪统一 `estTokens` +
 **归因拆解**：gapfix-m3（41，`9acf202` 差距修复轮）→ zl-m3-90（47）的 +6 = **+5 记忆/检索迭代**（`a3c7582`/`23e9f54` 的 factDate 重排 + C4 数字句前置 + R2 预算 1229、`b9cff6b` 的 B9 relTime、`fc5c7c8` 的 MMR 默认关闭——这些此前从未单独在 M3 上验证）+ **+1 token fix 系数改动**（1.5→1.0）。
 
 **结论**：token fix 在基准上是中性的（1B 0、M3 +1，均方差噪声内），其价值是正确性收口（文本路径不再对中文低估 6 倍、系数不再高估 1.5-2.5 倍），不是 benchmark 提分杠杆；M3 47/90 新纪录主要来自记忆/检索迭代，已甩开追平 CC 的 41/90 基线 6 分。
+
+---
+
+## 附录（2026-09-15）：内置 tier 六档扫描 + 记忆形态四档复验
+
+### tier 六档扫描（ZL 产品管线 × 1B，90 题，grader v2.1）
+
+| tier | strict | lenient | 可见 memoryCategory | 强模式 |
+|---|---|---|---|---|
+| quick | 2/90 | 6 | 仅 failure | ✗ |
+| standard | 1/90 | 4 | failure+implementation | ✗ |
+| **high** | **24/90** | 25 | **+insight（chat-fact）** | ✗ |
+| max | 20/90 | 24 | 全部 | ✓ |
+| ex | 20/90 | 23 | 全部 | ✓ |
+| pangu | 18/90 | 22 | 全部 | ✓ |
+
+**机制**：chat-fact 卡 `memoryCategory='insight'`（chatFactMemory.ts），而 `isVisible` 规则 quick 只看 failure、standard 只看 failure+implementation、high 起才看 insight——所以低档记忆注入为空（quick 2 / standard 1），高分需 high+。强模式（max/ex/pangu）对 1B 是净损失（额外纪律注入/验证密度拖垮弱模型）。
+
+### 强模式方向在模型间相反
+
+| 模型 | high 档 | pangu 档 | Δ |
+|---|---|---|---|
+| 1B | 24/90 | 18/90 | −6（强模式伤弱模型） |
+| M3 | 47/90 | 48/90 | +1（强模式中性/微正） |
+
+默认 `high` 档在两模型上都是合理选择（1B 甜点 / M3 与 pangu 仅差 1 分）。
+
+### 记忆形态四档复验（当前代码 × 1B × 90 题，grader v2.1）
+
+| 档位 | strict | 记忆形态 |
+|---|---|---|
+| ZL-compact | 30/90 | 无门控播种 + LIMIT=40 检索 |
+| ZL-direct | 24/90 | 人工记忆卡内联 recall |
+| ZL-product | 19/90 | 产品管线（门控播种+检索） |
+| ZL-pipeline | 18/90 | haystack 原文整段内联 |
+
+旧 v2 口径（direct 29 / pipeline 23 / compact 32）经 v2.1 收紧后下移，排序不变。产品门控仍是 1B 最大瓶颈：compact 无门控 30 vs product 门控 19，差 11 分。
