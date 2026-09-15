@@ -47,6 +47,13 @@ export class Session {
   public model: string;
   public currentTaskId?: string;
   public provider?: ModelProvider; // injected provider for model resolution
+  /**
+   * B2-4：环境快照基线（供 PromptBuilder 的 env-delta 增量注入用）。
+   * 挂 session 而非 PromptBuilder 实例——后者每次任务入口都被重建，
+   * 实例字段恒空、增量机制实际从未生效。**有意不落盘**（易变现场，跨进程
+   * 回放陈旧基线会造假 delta），故不进 toFile()。
+   */
+  public prevEnvSnapshot?: { cwd: string; branch?: string; fs?: string[] };
   // approval state (readonly is the safe default, day one)
   public approvalMode: SessionApprovalMode;
   public sessionApprovalAllowlist: Set<string>;

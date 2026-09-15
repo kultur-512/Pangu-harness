@@ -70,3 +70,31 @@ B11 是**团队源码里 2026-09-14 已注明"补齐属独立工作项"的申报
 
 ### 基准验证
 `npx tsc --noEmit` EXIT=0 + `npm test` **1401 例（1400 pass + 1 skip + 0 fail）** + 三契约 PASS。
+
+---
+
+## 续批追加 2 — B2-4（env-delta 增量跨任务真正生效）
+
+- **日期**：2026-09-15
+- **性质**：常规（内部缺陷修复 + 一处字段搬迁；导出签名不变）
+
+### 我改变了什么（行为差异，依赖方需知）
+1. **env-delta 基线从 `PromptBuilder` 实例字段搬到 `Session.prevEnvSnapshot`**
+   - 行为差异：连续第二个任务起，**环境未变时不再注入 `【环境变更】` 块**（此前因基线恒 null，每个任务都白注入一行 cwd）。**这是修复**（增量语义首次真正生效）。
+   - 影响面：所有走 `PromptBuilder.buildForTask` 的路径（server/SSE/headless/classic）。**评测 prompt-diff 基线会变**——若你的 A/B 展品脚本按 prompt 逐字节比对，注意这一处减少了一行 cwd 注入。
+2. **新增 `Session.prevEnvSnapshot?: { cwd; branch?; fs? }`（public，**不落盘**）**
+   - 有意不进 `toFile()`：git status 是易变现场，跨进程回放陈旧基线会产生假 delta。已在字段注释与使用处注释写明理由。
+   - 若你构造 `Session` 时想预置基线（如评测回放），直接赋 `session.prevEnvSnapshot = {...}` 即可。
+
+### 依赖我的人需要知道
+- **王浩宇（R6 评测）**：prompt-diff 展品脚本若逐字节比对，会看到"环境未变任务的 prompt 少一行 cwd"——这是修复带来的确定性变化，两侧（A/B 档）同样受影响，**差分关系不变**。
+- **赵天昂**：无影响。
+- **Leader**：ROADMAP-NEXT §B2 该子项标销项；§B3 标注"已由 b598e60 修复"、§B4 标注"逃生门语义需决策"；CHANGELOG 0.8.8 增补 B2-4 小节（全量数 1401→**1405**）。
+
+### 基准验证
+`npx tsc --noEmit` EXIT=0 + `npm test` **1405 例（1404 pass + 1 skip + 0 fail）** + 三契约 PASS。
+
+### 现状核实（未动，供排期）
+- **B3 已由团队修复**（`b598e60` A3）——无需重做。
+- **B4 属逃生门语义非缺陷**：三段分段无生产调用方 → messages 通道生产不可达；接线属 S 级改动，需 Leader 决策。
+- **B1 本机三次并发复跑未复现**（3/3 绿）；疑与负载/CI 环境相关。

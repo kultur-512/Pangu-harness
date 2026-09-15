@@ -29,9 +29,9 @@
 | # | 项 | 位置 | 说明 |
 |---|---|---|---|
 | B1 | 全量测试 concurrency=4 并行跑进程静默死亡（串行全绿） | `tests/` | 疑某测试与多路 stdout 捕获冲突；**CI 强制前必须定位** |
-| B2 | 记忆审计 #4-#13 剩余项 | `src/memory/*`、`Repl.ts` | messages 分段接线补 Repl/Simulate 两调用方；CJK 2-gram 相关性增强；--classic 路径接 finalizeTaskMemory；prevEnvSnapshot 挂 Session 让 env 增量真正增量；档位契约对齐；磁盘压实 |
-| B3 | classic 路径 windowTokens 漏传 | `Repl.ts`（对照 `runAgentTask.ts:173`） | 窗口预算在 classic/`--headless` 单条命令路径不生效（~40 行，hermes 对齐唯一采纳项） |
-| B4 | classic 路径 messages 分段未接 | `Repl.ts` | classic 直调 solveIssue 走旧文本协议（逃生门语义，非缺陷；对齐后 classic 与主线一致） |
+| B2 | 记忆审计 #4-#13 剩余项 | `src/memory/*`、`Repl.ts` | messages 分段接线补 Repl/Simulate 两调用方（**属 S 级：三段分段无生产调用方，接线会切换全部评测口径，需 Leader 决策**）；~~CJK 2-gram 相关性增强~~ ✅ 0.8.5（`ChineseRetrieval` 25 例）；~~--classic 路径接 finalizeTaskMemory~~ ✅ 已接（`Repl.ts:535`）；~~prevEnvSnapshot 挂 Session 让 env 增量真正增量~~ ✅ **0.8.8 销项**（基线原挂 PromptBuilder 实例私有字段，而该实例每任务重建 → 增量从未生效；现挂 Session，`EnvDeltaAcrossTasks` 4 例锁定）；档位契约对齐；磁盘压实 |
+| B3 | ~~classic 路径 windowTokens 漏传~~ | `Repl.ts` | ✅ **已由团队修复**（`b598e60` A3：REPL 补传 windowTokens，交互模式 70% 预算裁剪从失效到生效）——无需重做 |
+| B4 | classic 路径 messages 分段未接 | `Repl.ts` | 现状为**逃生门语义非缺陷**：`buildStableSegment`/`buildVolatileSegment` 的唯一生产者在测试内，无生产调用方传 `stableSegment`/`volatileSegment` → messages 通道在生产路径不可达（与 `scripts/eval/` 从不设 `PANSHA_MESSAGES_MODE` 一致）。接线属 S 级改动，需 Leader 决策后再动 |
 | ~~B5~~ | ~~MCP 工具结果验证尾标策略~~ | `engineAdapter.ts` | ✅ **0.8.8 销项**：MCP 工具（命名空间 `mcp_<server>_<tool>`）走**独立结果分支**（`MCP_OK:` 前缀）且**不追加任何 VERIFICATION 尾标**——MCP 自述输出无外部退出码佐证，追加 PASS 即让第三方工具凭自述伪装真实验证（PASS 是 `completed` 唯一来源）。连带修一个真误判：`mcp_srv_read` 此前被 `name.includes('read')` 命中而误贴 `VERIFICATION: NEUTRAL`（=PARTIAL，清零连败计数）。回归 `tests/tools/mcpVerificationTail.test.ts`（5 例） |
 | B6 | 栈溢出守卫长会话自然复现验证 | 渲染层 | renderSseEvent 自递归守卫已修，待真机长会话自然复现确认 |
 | ~~B7~~ | ~~rewind 事件 replay 消费 / 双 synthetic 幂等 / listBranches O(N²)~~ | `rolloutStore.ts` | ✅ **0.8.1 销项**：rewind 边界在 `replayInto` 消费（回退后 resume 不再复活已回退轮次）；compact 标记幂等（同标记重放不产生重复轮）；分支解析改单次扫描索引（O(N×链深) → O(N)）。回归 `tests/repl/rolloutB7.test.ts` |

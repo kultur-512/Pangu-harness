@@ -288,8 +288,12 @@ export class PromptBuilder {
   // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
   private duplicatesSkipped = 0;
-  // previous environment snapshot (for incremental env-delta injection)
-  private prevEnvSnapshot: any = null;
+  // B2-4：环境快照基线**挂在 Session 上**（此前为本类私有字段——本类在每次
+  // 任务入口都被重新实例化：runAgentTask 每调用一次 new 一个、Repl.getPromptBuilder()
+  // 每次执行任务也 new 一个，故 prevEnvSnapshot 恒为 null → buildEnvDelta 永远走
+  // "首次快照"分支只报 cwd，增量机制实际从未生效）。挂 Session 后跨任务真正增量。
+  // 有意**不落盘**（SessionFile 无此字段）：git status 是易变现场，跨进程回放陈旧
+  // 基线会产生假 delta；会话内跨任务复用已足够。
   // 0.8 P2（M1-PROTOCOL）：三段拆分的共享行缓冲（buildForTask = summary 块 + stable + volatile 拼接）
   private buildLines: string[] = [];
   /** 本 build 溢出记忆拉取数（auto-pull 前后 injectedCardIds 差）。 */
@@ -562,11 +566,12 @@ export class PromptBuilder {
     // === incremental environment context — only CHANGED
     // fields are injected (cwd/branch/changed files); unchanged runs inject
     // nothing (token savings). ===
+    // B2-4：基线读自 session（跨任务存活）——本类实例每次任务重建，实例字段恒空。
     try {
       const { snapshotEnv, buildEnvDelta, renderEnvDelta } = await import('./EnvContext.js');
       const now = snapshotEnv(this.session.workspace);
-      const delta = buildEnvDelta(this.prevEnvSnapshot, now);
-      this.prevEnvSnapshot = now;
+      const delta = buildEnvDelta(this.session.prevEnvSnapshot ?? null, now);
+      this.session.prevEnvSnapshot = now;
       const block = renderEnvDelta(delta);
       if (block) {
         this.tryInject('env-delta', block, lines);

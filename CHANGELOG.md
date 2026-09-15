@@ -1,6 +1,6 @@
 # Changelog
 
-> **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1401 例全绿（1400 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1405 例全绿（1404 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
 ## 0.8.7 token 口径收口（2026-09-15 · zhaiyuanhao1）
@@ -88,7 +88,13 @@ token 估算器口径审查（对照目标模型中文原生 tokenizer 实测 to
 - **连带修一个真误判**：MCP 名是命名空间形态 `mcp_<server>_<tool>`，`mcp_srv_read` 此前会命中 `name.includes('read')` 而被贴 `VERIFICATION: NEUTRAL`（=PARTIAL：清零连败计数、看着像部分验证）。现 MCP 分支前置于所有内置工具子串判定
 - 回归：新增 `tests/tools/mcpVerificationTail.test.ts`（5 例：无尾标 / read 子串回归 / glob·grep 子串回归 / 内置工具尾标不变 / 同批互不串扰）
 
-**质量门**：`npx tsc --noEmit` EXIT=0；全量 **1401 例（1400 pass + 1 skip + 0 fail）**；`verify-panshalach-cleanup` + `check-protected-files` + `verify-m2-e2e` 三契约 PASS。
+**B2-4——env-delta 增量跨任务真正生效**（ROADMAP-NEXT §B2 记忆审计剩余项）：
+
+- **缺陷**：`prevEnvSnapshot` 此前是 `PromptBuilder` 的**实例私有字段**，而该实例在每次任务入口都被重建（`runAgentTask` 每调用 `new` 一个、`Repl.getPromptBuilder()` 每次执行任务 `new` 一个）→ 基线恒为 `null` → `buildEnvDelta` 永远走"首次快照"分支**只报 cwd**，"只注入变更字段"的增量语义从未生效（每任务白注入一个 cwd 行）
+- **修复**：基线改挂 **`Session`**（`session.prevEnvSnapshot`，跨任务存活）；**有意不落盘**（`SessionFile` 无该字段——git status 是易变现场，跨进程回放陈旧基线会造假 delta），注释已写明
+- 回归：新增 `tests/repl/EnvDeltaAcrossTasks.test.ts`（4 例：环境未变零增量 / 真变化只注入变更字段 / 基线写回 session 的本体断言 / 不落盘）
+
+**质量门**：`npx tsc --noEmit` EXIT=0；全量 **1405 例（1404 pass + 1 skip + 0 fail）**；`verify-panshalach-cleanup` + `check-protected-files` + `verify-m2-e2e` 三契约 PASS。
 
 ## 合并记录（2026-09-12 · 四分支收口 develop）
 
