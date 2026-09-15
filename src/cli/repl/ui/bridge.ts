@@ -15,6 +15,39 @@ export interface BridgeContext {
 let currentDispatch: ((action: any) => void) | null = null;
 let currentHistory: string[] = [];
 
+/**
+ * feed 白名单：只有这些 type 的 item 可以原样进入 ink 渲染树。
+ * 引擎内部事件（tools/pre-execute / tools/post-execute / approval.request /
+ * memory.finalized / 任意未知 type）一律归一化为安全的 text item——
+ * 裸对象/裸字符串进入 ink 树会触发 "Text string must be rendered inside
+ * <Text> component" 崩溃（真机 0.8.3 实测，任务一开始整个 UI unmount）。
+ */
+const SAFE_FEED_TYPES: ReadonlySet<string> = new Set([
+  'text', 'phase', 'step', 'critique', 'tool', 'thought', 'budget', 'markdown',
+]);
+
+/** 把任意 pushFeed 入参归一化为可安全渲染的 feed item（永不返回裸字符串/任意对象）。 */
+export function toSafeFeedItem(item: any): { type: string; [k: string]: any } {
+  if (typeof item === 'string') {
+    return { type: 'text', text: item, level: 'info' };
+  }
+  if (item && typeof item === 'object' && SAFE_FEED_TYPES.has(String(item.type))) {
+    return item;
+  }
+  // 未知/内部事件 → 单行灰字摘要（type + 少量可读字段），绝不透传原对象
+  const t = item && item.type ? String(item.type) : 'event';
+  const parts: string[] = [];
+  if (item && typeof item === 'object') {
+    for (const k of ['tool', 'phase', 'reason', 'message', 'error']) {
+      const v = (item as any)[k];
+      if (v != null && String(v).trim()) parts.push(`${k}=${String(v).replace(/\s+/g, ' ').slice(0, 60)}`);
+    }
+  } else if (item != null) {
+    parts.push(String(item).slice(0, 120));
+  }
+  return { type: 'text', text: parts.length ? `· ${t} ${parts.join(' ')}` : `· ${t}`, level: 'info' };
+}
+
 // interactive confirm state (rich UI approval bridge).
 // The resolver lives OUTSIDE React state on purpose: the engine awaits the
 // promise while the reducer only carries the serializable request for render.
@@ -25,6 +58,15 @@ export interface ConfirmRequest {
   diff?: any[];
 }
 let currentConfirm: { request: ConfirmRequest; resolve: (d: 'y' | 'n' | 'a') => void } | null = null;
+
+// CC 式 /tier 交互滑杆（rich）——resolver 同样活在 React 之外：
+// 斜杠命令 await openTierPicker()，TierPicker 组件按键后 resolveTierPicker。
+export interface TierPickerState {
+  tiers: string[];
+  sublabels: string[];
+  index: number;
+}
+let currentTierPicker: { resolve: (index: number) => void } | null = null;
 
 export function createBridge(
   session: Session,
@@ -38,23 +80,36 @@ export function createBridge(
   requestConfirm: (message: string) => Promise<boolean>;
   addHistory: (cmd: string) => void;
 } {
+  // re-entrancy guard: 无 dispatch 时的 renderer.writeLine 兜底本身会被
+  // renderer 的 feedSink 送回 pushFeed（ink 启动窗口期 feedSink 已挂、
+  // dispatch 未注册）——不加守卫会无限递归栈溢出。
+  let feedFallbackWriting = false;
+
   const pushFeed = (item: Omit<FeedItem, 'id'>) => {
+    // 归一化门：任何调用方（含 mapSseToBridge fallback / Repl onStep）推来的
+    // 未知事件在此收敛为安全 item，裸对象/裸字符串绝不进入 ink 树。
+    const safe: any = toSafeFeedItem(item);
     const withId: FeedItem = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-      ...(item as any),
+      ...(safe as any),
     };
     if (currentDispatch) {
       currentDispatch({ type: 'PUSH_FEED', item: withId });
       // If it's a phase, also surface it in top bar
-      if ((item as any).type === 'phase' && (item as any).phase) {
-        currentDispatch({ type: 'SET_PHASE', phase: (item as any).phase });
+      if ((withId as any).type === 'phase' && (withId as any).phase) {
+        currentDispatch({ type: 'SET_PHASE', phase: (withId as any).phase });
       }
+    } else if (feedFallbackWriting) {
+      // 兜底链路重入——丢弃（无 UI 可显示）
     } else {
       try {
-        if (item.type === 'text' && (item as any).text) {
-          renderer.writeLine((item as any).text);
+        if (withId.type === 'text' && (withId as any).text) {
+          feedFallbackWriting = true;
+          renderer.writeLine((withId as any).text);
         }
-      } catch {}
+      } catch {} finally {
+        feedFallbackWriting = false;
+      }
     }
   };
 
@@ -123,6 +178,34 @@ export function createBridge(
   };
 
   const hasPendingConfirm = () => currentConfirm !== null;
+
+  // /clear（rich）：清空对话 feed（ink 拥有屏幕，行模式 ANSI 清屏在这里无意义）
+  const clearScreen = () => {
+    if (currentDispatch) currentDispatch({ type: 'CLEAR_FEED' });
+  };
+
+  // CC 式 /tier 交互滑杆（rich）：挂起斜杠命令直到用户确认/取消。
+  // 返回 null = rich UI 未挂载（dispatch 未注册，启动窗口/降级）→ 调用方回退
+  // 单行静态说明；>= 0 = 确认的档位下标；-1 = 取消。
+  const openTierPicker = (opts: { tiers: string[]; sublabels?: string[]; index: number }): Promise<number | null> => {
+    if (!currentDispatch) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      currentTierPicker = { resolve };
+      const picker: TierPickerState = {
+        tiers: (opts.tiers || []).map((t) => String(t || '')),
+        sublabels: (opts.sublabels || []).map((s) => String(s || '')),
+        index: Number(opts.index) || 0,
+      };
+      currentDispatch!({ type: 'SET_TIER_PICKER', picker });
+    });
+  };
+
+  const resolveTierPicker = (index: number) => {
+    const c = currentTierPicker;
+    currentTierPicker = null;
+    if (currentDispatch) currentDispatch({ type: 'SET_TIER_PICKER', picker: undefined });
+    if (c) c.resolve(Number(index));
+  };
 
   // Rich helpers
   const pushStep = (step: any) => {
@@ -258,6 +341,10 @@ export function createBridge(
     setConfirm,
     resolveConfirm,
     hasPendingConfirm,
+    // /clear（rich 清空 feed）+ /tier 交互滑杆
+    clearScreen,
+    openTierPicker,
+    resolveTierPicker,
     submitInput,
     updateInput,
     appendStream,

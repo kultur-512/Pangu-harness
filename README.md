@@ -54,7 +54,7 @@ npm install -g .     # 提供 panshalach / zhulong bin（保留旧别名 zorge�
 ```
 tier / model / approvals / undo / rewind / compact / usage / resume / agents /
 status / memory / review / config / init / history / trace / session /
-workspace / feature / tree / clear / help / exit
+workspace / feature / tree / run / task / simulate / serve / clear / help / exit
 ```
 
 ## 档位定位

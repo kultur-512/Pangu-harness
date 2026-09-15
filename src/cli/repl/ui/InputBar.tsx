@@ -67,11 +67,8 @@ export function InputBar(props: {
   const selected = suggestions[selectedIndex] || null;
   const ghost = ghostTextFor(v, suggestions);
 
-  const submitLine = (line: string) => {
-    onSubmit(line);
-    if (setHistoryIndex) setHistoryIndex(-1);
-    if (setSelectedId) setSelectedId(null);
-  };
+  // 缺陷 #2：Enter 只提交 value 原文（见 handleKey）；建议的接受唯一入口是
+  // Tab。submitLine 快捷路径已随 Enter 劫持逻辑一并移除。
 
   // fix-rich-input: render-synced latest-handler ref (ink re-subscribes after
   // commit; this removes all effect-timing dependence).
@@ -119,25 +116,9 @@ export function InputBar(props: {
         setSelectedId(suggestions[newIdx]?.id ?? null);
         return;
       }
-      if (key.return) {
-        if (selected) {
-          if (selected.type === 'command') { submitLine(selected.displayText); return; }
-          if (selected.type === 'provider') {
-            onChange(selected.replacement); // '/model a6 ' → model suggestions
-            if (setSelectedId) setSelectedId(null);
-            return;
-          }
-          if (selected.type === 'model') {
-            submitLine(selected.replacement); // '/model a6:openPangu-7B'
-            return;
-          }
-          if (selected.type === 'file' || selected.type === 'directory') {
-            submitLine(selected.replacement);
-            return;
-          }
-        }
-        // fall through to normal submit
-      }
+      // 缺陷 #2 修复（真机实测：`/model list` 回车被 provider 建议劫持成
+      // `/model openpangu`，参数被静默吞掉）：Enter 不再接受任何建议——
+      // 建议只经 Tab 显式接受（上方分支）。Enter 直落下方"提交 value 原文"。
     }
     if (suggestionsDismissed && input && !key.ctrl && !key.meta) {
       setSuggestionsDismissed(false); // typing re-arms suggestions

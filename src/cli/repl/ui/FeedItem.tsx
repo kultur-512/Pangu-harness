@@ -26,7 +26,9 @@ export function FeedItem(props: { item: any; transcript?: boolean }) {
         item.level === 'warn' ? 'yellow' :
         item.level === 'success' ? 'green' :
         item.level === 'info' ? 'cyan' : undefined;
-      return Text ? R.createElement(Text, color ? { color } : {}, item.text) : item.text;
+      return Text
+        ? R.createElement(Text, color ? { color } : {}, item.text)
+        : R.createElement('text', {}, String(item.text ?? ''));
     }
     case 'step': {
       const stepNum = item.stepNumber != null ? item.stepNumber : '';
@@ -41,7 +43,7 @@ export function FeedItem(props: { item: any; transcript?: boolean }) {
       if (Text) {
         children.push(R.createElement(Text, { bold: true }, header));
       } else {
-        children.push(header);
+        children.push(R.createElement('text', {}, header));
       }
 
       // Thinking → collapsible ThoughtBlock if we have content (expanded in transcript mode)
@@ -75,11 +77,11 @@ export function FeedItem(props: { item: any; transcript?: boolean }) {
     case 'critique':
       return Text
         ? R.createElement(Text, { color: 'yellow' }, `Critique: ${item.critique}`)
-        : `Critique: ${item.critique}`;
+        : R.createElement('text', {}, `Critique: ${item.critique}`);
     case 'phase':
       return Text
         ? R.createElement(Text, { dimColor: true, bold: true }, `── ${item.phase} ──`)
-        : `── ${item.phase} ──`;
+        : R.createElement('text', {}, `── ${item.phase} ──`);
     case 'tool': {
       // Prefer rich ToolCard (static import per M1-2.0.2)
       return R.createElement(ToolCard, {
@@ -94,16 +96,34 @@ export function FeedItem(props: { item: any; transcript?: boolean }) {
       const t = transcript && item.full ? item.full : (item.short || '');
       return Text
         ? R.createElement(Text, { color: 'magenta' }, `💭 ${t}`)
-        : `💭 ${t}`;
+        : R.createElement('text', {}, `💭 ${t}`);
     }
     case 'budget':
       return Text
         ? R.createElement(Text, { color: (item.usedRatio || 0) > 0.8 ? 'red' : 'green' }, `[budget ${Math.floor((item.usedRatio || 0) * 100)}%]`)
-        : `[budget ${Math.floor((item.usedRatio || 0) * 100)}%]`;
+        : R.createElement('text', {}, `[budget ${Math.floor((item.usedRatio || 0) * 100)}%]`);
     case 'markdown': {
       return R.createElement(MarkdownBlock, { content: item.content || '' });
     }
-    default:
-      return JSON.stringify(item);
+    default: {
+      // 缺陷 #5（真机 ink 崩溃）：旧实现 `return JSON.stringify(item)` 把裸字符串
+      // 直接放回 ink 渲染树 —— react-reconciler 抛
+      // "Text string ... must be rendered inside <Text> component"，整个 UI
+      // unmount、REPL 进程退出（载荷即 tools/pre-execute 事件 JSON）。
+      // 未知 type 的 feed 项一律安全渲染：单行灰字（type + 少量字段摘要），
+      // 绝不返回字符串字面量或任意对象。
+      const type = typeof item.type === 'string' && item.type ? item.type : 'event';
+      const parts: string[] = [];
+      if (item && typeof item === 'object') {
+        for (const k of ['tool', 'phase', 'reason', 'message', 'error']) {
+          const v = item[k];
+          if (v != null && String(v).trim()) parts.push(`${k}=${String(v).replace(/\s+/g, ' ').slice(0, 60)}`);
+        }
+      }
+      const summary = parts.length ? `· ${type} ${parts.join(' ')}` : `· ${type}`;
+      return Text
+        ? R.createElement(Text, { dimColor: true }, summary)
+        : R.createElement('text', {}, summary);
+    }
   }
 }

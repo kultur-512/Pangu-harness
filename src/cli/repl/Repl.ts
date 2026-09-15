@@ -502,7 +502,24 @@ export class Repl {
           } else if (event.type === 'softLimit' && typeof this.inkBridge.pushBudget === 'function') {
             this.inkBridge.pushBudget(event.usedRatio || 0);
           } else if (typeof this.inkBridge.pushFeed === 'function') {
-            this.inkBridge.pushFeed(event);
+            // 缺陷 #5：内部事件（tools/pre-execute / tools/post-execute /
+            // approval.request 等）绝不能原样推进 rich feed——ink 渲染树吃进
+            // 裸对象/JSON 字符串会触发 "Text string must be rendered inside
+            // <Text>" 崩溃并 unmount 整个 UI。工具事件转卡片，其余转安全文本。
+            if (event.type === 'tools/pre-execute' && typeof this.inkBridge.pushTool === 'function') {
+              this.inkBridge.pushTool({ tool: event.tool || 'tool', params: event.params, status: 'running' });
+            } else if (event.type === 'tools/post-execute' && typeof this.inkBridge.pushTool === 'function') {
+              const preview = String(event.outputPreview || '').slice(0, 200);
+              this.inkBridge.pushTool({
+                tool: event.tool || 'tool',
+                status: event.ok === false ? 'fail' : 'ok',
+                ...(preview ? { result: preview } : (event.error ? { result: String(event.error) } : {})),
+              });
+            } else if (event.type === 'approval.request' || event.type === 'memory.finalized') {
+              // 协议/内部事件不进 feed（审批走 setConfirm 桥）
+            } else {
+              this.inkBridge.pushFeed(event);
+            }
           }
         }
       },

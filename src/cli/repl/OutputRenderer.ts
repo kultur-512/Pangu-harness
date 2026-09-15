@@ -161,14 +161,31 @@ export class OutputRendererImpl implements OutputRenderer {
   // single active progress bar (event-driven, no timers)
   private currentProgress: ActiveProgressBar | null = null;
 
-  write(text: string): void {
+  // Ink UI integration: optional feed sink for routing classic writes into the rich feed
+  private feedSink?: (item: any) => void;
+
+  setFeedSink(sink?: (item: any) => void): void {
+    this.feedSink = sink;
+  }
+
+  /**
+   * ink 模式（feedSink 激活 = ink 拥有终端）：字符串不再裸写 stdout——
+   * 全部作为带类型的 text item 进 rich feed，由 FeedItem 包进 <Text> 渲染
+   * （缺陷 #5 第 1 层：ink 拥屏期间裸写字符串会与 ink 重绘互相污染）。
+   */
+  private echo(text: string): void {
+    if (this.feedSink) return;
     process.stdout.write(text);
+  }
+
+  write(text: string): void {
+    this.echo(text);
     this.pushToFeedIfAny(text);
   }
 
   writeLine(text: string): void {
-    process.stdout.write(text + '\n');
-    this.pushToFeedIfAny(text + '\n');
+    this.echo(text + '\n');
+    this.pushToFeedIfAny(text);
   }
 
   color(text: string, color: ColorName): string {
@@ -205,25 +222,25 @@ export class OutputRendererImpl implements OutputRenderer {
 
   error(msg: string): void {
     const line = c('✗ ' + msg, 'red');
-    this.writeLine(line);
+    this.echo(line + '\n');
     this.pushToFeedIfAny('✗ ' + msg, 'error');
   }
 
   warn(msg: string): void {
     const line = c('⚠ ' + msg, 'yellow');
-    this.writeLine(line);
+    this.echo(line + '\n');
     this.pushToFeedIfAny('⚠ ' + msg, 'warn');
   }
 
   success(msg: string): void {
     const line = c('✓ ' + msg, 'green');
-    this.writeLine(line);
+    this.echo(line + '\n');
     this.pushToFeedIfAny('✓ ' + msg, 'success');
   }
 
   info(msg: string): void {
     const line = c('• ' + msg, 'cyan');
-    this.writeLine(line);
+    this.echo(line + '\n');
     this.pushToFeedIfAny('• ' + msg, 'info');
   }
 
@@ -235,11 +252,11 @@ export class OutputRendererImpl implements OutputRenderer {
   }
 
   stream(text: string): void {
-    process.stdout.write(text);
+    this.echo(text);
     this.pushToFeedIfAny(text);
   }
 
-  // progress bar gated by TTY + capabilities.progress
+  // progress bar gated by TTY + capabilities
   // @deprecated: no caller remains in the codebase — the rich UI
   // uses TopBar budget bars and the line mode uses the gerund spinner. Kept
   // for API compatibility; consider removing in a future major bump.
@@ -262,13 +279,6 @@ export class OutputRendererImpl implements OutputRenderer {
       : 0;
     handle.update(seed);
     return handle;
-  }
-
-  // Ink UI integration: optional feed sink for routing classic writes into the rich feed
-  private feedSink?: (item: any) => void;
-
-  setFeedSink(sink?: (item: any) => void): void {
-    this.feedSink = sink;
   }
 
   private pushToFeedIfAny(text: string, level?: 'info' | 'warn' | 'error' | 'success'): void {

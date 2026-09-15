@@ -382,7 +382,7 @@ export class VerifyCritiqueLoop {
       };
       value = VALUE_HINTS[param] ?? 'sample.txt';
     }
-    return `上一步没有工具调用。只输出下面这一个工具调用块，不要输出任何解释文字（以 <> 开始、以 </> 结束）：
+    return `上一步没有工具调用。只输出下面这一个工具调用块，不要输出任何解释文字（以 <> 开始、以 </> 结束）——其中 ${param} 的值「${value}」只是占位示例，请换成你真实要操作的目标：
 <>
   <${tool}>
     <${param}>${value}</${param}>

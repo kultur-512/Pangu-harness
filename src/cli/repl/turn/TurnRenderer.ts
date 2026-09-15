@@ -415,23 +415,33 @@ export interface EffortSliderBlockOpts {
   width?: number;
 }
 
-/**
- * CC 式思考强度滑杆块（8 行）：标题 / 空 / 端标签（更快←→更强）/ 轨道线
- * （─ + ▲ 当前档列中心 + 扩展区前 ┊）/ 档名行（当前档默认白亮、其余 dim、
- * 扩展档品红）/ 副标注行（`▲ <当前档> · <副标注>`）/ 空 / 页脚。
- */
-export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
+/** 滑杆列布局（纯数据）——line 的 ANSI 版与 rich 的 ink 组件版共用同一几何。 */
+export interface EffortSliderLayout {
+  tiers: string[];
+  /** 每档列宽 = 显示宽(档名) + 2。 */
+  colWidths: number[];
+  /** 每档列在轨道内的起点偏移。 */
+  colStarts: number[];
+  /** 轨道整体居中起点（绝对列）。 */
+  trackStart: number;
+  trackWidth: number;
+  /** 首个扩展档下标（-1 = 无扩展区）。 */
+  firstExt: number;
+  /** 钳位后的当前档下标。 */
+  index: number;
+  /** ▲ 在轨道内的绝对列。 */
+  cursorCol: number;
+}
+
+/** 滑杆几何计算（纯函数）：列宽/居中/▲ 列。ink 版 TierPicker 与 ANSI 版共用。 */
+export function computeEffortSliderLayout(opts: {
+  tiers: ReadonlyArray<string>;
+  index: number;
+  width?: number;
+}): EffortSliderLayout {
   const tiers = (Array.isArray(opts.tiers) ? opts.tiers : []).map((t) => String(t || ''));
-  const sublabels = (Array.isArray(opts.sublabels) ? opts.sublabels : []).map((s) => String(s || ''));
-  const useColor = opts.useColor !== false;
   const width = Math.max(40, Math.floor(Number(opts.width) || termWidthSafe()));
-  const dim = (s: string) => (useColor ? `${ANSI_DIM}${s}${ANSI_RESET}` : s);
-  const mag = (s: string) => (useColor ? `${ANSI_MAGENTA}${s}${ANSI_RESET}` : s);
-  const bright = (s: string) => s;
-
-  const idx = Math.max(0, Math.min(tiers.length - 1, Math.floor(opts.index)));
-
-  // 列布局：每档列宽 = 显示宽(档名) + 2，轨道起点整体居中。
+  const idx = Math.max(0, Math.min(Math.max(0, tiers.length - 1), Math.floor(opts.index)));
   const colWidths = tiers.map((t) => stringWidth(t) + 2);
   const trackWidth = colWidths.reduce((a, b) => a + b, 0);
   const trackStart = Math.max(0, Math.floor((width - trackWidth) / 2));
@@ -441,6 +451,26 @@ export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
     for (const w of colWidths) { colStarts.push(acc); acc += w; }
   }
   const firstExt = tiers.findIndex((t) => TIER_SLIDER_EXTENSIONS.has(t));
+  const cursorCol = tiers.length > 0
+    ? colStarts[idx] + Math.floor(colWidths[idx] / 2)
+    : 0;
+  return { tiers, colWidths, colStarts, trackStart, trackWidth, firstExt, index: idx, cursorCol };
+}
+
+/**
+ * CC 式思考强度滑杆块（8 行）：标题 / 空 / 端标签（更快←→更强）/ 轨道线
+ * （─ + ▲ 当前档列中心 + 扩展区前 ┊）/ 档名行（当前档默认白亮、其余 dim、
+ * 扩展档品红）/ 副标注行（`▲ <当前档> · <副标注>`）/ 空 / 页脚。
+ */
+export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
+  const sublabels = (Array.isArray(opts.sublabels) ? opts.sublabels : []).map((s) => String(s || ''));
+  const useColor = opts.useColor !== false;
+  const dim = (s: string) => (useColor ? `${ANSI_DIM}${s}${ANSI_RESET}` : s);
+  const mag = (s: string) => (useColor ? `${ANSI_MAGENTA}${s}${ANSI_RESET}` : s);
+  const bright = (s: string) => s;
+
+  const { tiers, colWidths, colStarts, trackStart, trackWidth, firstExt, index: idx, cursorCol } =
+    computeEffortSliderLayout({ tiers: opts.tiers, index: opts.index, width: opts.width });
 
   // 端标签行：更快 右端对齐轨道起点，更强 左端对齐轨道终点（更强=扩展方向，品红）。
   const wFaster = stringWidth('更快');
@@ -455,9 +485,8 @@ export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
     const b = colStarts[firstExt] - 1;
     if (b >= 0 && b < trackChars.length) trackChars[b] = '┊';
   }
-  if (tiers.length > 0) {
-    const c = colStarts[idx] + Math.floor(colWidths[idx] / 2);
-    if (c >= 0 && c < trackChars.length) trackChars[c] = '▲';
+  if (tiers.length > 0 && cursorCol >= 0 && cursorCol < trackChars.length) {
+    trackChars[cursorCol] = '▲';
   }
   const track = ' '.repeat(trackStart) + trackChars.join('');
 
@@ -724,6 +753,47 @@ export function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnConte
     if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: '错误: ' + msg, level: 'error' });
     if (typeof b.setRunning === 'function') { try { b.setRunning(false); } catch {} }
     if (ctx) ctx.runningBadgeOn = false;
+    return;
+  }
+  if (t === 'tools/pre-execute' || event === 'tools/pre-execute') {
+    // 工具执行前 → 运行中工具卡（缺陷 #5：此事件旧实现落 fallback 分支被
+    // 原样 pushFeed 进 ink 树，JSON 裸字符串触发 "Text string must be rendered
+    // inside <Text>" 崩溃，整个 UI unmount、任务中断）
+    if (typeof b.pushTool === 'function') {
+      b.pushTool({ tool: data.tool || 'tool', params: data.params, status: 'running' });
+      return;
+    }
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `▸ ${data.tool || 'tool'}`, level: 'info' });
+    return;
+  }
+  if (t === 'tools/post-execute' || event === 'tools/post-execute') {
+    // 工具执行后 → 结果工具卡（ok/fail + 输出预览/错误）
+    if (typeof b.pushTool === 'function') {
+      const preview = String(data.outputPreview || '').slice(0, 200);
+      b.pushTool({
+        tool: data.tool || 'tool',
+        status: data.ok === false ? 'fail' : 'ok',
+        ...(preview ? { result: preview } : (data.error ? { result: String(data.error) } : {})),
+        ...(data.lines ? { argsSummary: `${data.lines} 行` } : {}),
+      });
+      return;
+    }
+    if (typeof b.pushFeed === 'function') {
+      b.pushFeed({ type: 'text', text: `⎿ ${data.tool || 'tool'} ${data.ok === false ? '✗ ' + (data.error || '失败') : 'ok'}`, level: data.ok === false ? 'warn' : 'info' });
+    }
+    return;
+  }
+  if (t === 'approval.request' || event === 'approval.request') {
+    // 审批请求走 bridge.setConfirm 审批桥（approvalBridge），feed 不展示协议事件
+    return;
+  }
+  if (t === 'memory.finalized' || event === 'memory.finalized') {
+    // 记忆落定 → 灰字统计（与 classic 路径同文案口径）
+    if (typeof b.pushFeed === 'function') {
+      const cards = Number(data.cards) || 0;
+      const verified = Number(data.verified) || 0;
+      b.pushFeed({ type: 'text', text: `[记忆] 提炼 ${cards} 张卡，验证 ${verified} 张`, level: 'info' });
+    }
     return;
   }
   // Fallback generic

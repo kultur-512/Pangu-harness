@@ -278,6 +278,21 @@ export async function handleSlashCommand(
 ): Promise<boolean> {
   const { cmd, arg, emit, useRich, bridge } = d;
 
+  // 缺陷 #1（真机实测：rich UI 输入 /exit 落"未知命令"）：/exit(/quit /q)
+  // 必须在统一派发器本地处理——line 模式的 handleLocalCommand 挡在前面
+  // （lineRl.close()），rich 模式（无 readline）只能在这里干净退出：
+  // 落会话元数据 → 卸载 ink（还原终端）→ exit 0。测试可用 ctx.requestExit
+  // 注入替身，默认 process.exit(0)。
+  if (cmd === '/exit' || cmd === '/quit' || cmd === '/q') {
+    try { rollout.appendMeta(ctx.session); } catch {}
+    try {
+      const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
+      if (inst && typeof inst.unmount === 'function') inst.unmount();
+    } catch {}
+    try { ctx.requestExit(); } catch { process.exit(0); }
+    return true;
+  }
+
   // local commands shared by rich + line paths
   // (/undo now; /approvals + /usage + /compact land with their batches)
   if (cmd === '/agents') {
@@ -484,10 +499,14 @@ export async function handleSlashCommand(
     return true;
   }
   if (cmd === '/tier' || cmd === '/t') {
-    // CC 式思考强度滑杆（2026-09-12 对标 /effort）。无参 → 打印滑杆块并进入
-    // 交互选择态（←/→ 调节 · Enter 确认 · Esc 取消，按键消费在 sseInteractive
-    // 的 _ttyWrite 层，与 SlashMenu 互斥；仅 line 模式激活——rich 桥无人消费
-    // 按键，激活会永久挂起）。带参（名称或编号）→ 即时切换，编号与刻度同序。
+    // CC 式思考强度滑杆（2026-09-12 对标 /effort）。无参 → 交互选择态
+    // （←/→ 调节 · Enter 确认 · Esc 取消）：
+    //   rich → bridge.openTierPicker（真 ink 组件，确认/取消即卸载，无静态残迹；
+    //          缺陷 #3/#4：旧实现把 8 行滑杆推进 feed 且无人消费按键——永久残留
+    //          且完全不可交互）；rich UI 未挂载（启动窗口/降级）→ 单行静态说明，
+    //          绝不打印多行残迹块。
+    //   line → 打印着色滑杆块并激活 effortSel（按键消费在 _ttyWrite 层）。
+    // 带参（名称或编号）→ 即时切换，编号与刻度同序。
     const { TierRegistry } = await import('../../../tiers/TierConfig.js');
     const configs = TierRegistry.getAll();
     const TIERS = configs.map((c) => c.tier as string);
@@ -495,7 +514,31 @@ export async function handleSlashCommand(
     const t = arg.trim().toLowerCase();
     if (!t) {
       const index = Math.max(0, TIERS.indexOf(String(ctx.session.tier || '')));
-      // line 模式着色版；rich 桥 feed 不吃 ANSI → 纯文本。
+      if (useRich && typeof (bridge as any).openTierPicker === 'function') {
+        const picked = await (bridge as any).openTierPicker({ tiers: TIERS, sublabels: SUBS, index });
+        if (picked === null || picked === undefined) {
+          // rich UI 未就绪（dispatch 未注册）——单行说明兜底，无残迹
+          emit(`思考强度: ${TIERS[index] || String(ctx.session.tier || '')}${SUBS[index] ? ' · ' + SUBS[index] : ''}（用 /tier <${TIERS.join('|')}> 切换）`, 'info');
+          return true;
+        }
+        if (picked >= 0) {
+          const target = TIERS[picked] || '';
+          if (target && TierRegistry.isTier(target)) {
+            ctx.session.tier = target as any;
+            const sub = SUBS[picked] || '';
+            if (typeof (bridge as any).setTop === 'function') {
+              try { (bridge as any).setTop({ tier: target }); } catch {}
+            }
+            emit(`✓ 思考强度已切换: ${target}${sub ? ' · ' + sub : ''}（下次任务生效）`, 'success');
+          } else {
+            emit(`无效档位: ${target}（可用: ${TIERS.join(' | ')}）`, 'warn');
+          }
+        } else {
+          emit(`（已保留 ${TIERS[index] || String(ctx.session.tier || '')}）`, 'info');
+        }
+        return true;
+      }
+      // line 模式着色版；rich 桥 feed 不吃 ANSI → 纯文本（仅 line 走到这里）。
       for (const l of buildEffortSliderBlock({ tiers: TIERS, sublabels: SUBS, index, useColor: !useRich })) emit(l, 'info');
       if (!useRich) ctx.effortSel = { active: true, tiers: TIERS, sublabels: SUBS, index };
       return true;

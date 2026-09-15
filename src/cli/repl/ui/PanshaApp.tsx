@@ -11,6 +11,7 @@ import { TopBar } from './TopBar.js';
 import { Feed } from './Feed.js';
 import { InputBar } from './InputBar.js';
 import { ConfirmBar } from './ConfirmBar.js';
+import { TierPicker } from './TierPicker.js';
 import { StreamingAssistant } from './streamingAssistant.js';
 
 export function PanshaApp(props: {
@@ -102,6 +103,8 @@ export function PanshaApp(props: {
     streamThinking: '',
     streamMessage: '',
     queue: { total: 0, tasks: 0, steers: 0 },
+    // CC 式 /tier 交互滑杆（rich）：非 undefined 时 TierPicker 顶替 InputBar
+    tierPicker: undefined as any,
   };
 
   function reducer(state: any, action: any) {
@@ -140,6 +143,12 @@ export function PanshaApp(props: {
       // P4-4.2: queued-messages badge
       case 'SET_QUEUE_COUNT':
         return { ...state, queue: { total: action.total || 0, tasks: action.tasks || 0, steers: action.steers || 0 } };
+      // /clear（rich）：清空对话 feed
+      case 'CLEAR_FEED':
+        return { ...state, feed: [] };
+      // CC 式 /tier 交互滑杆：picker=undefined 卸载组件（挂载期间独占按键）
+      case 'SET_TIER_PICKER':
+        return { ...state, tierPicker: action.picker };
       default:
         return state;
     }
@@ -182,6 +191,7 @@ export function PanshaApp(props: {
   const FeedComp: any = Feed;
   const InputBarComp: any = InputBar;
   const ConfirmBarComp: any = ConfirmBar;
+  const TierPickerComp: any = TierPicker;
   const StreamingAssistantComp: any = StreamingAssistant;
 
   const topNode = createElement(TopBarComp, {
@@ -209,7 +219,26 @@ export function PanshaApp(props: {
   // real approval ConfirmBar — state.confirm is the serializable request;
   // decisions flow through bridge.resolveConfirm which resolves the engine's
   // awaiting promise. InputBar is hidden while a decision is pending.
-  const inputNode = state.confirm
+  // /tier 交互滑杆优先级最高（模态：挂载期间独占按键，InputBar 暂时让位）。
+  const inputNode = state.tierPicker
+    ? createElement(TierPickerComp, {
+        picker: state.tierPicker,
+        onConfirm: (index: number) => {
+          if (bridge && typeof bridge.resolveTierPicker === 'function') {
+            bridge.resolveTierPicker(index);
+          } else {
+            dispatch({ type: 'SET_TIER_PICKER', picker: undefined });
+          }
+        },
+        onCancel: () => {
+          if (bridge && typeof bridge.resolveTierPicker === 'function') {
+            bridge.resolveTierPicker(-1);
+          } else {
+            dispatch({ type: 'SET_TIER_PICKER', picker: undefined });
+          }
+        },
+      })
+    : state.confirm
     ? createElement(ConfirmBarComp, {
         request: state.confirm,
         onDecision: (decision: 'y' | 'n' | 'a') => {

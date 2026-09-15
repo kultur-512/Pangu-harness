@@ -89,7 +89,7 @@ export async function tryStartInkUI(
     (globalThis as any).__PANSHA_INK_REACT__ = React;
 
     // Pass the bridge down. PanshaApp is responsible for useReducer + layout.
-    render(
+    const inkInstance = render(
       React.createElement(PanshaApp, {
         bridge,
         initialSession: {
@@ -99,6 +99,13 @@ export async function tryStartInkUI(
         },
       })
     );
+
+    // /exit 干净退出缝：保存 render instance——卸载时 ink 会还原终端状态
+    // （alternate screen / raw mode），避免退出后终端残留错乱。
+    try {
+      (globalThis as any).__PANSHA_INK_INSTANCE__ = inkInstance;
+      (replContext as any).__inkInstance = inkInstance;
+    } catch {}
 
     // Expose bridge back to the Repl instance for rich event forwarding
     try {
