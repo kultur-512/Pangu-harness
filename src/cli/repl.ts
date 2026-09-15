@@ -120,10 +120,14 @@ export async function runOneShot(args: string[], resumeArg?: string): Promise<vo
   try { setSharedModelProvider(provider as any); } catch {}
   // env 优先（applyEnvModel），配置文件 model 字段兜底（applyConfigModel）；
   // PANSHA_APPROVAL / --approval 决定 headless 审批档位（默认 readonly 会拦截写文件）。
-  const { applyConfigModel, envApprovalMode } = await import('./repl/modelSeed.js');
+  const { applyConfigModel, envApprovalMode, envTier } = await import('./repl/modelSeed.js');
   const approval = envApprovalMode();
+  const tier = envTier();
   const session = applyConfigModel(
-    applyEnvModel(new Session(approval ? { approvalMode: approval } : {}))
+    applyEnvModel(new Session({
+      ...(approval ? { approvalMode: approval } : {}),
+      ...(tier ? { tier: tier as any } : {}),
+    }))
   ) as Session;
   // 0.8.1 headless 多轮链：--resume [id|last] 恢复 rollout 上下文到 session
   //（此前 --resume 只在交互 REPL 路径生效，one-shot 任务之间上下文断裂）。

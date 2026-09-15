@@ -6,6 +6,7 @@
 
 import { ConfigManager } from './ConfigManager.js';
 import type { SessionApprovalMode } from './Session.js';
+import { TierRegistry } from '../../tiers/TierConfig.js';
 
 /** 仅当 model 仍是占位 'default' 时才用配置兜底；env / 显式 /model 选择永远优先。 */
 export function applyConfigModel(
@@ -29,4 +30,11 @@ export function envApprovalMode(): SessionApprovalMode | undefined {
   const v = process.env.PANSHA_APPROVAL?.trim().toLowerCase();
   if (!v) return undefined;
   return (APPROVAL_MODES as readonly string[]).includes(v) ? (v as SessionApprovalMode) : undefined;
+}
+
+/** PANSHA_TIER：headless one-shot 的档位（六档 quick/standard/high/max/ex/pangu + 旧别名）；非法值静默回落 undefined（Session 默认 high）。 */
+export function envTier(): string | undefined {
+  const v = process.env.PANSHA_TIER?.trim().toLowerCase();
+  if (!v) return undefined;
+  return TierRegistry.isTier(v) ? v : undefined;
 }
