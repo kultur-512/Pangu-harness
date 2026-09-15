@@ -4,7 +4,7 @@
 
 > 华为命题《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 场景主线：**软件工程长期维护**（跨多轮需求演进 / 跨文件关联 / 持续状态跟踪）
-> 当前版本 **v0.8.6** · `npm test` **1349 例全绿**（concurrency=4，CI 已挂 test 门）· **90 题 LongMemEval 交付口径**：ZL×M3 strict 41/90（已追平 CC×M3）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（矩阵与逐题数据见 [scripts/eval/longmemeval-90/COMPARE-90.md](scripts/eval/longmemeval-90/COMPARE-90.md)）· 分版详录见 [CHANGELOG.md](CHANGELOG.md) · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)
+> 当前版本 **v0.8.7** · `npm test` **1383 例全绿（1382 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）· **90 题 LongMemEval 交付口径**：ZL×M3 strict 41/90（已追平 CC×M3）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（矩阵与逐题数据见 [scripts/eval/longmemeval-90/COMPARE-90.md](scripts/eval/longmemeval-90/COMPARE-90.md)）· 分版详录见 [CHANGELOG.md](CHANGELOG.md) · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)
 
 **命名约定**（用户明确指示）
 - **外部产品名**（用户/市场看到）：**烛龙**（Zhulong）—— CLI 启动、欢迎语、模型身份串均使用此名

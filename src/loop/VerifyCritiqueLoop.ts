@@ -131,7 +131,7 @@ export interface VerifyCritiqueLoopOptions {
   /**
    * 上下文窗口预算（tokens，来自 provider.getModelContextLength，
    * unknown 回落 32768）。>0 时 buildHistoryPrompt 组装后超过窗口 70%
-   * （token 估算 chars/4）→ 裁 history 中段（保前 2 步 + 后 2 步）。
+   * （estTokens，CJK 感知）→ 裁 history 中段（保前 2 步 + 后 2 步）。
    */
   windowTokens?: number;
 
@@ -446,7 +446,7 @@ export class VerifyCritiqueLoop {
    * 消息做二级内容截断（防"trim 后组数已到底、巨结果仍在"的残余超窗）。
    * 巨型首条 user（种子）不可裁——到它为止，交溢出应急。
    * 【P0 修复】迭代上限 + 进展检查：旧 for(;;) 在纯 CJK 巨工具结果上永不收敛
-   * （截断尺寸按 ASCII 换算，CJK 按 1.5 token/字符重估恒超 cap）——180K 次
+   * （截断尺寸按 ASCII 4 chars/token 换算、按 CJK 口径重估恒超 cap）——180K 次
    * 迭代不终止。64 次上限 + "本次收缩未使最大 tool 消息 token 数下降即退出"
    * 双保险保证有限终止。
    */
@@ -467,8 +467,8 @@ export class VerifyCritiqueLoop {
    * C1 二级裁剪：栈内 estTokens 最大的 tool 消息 >20% 窗口预算 → 头 + 尾，
    * 中段换显式标记。
    * 【P0 修复】截断尺寸按 estTokens 反推（token 预算 → 二分求最大前缀/后缀）：
-   * 旧实现按 ASCII 4 chars/token 换算 head/tail 字符数，纯 CJK 巨结果按
-   * 1.5 token/字符重估后 ≈5.1×capTokens 恒超 → 收缩永不收敛。现在 head+tail
+   * 旧实现按 ASCII 4 chars/token 换算 head/tail 字符数，纯 CJK 巨结果按 CJK
+   * 系数（默认 1.0）重估后恒超 cap → 收缩永不收敛。现在 head+tail
    * token 预算合计 = capTokens*0.85（比例维持旧 60/25 分成），任何语种下
    * 单次收缩必然大幅降低该消息 token 数。
    * 返回 true 当且仅当本次收缩使该消息 token 数【严格下降】（进展检查）。
@@ -559,8 +559,8 @@ export class VerifyCritiqueLoop {
     const text = String(resultText ?? '');
     const segments = text.split('\n---\n');
     const perCall = segments.length === toolCalls.length ? segments : null;
-    const budgetChars = this.windowTokens && this.windowTokens > 0
-      ? this.windowTokens * 4 * 0.2
+    const budgetTokens = this.windowTokens && this.windowTokens > 0
+      ? this.windowTokens * 0.2
       : 0;
     // 分段数与调用数不匹配（含引擎附加提示段等）：无法可靠按调用归位。
     const mismatch = !perCall && toolCalls.length > 1;
@@ -577,12 +577,12 @@ export class VerifyCritiqueLoop {
       } else {
         content = safeSlice(text, 0, MISMATCH_PREVIEW_CHARS) + MISMATCH_NOTE;
       }
-      if (budgetChars > 0 && content.length > budgetChars) {
-        const headChars = Math.floor(budgetChars * 0.6);
-        const tailChars = Math.floor(budgetChars * 0.25);
-        content = safeSlice(content, 0, headChars)
+      if (budgetTokens > 0 && estTokens(content) > budgetTokens) {
+        const head = sliceToTokenBudget(content, budgetTokens * 0.6, true);
+        const tail = sliceToTokenBudget(content, budgetTokens * 0.25, false);
+        content = head
           + '\n[...工具输出过长已截断（单条窗口预算）；如需完整内容（尤其 read_file 输出），请重新读取目标文件（输出中会给出 offset 续读位置）。]'
-          + (tailChars > 0 ? safeSlice(content, -tailChars) : '');
+          + tail;
       }
       this.messages.push({
         role: 'tool',
@@ -1327,9 +1327,9 @@ Critique: ${critique}`;
     //（windowTokens 未提供时保持旧行为，不裁；PANSHA_NO_BUDGET_TRIM=1
     // 评测逃生门禁用主动裁剪，溢出应急档不受影响。）
     if (this.windowTokens && this.windowTokens > 0 && !this.budgetTrimDisabled) {
-      const budgetChars = this.windowTokens * 4 * 0.7;
-      const capped = parts.map((p) => this.capStepPart(p, budgetChars));
-      if (capped.length <= 2 || join(capped).length <= budgetChars) return join(capped);
+      const budgetTokens = this.windowTokens * 0.7;
+      const capped = parts.map((p) => this.capStepPart(p, budgetTokens));
+      if (capped.length <= 2 || estTokens(join(capped)) <= budgetTokens) return join(capped);
 
       // 迭代裁中段：前 2 + 后 2 起步，仍超预算则继续收缩（最少各保 1 步；
       // 先收前段——旧步骤信息密度低于最新现场）。
@@ -1339,7 +1339,7 @@ Critique: ${critique}`;
         const dropped = capped.length - head - tail;
         const mid = dropped > 0 ? [`[...${dropped} 步已截断（上下文窗口预算）...]`] : [];
         const text = join([...capped.slice(0, head), ...mid, ...capped.slice(capped.length - tail)]);
-        if (text.length <= budgetChars) return text;
+        if (estTokens(text) <= budgetTokens) return text;
         if (head <= 1 && tail <= 1) return text; // 首尾仍超预算：到此为止，交溢出应急档
         if (head > 1) head--; else tail--;
       }
@@ -1352,14 +1352,14 @@ Critique: ${critique}`;
    * 防单步巨量输出（read_file 大文件 / 冗长 bash 日志）把预算吃穿——
    * 旧实现只切步数不切步内容，4 个巨步照样超窗。
    */
-  private capStepPart(part: string, budgetChars: number): string {
-    const perStep = budgetChars * 0.2;
-    if (part.length <= perStep) return part;
-    const headChars = Math.floor(perStep * 0.6);
-    const tailChars = Math.floor(perStep * 0.25);
-    return safeSlice(part, 0, headChars)
+  private capStepPart(part: string, budgetTokens: number): string {
+    const perStep = budgetTokens * 0.2;
+    if (estTokens(part) <= perStep) return part;
+    const head = sliceToTokenBudget(part, perStep * 0.6, true);
+    const tail = sliceToTokenBudget(part, perStep * 0.25, false);
+    return head
       + '\n[...本步内容过长已截断（单步窗口预算）；如需完整输出（尤其 read_file 结果），请重新读取目标文件...]'
-      + (tailChars > 0 ? safeSlice(part, -tailChars) : '');
+      + tail;
   }
 
   /**

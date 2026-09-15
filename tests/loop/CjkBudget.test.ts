@@ -2,8 +2,8 @@
 // 包B 对抗性回归（循环 / 计量 / 分段）：
 //
 // 【P0】CJK 收缩死循环：shrinkLargestToolMessage 旧实现按 ASCII 4 chars/token
-// 反推 head/tail 字符数，而 estTokens 对 CJK 按 1.5 token/字符计 → 纯中文巨工具
-// 结果收缩后 estTokens ≈ 5.1×capTokens 恒超 cap → enforceMessagesBudget 的
+// 反推 head/tail 字符数，而 estTokens 对 CJK 按 1.0（默认）token/字符计 → 纯中文巨工具
+// 结果收缩后 estTokens ≈ 3.4×capTokens 恒超 cap → enforceMessagesBudget 的
 // for(;;) 永不收敛（生产常量复现：windowTokens=32768、16000 中文字符 tool 消息、
 // 2 交换组，token 冻结在 23636 > cap 22937.6，迭代 18 万次不终止）。
 // 修复三件套：
@@ -52,15 +52,20 @@ describe('C1【P0】CJK 收缩死循环（生产常量复现）', () => {
     assert.ok(dt < 5000, `必须在有限时间返回（修复前迭代 18 万次不终止）：took ${dt}ms`);
     const tokens = loop.messagesTokens();
     assert.ok(tokens <= cap, `收缩后必须收敛到预算内：got ${tokens} > cap ${cap}`);
-    // 每条巨 tool 消息都被压到单条封顶（20% 窗口）以内（允许截断标记的少量开销）
+    // 收缩机制对巨消息生效：至少一条 tool 消息被二级截断（带显式标记）且压到
+    // 单条封顶（20% 窗口）内。循环契约是"总账 ≤ 70% 窗口"而非"每条 ≤ 封顶"——
+    // 系数默认 1.0 下两条 16000 字巨消息，收缩较大一条后总账即达标、另一条
+    // 原样保留（总账不溢出即正确；1.5 时两条都超封顶才会都收缩）。
     const capPerMsg = 32768 * 0.7 * 0.2;
-    for (const m of loop.messages) {
-      if (m.role === 'tool') {
-        const t = estTokens(typeof m.content === 'string' ? m.content : '');
-        assert.ok(t <= capPerMsg + capPerMsg * 0.2, `单条 tool 消息必须收敛：got ${t} > ${capPerMsg}`);
-        assert.ok(m.content.includes('工具输出过长已截断'), '带显式截断标记');
-      }
-    }
+    const shrunkTokens = loop.messages
+      .filter((m: any) => m.role === 'tool')
+      .map((m: any) => estTokens(typeof m.content === 'string' ? m.content : ''))
+      .filter((t) => t <= capPerMsg + capPerMsg * 0.2);
+    assert.ok(shrunkTokens.length >= 1, '至少一条巨结果被二级截断到单条封顶内');
+    assert.ok(
+      loop.messages.some((m: any) => m.role === 'tool' && String(m.content).includes('工具输出过长已截断')),
+      '带显式截断标记',
+    );
   });
 
   it('多条 CJK 巨结果逐条收缩仍有限终止（迭代上限 + 进展检查保护）', () => {
@@ -69,9 +74,12 @@ describe('C1【P0】CJK 收缩死循环（生产常量复现）', () => {
       { role: 'system', content: 'SYS' },
       { role: 'user', content: 'SEED' },
     ];
+    // 每条 4000 字（系数 1.0 下 = 4000 token）：trimMessages 丢 6 组后仍剩
+    // 2×4000 > cap 5600，迫使二级收缩路径生效（2000 时 trim 单独即达标、
+    // 二级收缩不触发，测不到 P0 修复的收缩分支）。
     for (let i = 0; i < 8; i++) {
       msgs.push({ role: 'assistant', content: 'A' + i, toolCalls: [{ id: 'c' + i }] });
-      msgs.push({ role: 'tool', toolCallId: 'c' + i, content: '结'.repeat(2000) });
+      msgs.push({ role: 'tool', toolCallId: 'c' + i, content: '结'.repeat(4000) });
     }
     loop.messages = msgs;
     const t0 = Date.now();
@@ -128,7 +136,7 @@ describe('多调用分段失真：分段数 ≠ 调用数时有界预览 + 完�
   });
 
   it('3 调用 1 段结果且单条超预算：最后一条仍受单条封顶约束（总预算不超窗口）', () => {
-    const loop = bareLoop(1000); // budgetChars = 800
+    const loop = bareLoop(1000); // budgetTokens = 200
     const resultText = 'HEAD ' + 'Z'.repeat(4000) + ' TAIL';
     loop.pushToolMessages([tc('a'), tc('b'), tc('c')], null, resultText);
     const msgs = loop.messages;

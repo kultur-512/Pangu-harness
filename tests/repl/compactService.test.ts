@@ -102,14 +102,14 @@ describe('A2 计量：measuredContextTokens + estimateSessionTokens', () => {
     assert.equal(measuredContextTokens(bare), null, '无实测 → 调用方回落估算');
   });
 
-  it('estimateSessionTokens：CJK 按 1.5 token/字 + answerText 计入', () => {
+  it('estimateSessionTokens：CJK 按 1.0 token/字 + answerText 计入', () => {
     const s = new Session();
     s.addTurn({
       id: 'c1', timestamp: 1, userInput: '中'.repeat(100), userInputType: 'task', tier: 'high', durationMs: 1,
       result: { success: true, summary: '' },
     });
     const t1 = estimateSessionTokens(s);
-    assert.ok(t1 >= 1000 + 150, `CJK 100 字必须 ≥150 tokens（旧 chars/4 只有 25）：got ${t1}`);
+    assert.ok(t1 >= 1000 + 100, `CJK 100 字必须 ≥100 tokens（旧 chars/4 只有 25）：got ${t1}`);
     s.addTurn({
       id: 'c2', timestamp: 2, userInput: 'answer turn', userInputType: 'task', tier: 'high', durationMs: 1,
       result: { success: true, summary: '', answerText: 'a'.repeat(400) },

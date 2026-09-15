@@ -4,7 +4,7 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { estTokens, resolveWindowTokens, safeSlice } from '../../src/cli/repl/tokenEstimate.js';
+import { estTokens, resolveWindowTokens, safeSlice, setCjkTokensPerCharForTest } from '../../src/cli/repl/tokenEstimate.js';
 
 describe('A1 tokenEstimate: estTokens（CJK-aware）', () => {
   it('纯 ASCII ≈ 4 字符/token', () => {
@@ -13,38 +13,49 @@ describe('A1 tokenEstimate: estTokens（CJK-aware）', () => {
     assert.equal(estTokens('a'.repeat(400)), 100);
   });
 
-  it('CJK ≈ 1.5 token/字（旧 chars/4 会低估 6 倍）', () => {
-    assert.equal(estTokens('中'.repeat(100)), 150);
+  it('CJK ≈ 1.0 token/字（旧 chars/4 会低估 4 倍）', () => {
+    assert.equal(estTokens('中'.repeat(100)), 100);
     assert.ok(estTokens('中'.repeat(100)) > 100 / 4, '必须显著高于 chars/4 口径');
   });
 
   it('中英混合按类分别计', () => {
-    // 'abc' 3 ascii + '中文' 2 cjk → ceil(0.75 + 3) = 4
-    assert.equal(estTokens('abc中文'), 4);
+    // 'abc' 3 ascii + '中文' 2 cjk → ceil(0.75 + 2) = 3
+    assert.equal(estTokens('abc中文'), 3);
   });
 
   it('null/undefined 容错', () => {
     assert.equal(estTokens(null as any), 0);
     assert.equal(estTokens(undefined as any), 0);
   });
+
+  it('CJK 系数默认 1.0；setCjkTokensPerCharForTest 可临时覆盖（改后复位）', () => {
+    assert.equal(estTokens('中'.repeat(100)), 100);
+    setCjkTokensPerCharForTest(1.5);
+    try {
+      assert.equal(estTokens('中'.repeat(100)), 150);
+    } finally {
+      setCjkTokensPerCharForTest(1.0);
+    }
+    assert.equal(estTokens('中'.repeat(100)), 100);
+  });
 });
 
 // ==================== 包B：CJK 判定范围扩展（旧实现只认 0x4e00-0x9fff） ====================
 describe('包B estTokens CJK 范围扩展', () => {
-  it('扩展A / 假名 / 谚文 / 兼容表意 / 中文标点 / 全角 均按 1.5 token/字符', () => {
-    assert.equal(estTokens('\u3400'.repeat(100)), 150, '扩展A 0x3400-0x4DBF');
-    assert.equal(estTokens('\u3042'.repeat(100)), 150, '假名 0x3040-0x30FF');
-    assert.equal(estTokens('\uAC00'.repeat(100)), 150, '谚文 0xAC00-0xD7AF');
-    assert.equal(estTokens('\uF900'.repeat(100)), 150, '兼容表意 0xF900-0xFAFF');
-    assert.equal(estTokens('\u3002'.repeat(100)), 150, '中文标点 0x3000-0x303F');
-    assert.equal(estTokens('\uFF0C'.repeat(100)), 150, '全角标点 0xFF00-0xFFEF');
-    assert.equal(estTokens('\uFF6A'.repeat(100)), 150, '半角片假名 0xFF66-0xFF9F');
+  it('扩展A / 假名 / 谚文 / 兼容表意 / 中文标点 / 全角 均按 1.0（默认）token/字符', () => {
+    assert.equal(estTokens('\u3400'.repeat(100)), 100, '扩展A 0x3400-0x4DBF');
+    assert.equal(estTokens('\u3042'.repeat(100)), 100, '假名 0x3040-0x30FF');
+    assert.equal(estTokens('\uAC00'.repeat(100)), 100, '谚文 0xAC00-0xD7AF');
+    assert.equal(estTokens('\uF900'.repeat(100)), 100, '兼容表意 0xF900-0xFAFF');
+    assert.equal(estTokens('\u3002'.repeat(100)), 100, '中文标点 0x3000-0x303F');
+    assert.equal(estTokens('\uFF0C'.repeat(100)), 100, '全角标点 0xFF00-0xFFEF');
+    assert.equal(estTokens('\uFF6A'.repeat(100)), 100, '半角片假名 0xFF66-0xFF9F');
   });
 
-  it('锚点回归：纯 CJK 100 字 = 150 tokens、ascii 400 = 100 tokens 不变', () => {
-    assert.equal(estTokens('中'.repeat(100)), 150);
+  it('锚点回归：纯 CJK 100 字 = 100 tokens、ascii 400 = 100 tokens 不变', () => {
+    assert.equal(estTokens('中'.repeat(100)), 100);
     assert.equal(estTokens('a'.repeat(400)), 100);
-    assert.equal(estTokens('abc中文'), 4);
+    assert.equal(estTokens('abc中文'), 3);
   });
 
   it('emoji（星外平面码点）按非 CJK 计（1 码点 ≈ 0.25）', () => {
