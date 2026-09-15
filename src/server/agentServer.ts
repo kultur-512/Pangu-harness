@@ -175,9 +175,13 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
 
         const abortController = new AbortController();
 
-        // Wire abort if client disconnects
-        req.on('close', () => {
-          abortController.abort();
+        // Wire abort if client disconnects.
+        // 缺陷 #8（真机实测）：Node ≥16 的 IncomingMessage 'close' 在**请求体
+        // 读完后**即触发（非连接断开）——旧代码 abort 在任务启动后 ~100ms 内
+        // 触发，所有 /api/run 任务被立即 abort（stopReason='aborted'）。改为监听
+        // 响应流关闭且仅在客户端真正断开（响应未正常写完）时中止。
+        res.on('close', () => {
+          if (!res.writableEnded) abortController.abort();
         });
 
         try {

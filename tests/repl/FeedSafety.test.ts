@@ -13,8 +13,11 @@
 //  5. /tier（rich）：openTierPicker 确认/取消/未挂载三分支；
 //  6. /exit（rich）：经 ctx.requestExit 干净退出缝。
 
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Session } from '../../src/cli/repl/Session.js';
 import { createBridge, toSafeFeedItem } from '../../src/cli/repl/ui/bridge.js';
 import { FeedItem as FeedItemComponent } from '../../src/cli/repl/ui/FeedItem.js';
@@ -103,8 +106,30 @@ function stubInkGlobals() {
 }
 
 const CLEANUPS: Array<() => void> = [];
+
+// ==================== REVIEW M5：主目录隔离 ====================
+// /exit 组（handleSlashCommand → rollout.appendMeta）会真实写
+// ~/.panshalach/rollouts/<uuid>.jsonl，污染用户主目录。测试期间把
+// HOME / USERPROFILE 指向 mkdtemp 临时目录（rolloutsDir() 每次 os.homedir()
+// 现算，env 重定向即时生效），afterEach 还原环境变量并清理临时目录。
+const TMP_DIRS: string[] = [];
+const PREV_HOME = process.env.HOME;
+const PREV_USERPROFILE = process.env.USERPROFILE;
+
+beforeEach(() => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-feedsafe-home-'));
+  TMP_DIRS.push(d);
+  process.env.HOME = d;
+  process.env.USERPROFILE = d;
+});
+
 afterEach(() => {
   for (const c of CLEANUPS.splice(0)) c();
+  if (PREV_HOME === undefined) delete process.env.HOME; else process.env.HOME = PREV_HOME;
+  if (PREV_USERPROFILE === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = PREV_USERPROFILE;
+  for (const d of TMP_DIRS.splice(0)) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
+  }
 });
 
 // ==================== 1. bridge.pushFeed 归一化门 ====================
@@ -137,6 +162,61 @@ describe('缺陷#5 第0层：bridge.pushFeed 归一化门', () => {
     bridge.pushFeed({ type: 'tool', tool: 'glob', status: 'running' } as any);
     assert.equal(feedItems[0].text, 'hi');
     assert.equal(feedItems[1].type, 'tool');
+  });
+});
+
+// ==================== 1b. REVIEW M2：白名单字段类型校验 ====================
+
+describe('REVIEW M2：toSafeFeedItem 字段类型校验', () => {
+  it('text 非字符串 → 降级单行摘要（不透传畸形 item）', () => {
+    const malformed: any = { type: 'text', text: { nested: true } };
+    const out = toSafeFeedItem(malformed);
+    assert.equal(out.type, 'text');
+    assert.ok(typeof out.text === 'string', `text 必须是 string，got ${typeof out.text}`);
+  });
+
+  it('markdown content 非字符串 → 降级单行摘要', () => {
+    const out = toSafeFeedItem({ type: 'markdown', content: 42 } as any);
+    assert.equal(out.type, 'text');
+    assert.ok(typeof out.text === 'string');
+  });
+
+  it('合法 text/markdown 原样透传（不受影响）', () => {
+    const okText: any = { type: 'text', text: 'hi', level: 'info' };
+    assert.equal(toSafeFeedItem(okText), okText);
+    const okMd: any = { type: 'markdown', content: '# t' };
+    assert.equal(toSafeFeedItem(okMd), okMd);
+  });
+
+  it('FeedItem text 分支：非字符串 text 不入 ink 树（String 兜底）', () => {
+    const restore = stubInkGlobals();
+    CLEANUPS.push(restore);
+    const out: any = (FeedItemComponent as any)({ item: { id: '1', type: 'text', text: { bad: 1 } } });
+    const leaves = collectStringLeaves(out);
+    assert.ok(leaves.every((s: any) => typeof s === 'string'), '叶节点必须全为字符串');
+  });
+});
+
+// ==================== 1c. REVIEW M1：openTierPicker 悬挂 Promise ====================
+
+describe('REVIEW M1：openTierPicker 未决 Promise 落定', () => {
+  it('重复 open：旧 picker 先按取消（-1）落定，新 picker 正常挂起', async () => {
+    const { bridge } = bridgeWithDispatch();
+    const p1 = bridge.openTierPicker({ tiers: ['a', 'b'], index: 0 });
+    const p2 = bridge.openTierPicker({ tiers: ['a', 'b'], index: 1 });
+    assert.equal(await p1, -1, '旧 Promise 以取消落定，不再悬挂/孤儿');
+    assert.ok(p2 instanceof Promise);
+    bridge.resolveTierPicker(1);
+    assert.equal(await p2, 1);
+  });
+
+  it('unmount（__unregisterDispatch）：未决 picker resolve(null)，未决审批 resolve(n)', async () => {
+    const { bridge } = bridgeWithDispatch();
+    const pickerP = bridge.openTierPicker({ tiers: ['a'], index: 0 });
+    const confirmP = bridge.setConfirm({ tool: 'bash', description: 'ls' } as any);
+    bridge.__unregisterDispatch();
+    assert.equal(await pickerP, null, '未决 picker 随 unmount 落定 null');
+    assert.equal(await confirmP, 'n', '未决审批随 unmount 落定拒绝');
   });
 });
 
@@ -345,6 +425,19 @@ describe('缺陷#3/#4：rich /tier 滑杆交互化', () => {
     assert.ok(lines[0].includes('思考强度'), '单行含当前档');
     assert.ok(!lines.some((l) => l.includes('┊')), '无轨道残迹');
   });
+
+  it('REVIEW M4：确认档位走 updateTier（刷新 updatedAt，与裸赋值区分）', async () => {
+    const session = new Session({ tier: 'high', workspace: process.cwd(), updatedAt: 1 } as any);
+    const ctx = makeCtx(session);
+    const bridge = {
+      openTierPicker: () => Promise.resolve(0),
+      setTop: () => {},
+      pushFeed: () => {},
+    };
+    await handleSlashCommand(ctx, { cmd: '/tier', arg: '', emit: () => {}, useRich: true, bridge } as any);
+    assert.equal(session.tier, 'quick', '下标 0 档已切换');
+    assert.ok(session.updatedAt > 1, 'updatedAt 已刷新（updateTier 生效）');
+  });
 });
 
 // ==================== 6. 缺陷#1：rich /exit 干净退出缝 ====================
@@ -375,6 +468,25 @@ describe('缺陷#1：rich /exit 本地派发', () => {
       const handled = await handleSlashCommand(ctx, { cmd, arg: '', emit: () => {}, useRich: true, bridge: {} } as any);
       assert.equal(handled, true);
       assert.equal(exited, 1, `${cmd} 命中退出`);
+    }
+  });
+
+  it('REVIEW M7：任务运行中 /exit 不杀进程，改为提示先中断', async () => {
+    for (const useRich of [true, false]) {
+      const session = new Session({ tier: 'high', workspace: process.cwd() });
+      const ctx = makeCtx(session);
+      let exited = 0;
+      (ctx as any).requestExit = () => { exited++; };
+      // 运行态：currentAbort 非空（isRunning 的判定源）
+      ctx.currentAbort = new AbortController();
+      const lines: string[] = [];
+      const handled = await handleSlashCommand(ctx, {
+        cmd: '/exit', arg: '', emit: (t: string) => lines.push(t), useRich, bridge: {},
+      } as any);
+      assert.equal(handled, true, '已处理（不再当作任务/未知命令）');
+      assert.equal(exited, 0, '运行中绝不退出进程');
+      assert.ok(lines.some((l) => l.includes('任务运行中')), '提示先中断任务');
+      ctx.currentAbort = null;
     }
   });
 });

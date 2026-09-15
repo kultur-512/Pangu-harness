@@ -283,13 +283,54 @@ export async function handleSlashCommand(
   // （lineRl.close()），rich 模式（无 readline）只能在这里干净退出：
   // 落会话元数据 → 卸载 ink（还原终端）→ exit 0。测试可用 ctx.requestExit
   // 注入替身，默认 process.exit(0)。
+  // REVIEW M7：任务运行中（含 line 模式——运行态输入经 handleUserLine 的
+  // classifyRunningInput 也会路由到这里）不得直接杀进程，先中断任务再退出。
   if (cmd === '/exit' || cmd === '/quit' || cmd === '/q') {
+    if (isRunning(ctx)) {
+      emit('任务运行中，请先按 Ctrl+C 中断任务，再输入 /exit 退出。', 'warn');
+      return true;
+    }
     try { rollout.appendMeta(ctx.session); } catch {}
     try {
       const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
       if (inst && typeof inst.unmount === 'function') inst.unmount();
     } catch {}
     try { ctx.requestExit(); } catch { process.exit(0); }
+    return true;
+  }
+
+  // 缺陷 #7（真机实测：rich UI 输入 /serve 落"未知命令"）：与 /exit 同根——
+  // rich 派发器缺分支。/serve 在 REPL 进程内启动 SSE agent server（POST /api/run），
+  // 前端/脚本即可经 HTTP 驱动本 REPL。server 常驻进程、不阻塞输入；重复启动由
+  // listen() 的 EADDRINUSE 兜底提示。
+  if (cmd === '/serve') {
+    const sArgs = arg.split(/\s+/).filter(Boolean);
+    let port = 3456;
+    let host = '127.0.0.1';
+    let serveToken: string | undefined;
+    for (let i = 0; i < sArgs.length; i++) {
+      if (sArgs[i] === '--port' || sArgs[i] === '-p') { port = parseInt(sArgs[i + 1] || '3456', 10) || 3456; i++; }
+      else if (sArgs[i] === '--host' || sArgs[i] === '-h') { host = sArgs[i + 1] || '127.0.0.1'; i++; }
+      else if (sArgs[i] === '--serve-token' || sArgs[i] === '-t') { serveToken = sArgs[i + 1] || ''; i++; }
+    }
+    if (!serveToken && process.env.PANSHA_SERVE_TOKEN) serveToken = process.env.PANSHA_SERVE_TOKEN;
+    try {
+      const { createAgentServer } = await import('../../../server/agentServer.js');
+      const server = createAgentServer({
+        port,
+        host,
+        // /api/run 的 fresh session 无 model 配置——不接 provider 时每次 run 都会
+        // 抛"未配置可用模型"（真机实测）。接入本 REPL 会话的 provider。
+        provider: ctx.provider,
+        defaultTier: ctx.session.tier,
+        defaultWorkspace: ctx.session.workspace,
+        serveToken,
+      });
+      await server.listen();
+      emit(`✓ SSE agent server 已启动：http://${host}:${port}（POST /api/run {task, tier?, workspace?} → SSE 流）。服务随 REPL 进程常驻。`, 'success');
+    } catch (e: any) {
+      emit(`✗ /serve 启动失败：${e?.message || e}`, 'error');
+    }
     return true;
   }
 
@@ -524,7 +565,9 @@ export async function handleSlashCommand(
         if (picked >= 0) {
           const target = TIERS[picked] || '';
           if (target && TierRegistry.isTier(target)) {
-            ctx.session.tier = target as any;
+            // REVIEW M4：统一走 updateTier（刷新 updatedAt），与 line 模式滑杆
+            // 确认分支一致；裸赋值会让会话元数据的更新时间失真。
+            ctx.session.updateTier(target as any);
             const sub = SUBS[picked] || '';
             if (typeof (bridge as any).setTop === 'function') {
               try { (bridge as any).setTop({ tier: target }); } catch {}
@@ -556,7 +599,8 @@ export async function handleSlashCommand(
       emit(`无效档位: ${arg.trim()}（可用: ${TIERS.join(' | ')}）`, 'warn');
       return true;
     }
-    ctx.session.tier = target as any;
+    // REVIEW M4：与滑杆确认分支一致，走 updateTier（刷新 updatedAt）
+    ctx.session.updateTier(target as any);
     const sub = SUBS[TIERS.indexOf(target)] || '';
     emit(`✓ 思考强度已切换: ${target}${sub ? ' · ' + sub : ''}（下次任务生效）`, 'success');
     return true;

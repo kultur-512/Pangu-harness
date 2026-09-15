@@ -106,6 +106,43 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       try {
         (bridge as any).cycleMode = () => cycleMode(ctx);
         (bridge as any).clearQueue = () => { ctx.queue.clear(); updateQueueCount(ctx); };
+        // Ctrl+C 组件层接管（exitOnCtrlC:false 后由 PanshaApp 调用）：
+        // 与 line 模式 handleSigint 同语义——审批挂起 → 拒绝；任务运行中 →
+        // 中断（abort → stopReason='aborted' 收尾落盘）；空闲 → 2s 内再按退出。
+        (bridge as any).handleCtrlC = () => {
+          // 1) line 侧审批桥挂起（罕见，rich 主用 setConfirm）→ 立即拒绝
+          if (isApprovalActive()) {
+            cancelActiveApproval('sigint');
+            return;
+          }
+          // 2) rich 审批（ConfirmBar）挂起 → Ctrl+C = 拒绝该次审批
+          if (typeof (bridge as any).hasPendingConfirm === 'function' && (bridge as any).hasPendingConfirm()) {
+            try { (bridge as any).resolveConfirm('n'); } catch {}
+            return;
+          }
+          // 3) 任务运行中 → 中断当前任务，回到可输入状态（UI 不卸载）
+          if (ctx.currentAbort) {
+            try { ctx.currentAbort.abort(); } catch {}
+            return;
+          }
+          // 4) 空闲 → 二次确认模式：2s 内再按才退出（复用 line 的 idleCtrlCAt 语义）
+          const now = Date.now();
+          if (ctx.lineUi.idleCtrlCAt && now - ctx.lineUi.idleCtrlCAt < 2000) {
+            try { rollout.appendMeta(session); } catch {}
+            try {
+              const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
+              if (inst && typeof inst.unmount === 'function') inst.unmount();
+            } catch {}
+            try { ctx.requestExit(); } catch { process.exit(0); }
+            return;
+          }
+          ctx.lineUi.idleCtrlCAt = now;
+          if (typeof (bridge as any).pushFeed === 'function') {
+            (bridge as any).pushFeed({ type: 'text', text: '再按一次 Ctrl+C 退出 · 任务运行中按 = 中断任务', level: 'info' });
+          }
+          const t = setTimeout(() => { ctx.lineUi.idleCtrlCAt = 0; }, 2000);
+          (t as any).unref?.();
+        };
         (bridge as any).requestStatusPanel = () => {
           (async () => {
             const { recentCheckpoints } = await import('../../tools/fileHistory.js');

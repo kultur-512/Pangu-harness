@@ -61,9 +61,25 @@ export function PanshaApp(props: {
 
   // Global key handling (hooks must be unconditional in render).
   // B5: Esc is NOT handled here anymore — the InputBar owns it (single-owner
-  // double-Esc semantics). This hook handles ctrl+o / shift+tab / ctrl+t only.
+  // double-Esc semantics). This hook handles ctrl+c / ctrl+o / shift+tab / ctrl+t.
   if (typeof ink.useInput === 'function') {
     ink.useInput((input: string, key: any) => {
+      // ctrl+c（真机实测缺陷：exitOnCtrlC 卸载整个 UI → 进程退出）。
+      // render 已传 exitOnCtrlC:false，Ctrl+C 由此组件层接管：
+      // 任务运行中 → bridge.handleCtrlC（宿主接线：abort 当前任务，回 REPL）；
+      // 空闲 → 宿主内二次确认退出。宿主未接线时兜底卸载+退出（不悬死）。
+      if (key && key.ctrl && (input === 'c' || input === 'C')) {
+        if (bridge && typeof bridge.handleCtrlC === 'function') {
+          try { bridge.handleCtrlC(); } catch {}
+        } else {
+          try {
+            const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
+            if (inst && typeof inst.unmount === 'function') inst.unmount();
+          } catch {}
+          try { process.exit(0); } catch {}
+        }
+        return;
+      }
       // ctrl+o (P0.1): transcript mode toggle
       if (key && key.ctrl && (input === 'o' || input === 'O')) {
         setTranscriptMode((v: boolean) => !v);

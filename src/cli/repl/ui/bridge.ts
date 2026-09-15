@@ -26,15 +26,8 @@ const SAFE_FEED_TYPES: ReadonlySet<string> = new Set([
   'text', 'phase', 'step', 'critique', 'tool', 'thought', 'budget', 'markdown',
 ]);
 
-/** 把任意 pushFeed 入参归一化为可安全渲染的 feed item（永不返回裸字符串/任意对象）。 */
-export function toSafeFeedItem(item: any): { type: string; [k: string]: any } {
-  if (typeof item === 'string') {
-    return { type: 'text', text: item, level: 'info' };
-  }
-  if (item && typeof item === 'object' && SAFE_FEED_TYPES.has(String(item.type))) {
-    return item;
-  }
-  // 未知/内部事件 → 单行灰字摘要（type + 少量可读字段），绝不透传原对象
+/** 未知/畸形 item 的单行灰字摘要（type + 少量可读字段），绝不返回裸字符串/任意对象。 */
+function safeSummaryItem(item: any): { type: 'text'; text: string; level: 'info' } {
   const t = item && item.type ? String(item.type) : 'event';
   const parts: string[] = [];
   if (item && typeof item === 'object') {
@@ -46,6 +39,24 @@ export function toSafeFeedItem(item: any): { type: string; [k: string]: any } {
     parts.push(String(item).slice(0, 120));
   }
   return { type: 'text', text: parts.length ? `· ${t} ${parts.join(' ')}` : `· ${t}`, level: 'info' };
+}
+
+/** 把任意 pushFeed 入参归一化为可安全渲染的 feed item（永不返回裸字符串/任意对象）。 */
+export function toSafeFeedItem(item: any): { type: string; [k: string]: any } {
+  if (typeof item === 'string') {
+    return { type: 'text', text: item, level: 'info' };
+  }
+  if (item && typeof item === 'object' && SAFE_FEED_TYPES.has(String(item.type))) {
+    // REVIEW M2：白名单分支还要校验关键字段类型——{type:'text', text:{...}}
+    // 这类畸形 item 原样透传会把非字符串塞进 <Text>（同款 ink 崩溃旁路）。
+    // text.text / markdown.content 非字符串 → 降级为单行摘要。
+    const t = String(item.type);
+    if (t === 'text' && typeof item.text !== 'string') return safeSummaryItem(item);
+    if (t === 'markdown' && typeof item.content !== 'string') return safeSummaryItem(item);
+    return item;
+  }
+  // 未知/内部事件 → 单行灰字摘要（type + 少量可读字段），绝不透传原对象
+  return safeSummaryItem(item);
 }
 
 // interactive confirm state (rich UI approval bridge).
@@ -66,7 +77,7 @@ export interface TierPickerState {
   sublabels: string[];
   index: number;
 }
-let currentTierPicker: { resolve: (index: number) => void } | null = null;
+let currentTierPicker: { resolve: (index: number | null) => void } | null = null;
 
 export function createBridge(
   session: Session,
@@ -189,6 +200,14 @@ export function createBridge(
   // 单行静态说明；>= 0 = 确认的档位下标；-1 = 取消。
   const openTierPicker = (opts: { tiers: string[]; sublabels?: string[]; index: number }): Promise<number | null> => {
     if (!currentDispatch) return Promise.resolve(null);
+    // REVIEW M1：入口防孤儿——上一个 picker 未决（组件被卸载/重开竞态）时
+    // 先按"取消"落定旧 Promise，再覆盖 resolver；否则旧 await 永不 settle，
+    // 且覆盖后其 resolver 被丢弃成孤儿。
+    if (currentTierPicker) {
+      const stale = currentTierPicker;
+      currentTierPicker = null;
+      try { stale.resolve(-1); } catch {}
+    }
     return new Promise((resolve) => {
       currentTierPicker = { resolve };
       const picker: TierPickerState = {
@@ -365,6 +384,20 @@ export function createBridge(
   };
   bridge.__unregisterDispatch = () => {
     currentDispatch = null;
+    // REVIEW M1：ink 应用在 picker 挂起期间 unmount 时，若只注销 dispatch，
+    // currentTierPicker 残留 → await openTierPicker 永不 settle（斜杠命令悬挂）。
+    // 未决 picker 一律按"未挂载"落定 resolve(null)；同类的未决审批同理按拒绝
+    // 落定（engine await 的 promise 不允许跨 unmount 悬挂）。
+    if (currentTierPicker) {
+      const stale = currentTierPicker;
+      currentTierPicker = null;
+      try { stale.resolve(null); } catch {}
+    }
+    if (currentConfirm) {
+      const staleConfirm = currentConfirm;
+      currentConfirm = null;
+      try { staleConfirm.resolve('n'); } catch {}
+    }
   };
 
   // Seed initial state

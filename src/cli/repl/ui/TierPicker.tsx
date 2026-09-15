@@ -63,7 +63,9 @@ export function TierPicker(props: {
         return;
       }
       if (key.ctrl && (input === 'c' || input === 'C')) {
-        // 与 line 模式语义一致：Ctrl+C 关闭选择态（放行给全局中断链）
+        // 与 line 模式语义一致：Ctrl+C 先关闭滑杆（onCancel），
+        // 中断/退出语义由 PanshaApp 全局 useInput（bridge.handleCtrlC）统一承担
+        //（ink useInput 广播：本组件与根组件都会收到该按键）。
         onCancel();
       }
     });

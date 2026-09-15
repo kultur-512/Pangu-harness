@@ -26,9 +26,12 @@ export function FeedItem(props: { item: any; transcript?: boolean }) {
         item.level === 'warn' ? 'yellow' :
         item.level === 'success' ? 'green' :
         item.level === 'info' ? 'cyan' : undefined;
+      // REVIEW M2：text 非字符串兜底 String()——非字符串子节点进 ink 树会触发
+      // "Text string must be rendered inside <Text> component" 崩溃。
+      const text = String(item.text ?? '');
       return Text
-        ? R.createElement(Text, color ? { color } : {}, item.text)
-        : R.createElement('text', {}, String(item.text ?? ''));
+        ? R.createElement(Text, color ? { color } : {}, text)
+        : R.createElement('text', {}, text);
     }
     case 'step': {
       const stepNum = item.stepNumber != null ? item.stepNumber : '';
@@ -103,7 +106,10 @@ export function FeedItem(props: { item: any; transcript?: boolean }) {
         ? R.createElement(Text, { color: (item.usedRatio || 0) > 0.8 ? 'red' : 'green' }, `[budget ${Math.floor((item.usedRatio || 0) * 100)}%]`)
         : R.createElement('text', {}, `[budget ${Math.floor((item.usedRatio || 0) * 100)}%]`);
     case 'markdown': {
-      return R.createElement(MarkdownBlock, { content: item.content || '' });
+      // REVIEW M2：content 非字符串兜底——renderMarkdown 里 content.split 会被
+      // 非字符串打穿（TypeError → ink 树崩溃）。
+      const content = typeof item.content === 'string' ? item.content : String(item.content ?? '');
+      return R.createElement(MarkdownBlock, { content });
     }
     default: {
       // 缺陷 #5（真机 ink 崩溃）：旧实现 `return JSON.stringify(item)` 把裸字符串

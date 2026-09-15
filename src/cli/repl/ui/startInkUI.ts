@@ -89,6 +89,11 @@ export async function tryStartInkUI(
     (globalThis as any).__PANSHA_INK_REACT__ = React;
 
     // Pass the bridge down. PanshaApp is responsible for useReducer + layout.
+    // Ctrl+C（真机实测缺陷）：exitOnCtrlC 默认 true 时任务运行中按 Ctrl+C 会
+    // 直接卸载整个 ink UI → 进程随之退出（回 PowerShell）。改为组件层接管：
+    // PanshaApp 全局 useInput 收 Ctrl+C → bridge.handleCtrlC（宿主接线）——
+    // 任务运行中 = 中断当前任务（AbortSignal → stopReason='aborted' 收尾落盘），
+    // 空闲 = 二次确认退出（与 line 模式 handleSigint 同语义）。
     const inkInstance = render(
       React.createElement(PanshaApp, {
         bridge,
@@ -97,7 +102,8 @@ export async function tryStartInkUI(
           model: session.model || 'default',
           workspace: session.workspace || process.cwd(),
         },
-      })
+      }),
+      { exitOnCtrlC: false }
     );
 
     // /exit 干净退出缝：保存 render instance——卸载时 ink 会还原终端状态
