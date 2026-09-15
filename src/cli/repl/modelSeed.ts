@@ -36,5 +36,5 @@ export function envApprovalMode(): SessionApprovalMode | undefined {
 export function envTier(): string | undefined {
   const v = process.env.PANSHA_TIER?.trim().toLowerCase();
   if (!v) return undefined;
-  return TierRegistry.isTier(v) ? v : undefined;
+  return TierRegistry.isTier(v) ? TierRegistry.normalize(v) : undefined;
 }

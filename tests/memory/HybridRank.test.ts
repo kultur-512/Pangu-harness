@@ -286,3 +286,52 @@ describe('B4：embedCards 增量接口（key=cardId，hash=sha1(summary)，hash 
     assert.equal(again.size, 2, '增量：a 命中缓存，c 新嵌');
   });
 });
+
+// ==================== PANSHA_EMBEDDING=remote：同步回退词面 n-gram + 不崩主流程 ====================
+// 诚实口径接线验证：PANSHA_EMBEDDING=remote 时 createConfiguredProvider 返回
+// RemoteEmbeddingProvider（其同步 embed() 内持 LocalNGramHashProvider 兜底，
+// 不再抛错 → 同步路径仍按词面 n-gram 参与混合排序，不再降级纯词面）；
+// 缺配置时工厂回退 n-gram。两种情况下主流程都必须不崩溃、照常返回卡。
+
+describe('B3e：PANSHA_EMBEDDING=remote 可插拔 + 降级（不崩主流程）', () => {
+  const REMOTE_ENV_KEYS = ['PANSHA_EMBEDDING', 'PANSHA_EMBED_BASE_URL', 'PANSHA_EMBED_API_KEY', 'PANSHA_EMBED_MODEL'];
+  const savedEnv: Record<string, string | undefined> = {};
+  const saveEnv = () => { for (const k of REMOTE_ENV_KEYS) savedEnv[k] = process.env[k]; };
+  const restoreEnv = () => {
+    for (const k of REMOTE_ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+  };
+
+  it('remote + 配置齐全 → 同步路径回退词面 n-gram（语义命中卡置顶，不再降级纯词面）', () => {
+    saveEnv();
+    try {
+      process.env.PANSHA_EMBEDDING = 'remote';
+      process.env.PANSHA_EMBED_BASE_URL = 'https://embed.example.com/v1';
+      process.env.PANSHA_EMBED_API_KEY = 'sk-test';
+      process.env.PANSHA_EMBED_MODEL = 'text-embedding-3-small';
+      const store = makeStore(ws);
+      store.save([mkCard('lex-hi', 'lex rocket unrelated'), mkCard('sem-hi', 'banana split dessert')]);
+      // 不注入 override → 产品路径 createConfiguredProvider → RemoteEmbeddingProvider，
+      // 其同步 embed() 内持 n-gram 兜底（不再抛错）→ 语义通道按词面 n-gram 生效
+      const r = store.loadFiltered({ tier: 'high', keywords: ['lex', 'rocket', 'banana'], queryText: 'banana split dessert', semantic: true });
+      assert.equal(r.length, 2, '候选卡全量返回');
+      assert.equal(r[0]?.id, 'sem-hi', '同步路径回退词面 n-gram：语义命中卡置顶（旧抛错降级纯词面时 lex-hi 置顶）');
+    } finally { restoreEnv(); }
+  });
+
+  it('remote 但缺配置 → 工厂回退 n-gram → 词面 n-gram 通道正常（不崩溃）', () => {
+    saveEnv();
+    try {
+      process.env.PANSHA_EMBEDDING = 'remote';
+      delete process.env.PANSHA_EMBED_BASE_URL;
+      delete process.env.PANSHA_EMBED_API_KEY;
+      delete process.env.PANSHA_EMBED_MODEL;
+      const store = makeStore(ws);
+      store.save([mkCard('lex-hi', 'lex rocket unrelated'), mkCard('sem-hi', 'banana split dessert')]);
+      const r = store.loadFiltered({ tier: 'high', keywords: ['lex', 'rocket', 'banana'], queryText: 'banana split dessert', semantic: true });
+      assert.equal(r.length, 2, '缺配置回退 n-gram，主流程不崩溃');
+    } finally { restoreEnv(); }
+  });
+});

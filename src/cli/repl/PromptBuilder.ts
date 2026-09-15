@@ -113,7 +113,7 @@ const TIER_CONSTRAINTS: Record<Tier, TierConstraint> = {
   <require>read_before_write, verify_before_claim, real_test_execution</require>
   <execution_style>thorough</execution_style>
 </tier_constraint>`,
-    text: '当前档位：high（高强度，推荐）。请完整验证后再声称完成。'
+    text: '当前档位：high（标准纪律，推荐）。请完整验证后再声称完成。'
   },
   max: {
     tier: 'max',
@@ -175,7 +175,6 @@ export const TIER_THINKING_DIRECTIVE: Record<string, string> = {
 export interface InjectionSummary {
   tierConstraint: boolean;
   styleHeader: string | null;
-  anchorCount: number;
   memoryCardCount: number;
   historyTurnCount: number;
   duplicatesSkipped: number;
@@ -575,12 +574,6 @@ export class PromptBuilder {
       // env snapshot is best-effort (git may be absent)
     }
 
-    // === Anchors note — dedup ===
-    // R4（0.8.1）：chat 意图跳过（锚点注记描述的是探索阶段行为，chat 无探索阶段）。
-    if (intent !== 'chat' && ['high', 'max', 'ex', 'pangu'].includes(this.session.tier)) {
-      this.tryInject('anchor-note', '\n（锚点将在探索阶段按档位自动选取关键文件与目录，用于上下文稳定）', lines);
-    }
-
     // === TaskState control-plane injection (U3) ===
     // Keep this block immediately before recent-context: the task state is a
     // stable, task-scoped prefix while recent turns remain the volatile tail.
@@ -655,9 +648,8 @@ export class PromptBuilder {
     // （实测 8K 窗 ids=17 vs chat 块可见 12）。选择申报：采用"intent 门禁"
     // 方案而非"lastMemoryBlockText 组装后移"——后者会让 chat 净荷膨胀、违反
     // 0.8.2 chat 净化的预算纪律。intent 参数在 buildVolatileSegment 签名内可用。
-    const AUTO_PULL_TIERS = new Set(['standard', 'high']);
     const preAutoPullCount = this.lastInjectedCardIds.length; // L1 已注入 ids 数
-    if (!this.autoPulledThisBuild && AUTO_PULL_TIERS.has(this.session.tier) && intent !== 'chat') {
+    if (!this.autoPulledThisBuild && this.tierConfig.autoPullMemory && intent !== 'chat') {
       try {
         const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
         const memStore = new RefinedMemoryStore(this.session.workspace);
@@ -772,7 +764,7 @@ export class PromptBuilder {
       // 审查 FAIL-1：对卡实际成本 122-470 token/张（英文/中文），41 系数张数帽
       // 在小窗口+对卡多时超发 3-11 倍（8K 窗极端可注满整个窗口）。改为按渲染后
       // 实测 token 贪心装入窗口比例预算；张数帽仅作上限，至少保 1 张。
-      const budgetTokens = this.memoryBudgetTokens();
+      const budgetTokens = this.memoryBudgetForLevel(level);
       const label = (c: any): string =>
         c.source === 'dialogue-pair' ? '[对话记忆]'
           : c.kind === 'preference' ? '[用户偏好]'
@@ -877,37 +869,10 @@ export class PromptBuilder {
       // R4（0.8.1）：chat 意图跳过 tier XML → summary 如实反映（不再恒 true）
       tierConstraint: this.lastBuildIntent !== 'chat',
       styleHeader: null,    // current implementation uses tier_constraint instead of old style header
-      anchorCount: this.injectedKeys.has('anchor-note') ? 1 : 0,
       memoryCardCount: this.injectedKeys.has('memory-cards') ? 1 : 0, // simplified: presence flag
       historyTurnCount: this.session.turns.length,
       duplicatesSkipped: this.duplicatesSkipped,
     };
-  }
-
-  private async appendMemoryCards(lines: string[]): Promise<void> {
-    const level = this.tierConfig.memoryLoadLevel;
-    if (level === 'none') return;
-
-    try {
-      const { RefinedMemoryStore } = await import('../../memory/RefinedMemoryStore.js');
-      const memStore = new RefinedMemoryStore(this.session.workspace);
-      // collect from a neutral string (best effort for legacy path)
-      const currentFiles = this.collectCurrentWorkspaceFiles('');
-      const cards = memStore.loadFiltered({
-        tier: this.session.tier,
-        maxCards: this.memoryCardLimitForLevel(level),
-        currentWorkspaceFiles: currentFiles.length ? currentFiles : undefined,
-      });
-      if (cards.length > 0) {
-        lines.push('\n【提炼后的教训（来自历史项目记忆）】');
-        for (const c of cards) {
-          const one = truncateAtSentence(c.summary, SENTENCE_HARD_CUT_CHARS);
-          lines.push(`  - [${c.category}] ${one}`);
-        }
-      }
-    } catch {
-      // best effort; memory is optional for REPL prompt
-    }
   }
 
   /**
@@ -934,21 +899,25 @@ export class PromptBuilder {
     }
   }
 
+  /** 按 memoryLoadLevel 对 token 预算施加乘数（medium=1.0 基准：light 0.6 / high 1.2 / full 1.4 / none 0）。 */
+  private memoryBudgetForLevel(level: TierConfig['memoryLoadLevel']): number {
+    const mult = MEMORY_LEVEL_BUDGET_MULT[level] ?? 1.0;
+    return Math.round(this.memoryBudgetTokens() * mult);
+  }
+
   private memoryCardLimitForLevel(level: TierConfig['memoryLoadLevel']): number {
     // 0.8.2 评测逃生门：LME 等 memory-QA 场景对齐"全量注入"对照口径
     // （Pi/CC 实验把整个 memory 文件塞进上下文）。评测格依赖它——env 显式
     // 设置时张数帽完全维持现状；注意 >100K 窗口下 token 门预算仍随窗口放大
-    // （memoryBudgetTokens 的 max(1600, w/64)），env 仅覆盖张数帽（review 申报）。
+    // （memoryBudgetForLevel 的 max(1600, w/64)），env 仅覆盖张数帽（review 申报）。
     const envLimit = Number(process.env.PANSHA_MEMORY_LIMIT);
     if (Number.isFinite(envLimit) && envLimit > 0) return envLimit;
     // C2：窗口感知张数——budget/41（41 为混合短卡经验值；对卡/Q/A 双行由渲染后
     // estTokens 门实际约束，张数帽仅作上限），
     // clamp 到 [6, 200]：下限 6 保证轻量档最小可见性，上限 200 让 1M 窗下大库
     // （73-80 卡）可全注（旧 40 帽 32K 窗仍 39 不变；1M 窗 381→cap 200）。
-    // level 参数保留（'none' 档在调用方已拦截；light/medium/high/full 的旧固定
-    // 帽 3/6/8/10 由窗口预算取代）。
-    void level;
-    const budget = this.memoryBudgetTokens();
+    // level 现真正差异化（MEMORY_LEVEL_BUDGET_MULT 乘数）；'none' 档在调用方已拦截。
+    const budget = this.memoryBudgetForLevel(level);
     return Math.max(6, Math.min(Math.floor(budget / 41), 200));
   }
 
@@ -986,10 +955,6 @@ export class PromptBuilder {
     const parts: string[] = [];
     parts.push(`纪律规则强度: ${iron}`);
     parts.push(`记忆加载: ${mem}`);
-    parts.push(`探索深度: ${t.explorationDepth}，并行度: ${t.parallelRollouts}，锚点上限: ${t.anchorMax}`);
-    if (t.userConfirmationRequired) {
-      parts.push('高风险档位：涉及写操作或高预算时需用户确认。');
-    }
     if (t.verifyFirstBias) {
       parts.push('偏好先验证后修改（Verify-Before-Claim）。');
     }
@@ -999,7 +964,8 @@ export class PromptBuilder {
     return parts.join('；');
   }
 
-  private describeIron(level: IronLawInjectionLevel): string {
+  private describeIron(level: IronLawInjectionLevel | undefined): string {
+    if (level === undefined) return '实用模式（无强制纪律）';
     switch (level) {
       case 'none': return '无（快速模式，极简纪律）';
       case 'minimal': return '极简（仅关键节点提醒）';
@@ -1072,3 +1038,12 @@ export class PromptBuilder {
     return headPart + '\n...[中间历史已压缩]...\n' + tailPart;
   }
 }
+
+// ==================== memoryLoadLevel 四档 token 预算乘数（#2 真差异化） ====================
+// medium=1.0 为基准（high 档 memoryLoadLevel='medium' 是默认档/评测甜点位，
+// 行为必须保持不变）；PANSHA_MEMORY_LIMIT env 逃生门优先级最高，不受乘数影响。
+const MEMORY_LEVEL_BUDGET_MULT: Record<TierConfig['memoryLoadLevel'], number> = {
+  // 'none' 档产品层已无 tier 使用（quick 已改 'light'），保留仅为类型完备；
+  // appendMemoryCardsDedup 对 'none' 早退，故 mult=0 实际不可达。
+  none: 0, light: 0.6, medium: 1.0, high: 1.2, full: 1.4,
+};

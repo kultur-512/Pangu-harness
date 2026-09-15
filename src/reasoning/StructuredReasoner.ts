@@ -262,57 +262,6 @@ ${failureMemory}
   }
 
   /**
-   * 生成 Critique Prompt（建设性、可控 token 版本）
-   * - practicalMode=true: 更温和、更短，聚焦有用改进，适合日常使用
-   * - practicalMode=false: 保留结构化复盘，适合高纪律模式（高纪律路径）
-   * 目标：帮助发现问题和改进方向，而不是严厉指责或无谓的自我苛责。
-   */
-  static buildCritiquePrompt(
-    previousStep: string,
-    executionResult: string,
-    lastToolCalls: any[] = [],
-    options?: { practicalMode?: boolean }
-  ): string {
-    const practical = options?.practicalMode ?? false;
-    const toolInfo = lastToolCalls.length > 0
-      ? `\n工具调用：${lastToolCalls.map((t: any) => t.toolName).join(', ')}`
-      : '';
-
-    if (practical) {
-      // 实用模式：温和、简短、聚焦改进
-      return `请简要复盘上一步（1-2点，每点一句话）：
-
-上一步概要：
-${previousStep}
-
-执行结果：
-${executionResult}${toolInfo}
-
-请说明：
-- 做得较好的地方（如果有）
-- 主要问题或下一步建议（1-2点）
-
-保持建设性，避免过度自我否定或长篇描述。`;
-    }
-
-    // 非实用模式（高纪律模式 / 高纪律路径）
-    return `请对上一步进行简要、客观的复盘（建议 2-4 点，每点 1 句话左右）。
-
-上一步概要：
-${previousStep}
-
-执行结果：
-${executionResult}${toolInfo}
-
-请重点说明：
-- 做得比较好的地方（如果有）
-- 存在的主要问题或风险（格式、验证、跳步、幻觉等）
-- 下一步最值得调整或注意的一两件事
-
-请保持建设性和实用性，避免过度自我否定或冗长描述。`;
-  }
-
-  /**
    * 构建工具调用格式教学提示。
    * 带具体 few-shot 示例——小模型（如 openPangu-Embedded）无法从抽象模板泛化，
    * 必须给出可模仿的真实调用。示例工具按 availableTools 动态挑选：教学里出现

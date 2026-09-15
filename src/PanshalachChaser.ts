@@ -41,15 +41,12 @@ export interface BudgetReport {
    * 重复计入历史，不能当上下文占用用。
    */
   lastPromptTokens?: number;
-  triggeredSoftLimit: boolean;
-  triggeredDegradation: boolean;
   rolloutsExecuted: number;
   stepsExecuted: number;
   notes: string[];
 }
 
 export interface ChaserConfig {
-  maxRollouts?: number;
   maxStepsPerRollout?: number;
   budgetTokens?: number;
   earlyStopOnHighScore?: boolean;
@@ -137,16 +134,12 @@ export class PanshalachChaser {
     /** 本任务触发过溢出截断重试（RunResult 透传 → RunCommand 溢出证据行）。 */
     contextOverflowCompacted?: boolean;
   }> {
-    // 解析 tier（必须在任何客户端校验前完成，因为 dryRun/确认等返回需要 tierConfig）
+    // 解析 tier（必须在任何客户端校验前完成，因为 dryRun 等返回需要 tierConfig）
     let effectiveTier: Tier;
     if (config.tier) {
-      effectiveTier = config.tier;
-    } else if (this.defaultModeOrTier === 'strong' || this.defaultModeOrTier === 'practical' || this.defaultModeOrTier === 'universal') {
-      effectiveTier = TierRegistry.fromMode(this.defaultModeOrTier);
-    } else if (TierRegistry.isTier(this.defaultModeOrTier as string)) {
-      effectiveTier = this.defaultModeOrTier as Tier;
+      effectiveTier = TierRegistry.normalize(config.tier);
     } else {
-      effectiveTier = DEFAULT_TIER;
+      effectiveTier = TierRegistry.normalize(this.defaultModeOrTier);
     }
     const tierConfig = TierRegistry.get(effectiveTier);
 
@@ -162,7 +155,6 @@ export class PanshalachChaser {
     }
 
     const {
-      maxRollouts = tierConfig.maxRollouts,
       maxStepsPerRollout = tierConfig.maxStepsPerRollout,
       earlyStopOnHighScore = true,
       budgetTokens = tierConfig.tier === 'pangu' ? 250_000
@@ -180,31 +172,13 @@ export class PanshalachChaser {
     // chat/search 走单次/受限路径，不进完整 agent 循环。
     const intent: TaskIntent = config.intent ?? classifyTaskIntent(issueDescription);
 
-    // 用户确认（max/ex/pangu）
-    if (tierConfig.userConfirmationRequired && !config.yes && !config.dryRun) {
-      const { renderConfirmationPanel, waitForUserConfirmation } = await import('./cli/UserConfirmation.js');
-      const panel = renderConfirmationPanel({
-        tierConfig,
-        estimatedTokensUpper: budgetTokens,
-        estimatedCalls: maxRollouts * maxStepsPerRollout,
-        estimatedDuration: `约 ${Math.max(1, Math.ceil(budgetTokens / 50000))} 分钟`,
-      });
-      console.log(panel);
-      const result = await waitForUserConfirmation();
-      if (!result.confirmed) {
-        console.log('\n✗ 用户取消，任务未执行。');
-        return { success: false, totalRollouts: 0, tierConfig };
-      }
-    }
-
     if (config.dryRun) {
       console.log(`\n[dry-run] Panshalach 任务预估`);
       console.log(`Tier        : ${tierConfig.tier} (${tierConfig.typicalUseCase})`);
       console.log(`Task Style  : ${taskStyle ?? 'auto'}`);
       console.log(`Budget      : ${budgetTokens} tokens`);
-      console.log(`Rollouts    : ${maxRollouts}`);
       console.log(`Max Steps   : ${maxStepsPerRollout}`);
-      console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel}`);
+      console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel ?? 'N/A（实用模式）'}`);
       console.log(`Memory      : ${tierConfig.memoryLoadLevel}`);
       return { success: false, totalRollouts: 0, tierConfig };
     }
@@ -242,13 +216,12 @@ export class PanshalachChaser {
         }
       );
 
-      if (tierConfig.ironLawInjectionLevel !== 'none') {
-        // 写工具已全档位注册（2026-09-05 裁决），教学名单固定为全集，
-        // 与格式教学示例严格一致，防 UNKNOWN_TOOL 空转。
-        basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(
-          ['bash', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']
-        )}`;
-      }
+      // 格式教学恒注入（ironLawInjectionLevel 现已仅强档 high/highest 携带，不再有
+      // 'none' 档位；quick/standard/high 也需格式教学防 UNKNOWN_TOOL 空转）。
+      // 教学名单固定为全集，与格式教学示例严格一致。
+      basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(
+        ['bash', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']
+      )}`;
     }
 
     // chat 意图：单次直答，不进 agent 循环。
@@ -300,8 +273,6 @@ export class PanshalachChaser {
           estimatedUsedTokens: 0,
           usageRatio: 0,
           usageMeasured: false,
-          triggeredSoftLimit: false,
-          triggeredDegradation: false,
           rolloutsExecuted: 1,
           stepsExecuted: 0,
           notes: ['chat 单次回复（不进 agent 循环）', `rollout 失败原因：${errMsg}`],
@@ -451,8 +422,6 @@ export class PanshalachChaser {
         usageRatio: chatMeasured > 0 ? Math.min(1, chatMeasured / budgetTokens) : 0,
         usageMeasured: chatMeasured > 0,
         ...(chatMeasured > 0 && chatUsage.prompt > 0 ? { lastPromptTokens: chatUsage.prompt } : {}),
-        triggeredSoftLimit: false,
-        triggeredDegradation: false,
         rolloutsExecuted: 1,
         stepsExecuted: 0,
         notes: ['chat 单次回复（不进 agent 循环）'],
@@ -468,8 +437,6 @@ export class PanshalachChaser {
     config.onStep?.({ version: 1, type: 'phase', phase: 'rollout' });
 
     let estimatedUsedTokens = 0;
-    let triggeredSoftLimit = false;
-    let triggeredDegradation = false;
     const rolloutsExecuted = 1; // 恒单 rollout
     let stepsExecuted = 0;
     const budgetNotes: string[] = [];
@@ -732,7 +699,6 @@ export class PanshalachChaser {
           plan: s.reasoning.plan,
           action: s.toolCalls,
           result: s.verificationResult,
-          critique: s.critique,
           detectedFormat: s.detectedFormat,
           didRealVerification: s.didRealVerification,
           readBeforeWriteViolation: s.readBeforeWriteViolation,
@@ -773,13 +739,11 @@ export class PanshalachChaser {
       usageRatio: Math.min(1, estimatedUsedTokens / budgetTokens),
       usageMeasured,
       ...(usageMeasured && usageAccum.lastPrompt > 0 ? { lastPromptTokens: usageAccum.lastPrompt } : {}),
-      triggeredSoftLimit,
-      triggeredDegradation,
       rolloutsExecuted,
       stepsExecuted,
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
+    return { success, bestTrajectory: best, totalRollouts: rolloutsExecuted, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
   }
 }

@@ -45,14 +45,10 @@ describe('PromptBuilder', () => {
     assert.ok(prompt.includes('edit_file 或 write_file'), 'intent→tool mapping present');
   });
 
-  it('skips memory block when level is none (quick)', async () => {
-    const sess = new Session({ tier: 'quick' });
+  it('quick tier now has memoryLoadLevel light (not none)', () => {
     const tierCfg = TierRegistry.get('quick');
-    const pb = new PromptBuilder(sess, tierCfg);
-    const prompt = await pb.buildForTask('hotfix');
-
-    // quick tier has memoryLoadLevel 'none'
-    assert.ok(!prompt.includes('提炼后的教训'));
+    // quick 原为 'none'（零注入），遗留修复改为 'light'（至少注入一层记忆）
+    assert.strictEqual(tierCfg.memoryLoadLevel, 'light');
   });
 
   it('compactIfNeeded shortens very long prompt', () => {
@@ -248,11 +244,10 @@ describe('PromptBuilder.buildForTask intent 分支（F7）', () => {
     assert.ok(!prompt.includes('<negative_tool_list>'), '格式教学块不注入');
     assert.ok(!prompt.includes('纪律规则强度'), '无纪律教学文本');
 
-    // R4（0.8.1）：chat 减负——tier XML/thinking_budget/锚点注记/任务状态四块跳过
+    // R4（0.8.1）：chat 减负——tier XML/thinking_budget/任务状态三块跳过
     // （tier XML 是工具纪律契约，与 chat 指令"不要调用任何工具"同框自相矛盾）。
     assert.ok(!prompt.includes('<tier_constraint'), 'R4：tier_constraint XML 不注入');
     assert.ok(!prompt.includes('<thinking_budget>'), 'R4：thinking_budget 不注入');
-    assert.ok(!prompt.includes('锚点'), 'R4：锚点注记不注入');
     assert.ok(!prompt.includes('【任务状态】'), 'R4：TaskState 不注入');
     // 0.8.1：injection summary 调试块不进模型 prompt（元讨论污染），审计走 lastBuildMeta
     assert.ok(!prompt.includes('<injection_summary>'), '调试块不进模型 prompt');
@@ -701,13 +696,14 @@ describe('#2 注入预算随窗口放大（memoryBudgetTokens / memoryCardLimitF
   it('memoryCardLimitForLevel：8K→29 随预算放大、32K→39 不变、1M→200；PANSHA_MEMORY_LIMIT 逃生门优先', async () => {
     const sess = new Session({ tier: 'high' });
     const pb = new PromptBuilder(sess, TierRegistry.get('high'));
-    await withCtx('8192', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 29, '8K 张数帽随预算 1229 放大（floor(1229/41)=29）'));
-    await withCtx('32768', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 39, '32K 窗张数帽不变'));
-    await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 200, '1M 窗张数帽 200'));
+    // high 档的 memoryLoadLevel='medium'（mult=1.0 基准，行为不变）
+    await withCtx('8192', () => assert.equal((pb as any).memoryCardLimitForLevel('medium'), 29, '8K 张数帽随预算 1229 放大（floor(1229/41)=29）'));
+    await withCtx('32768', () => assert.equal((pb as any).memoryCardLimitForLevel('medium'), 39, '32K 窗张数帽不变'));
+    await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('medium'), 200, '1M 窗张数帽 200'));
     const prevLimit = process.env.PANSHA_MEMORY_LIMIT;
     process.env.PANSHA_MEMORY_LIMIT = '5';
     try {
-      await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('high'), 5, '显式逃生门优先（1M 窗也尊重）'));
+      await withCtx('1000000', () => assert.equal((pb as any).memoryCardLimitForLevel('medium'), 5, '显式逃生门优先（1M 窗也尊重）'));
     } finally {
       if (prevLimit === undefined) delete process.env.PANSHA_MEMORY_LIMIT;
       else process.env.PANSHA_MEMORY_LIMIT = prevLimit;

@@ -16,6 +16,8 @@ import assert from 'node:assert/strict';
 import {
   LocalNGramHashProvider,
   createDefaultProvider,
+  createConfiguredProvider,
+  RemoteEmbeddingProvider,
   DEFAULT_BUCKETS,
   type DenseVector,
   embedCards,
@@ -226,5 +228,140 @@ describe('【6】embedCards 进程级向量缓存 FIFO 帽（1024）', () => {
     assert.equal(embedCacheSize(), 1024, '重嵌被淘汰 key 后 size 仍恒 1024');
 
     resetEmbedCacheForTest();
+  });
+});
+// ==================== RemoteEmbeddingProvider / createConfiguredProvider（env 开关） ====================
+// 诚实口径 + 可插拔：PANSHA_EMBEDDING=remote 且 env 齐全 → RemoteEmbeddingProvider
+// 骨架；缺配置 → 降级词面 n-gram，绝不崩溃。remote 的 embed() 在同步检索路径内持
+// LocalNGramHashProvider 兜底（同步、确定、不抛错）；真远程 /embeddings 调用在 embedAsync()。
+
+const REMOTE_ENV_KEYS = ['PANSHA_EMBEDDING', 'PANSHA_EMBED_BASE_URL', 'PANSHA_EMBED_API_KEY', 'PANSHA_EMBED_MODEL'];
+function saveRemoteEnv(): Record<string, string | undefined> {
+  const saved: Record<string, string | undefined> = {};
+  for (const k of REMOTE_ENV_KEYS) saved[k] = process.env[k];
+  return saved;
+}
+function restoreRemoteEnv(saved: Record<string, string | undefined>): void {
+  for (const k of REMOTE_ENV_KEYS) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
+}
+
+describe('P4 · RemoteEmbeddingProvider / createConfiguredProvider（PANSHA_EMBEDDING=remote 可插拔）', () => {
+  it('env 未设置 → createConfiguredProvider 返回词面 n-gram（默认行为不变）', () => {
+    const saved = saveRemoteEnv();
+    try {
+      delete process.env.PANSHA_EMBEDDING;
+      const p = createConfiguredProvider();
+      assert.ok(p instanceof LocalNGramHashProvider);
+      assert.equal(p.name, 'local-ngram');
+    } finally { restoreRemoteEnv(saved); }
+  });
+
+  it('PANSHA_EMBEDDING=remote 但缺配置 → 降级 n-gram（不崩溃、不抛错）', () => {
+    const saved = saveRemoteEnv();
+    try {
+      process.env.PANSHA_EMBEDDING = 'remote';
+      delete process.env.PANSHA_EMBED_BASE_URL;
+      delete process.env.PANSHA_EMBED_API_KEY;
+      delete process.env.PANSHA_EMBED_MODEL;
+      const p = createConfiguredProvider();
+      assert.ok(p instanceof LocalNGramHashProvider, '缺配置必须回退词面 n-gram');
+    } finally { restoreRemoteEnv(saved); }
+  });
+
+  it('PANSHA_EMBEDDING=remote + 配置齐全 → RemoteEmbeddingProvider', () => {
+    const saved = saveRemoteEnv();
+    try {
+      process.env.PANSHA_EMBEDDING = 'remote';
+      process.env.PANSHA_EMBED_BASE_URL = 'https://embed.example.com/v1';
+      process.env.PANSHA_EMBED_API_KEY = 'sk-test';
+      process.env.PANSHA_EMBED_MODEL = 'text-embedding-3-small';
+      const p = createConfiguredProvider();
+      assert.ok(p instanceof RemoteEmbeddingProvider);
+      assert.equal(p.name, 'remote');
+      assert.equal(p.configured, true);
+    } finally { restoreRemoteEnv(saved); }
+  });
+
+  it('RemoteEmbeddingProvider.embed() 缺配置 → 同步返回词面 n-gram 兜底向量（不再抛错）', () => {
+    const saved = saveRemoteEnv();
+    try {
+      delete process.env.PANSHA_EMBED_BASE_URL;
+      delete process.env.PANSHA_EMBED_API_KEY;
+      delete process.env.PANSHA_EMBED_MODEL;
+      const p = new RemoteEmbeddingProvider();
+      assert.equal(p.configured, false);
+      const v = p.embed('hello');
+      const local = new LocalNGramHashProvider();
+      assert.ok(Array.isArray(v), '同步 embed 不抛错，返回向量');
+      assert.deepEqual(v, local.embed('hello'), '兜底向量与 LocalNGramHashProvider 一致');
+      assert.equal(p.dim, local.dim, 'dim 与兜底 provider 一致');
+    } finally { restoreRemoteEnv(saved); }
+  });
+
+  it('RemoteEmbeddingProvider.embed() 配置齐全 → 同步仍回退词面 n-gram（真远程走 embedAsync）', () => {
+    const saved = saveRemoteEnv();
+    try {
+      process.env.PANSHA_EMBED_BASE_URL = 'https://embed.example.com/v1';
+      process.env.PANSHA_EMBED_API_KEY = 'sk-test';
+      process.env.PANSHA_EMBED_MODEL = 'text-embedding-3-small';
+      const p = new RemoteEmbeddingProvider();
+      assert.equal(p.configured, true);
+      const v = p.embed('hello');
+      const local = new LocalNGramHashProvider();
+      assert.ok(Array.isArray(v), '同步 embed 不抛错，返回兜底向量');
+      assert.deepEqual(v, local.embed('hello'), '兜底向量与 LocalNGramHashProvider 一致');
+      assert.equal(p.dim, local.dim, 'dim 与兜底 provider 一致');
+    } finally { restoreRemoteEnv(saved); }
+  });
+
+  it('embedAsync 走 OpenAI 兼容 /embeddings：POST {model,input} → data[0].embedding', async () => {
+    const saved = saveRemoteEnv();
+    const origFetch = globalThis.fetch;
+    try {
+      process.env.PANSHA_EMBED_BASE_URL = 'https://embed.example.com/v1';
+      process.env.PANSHA_EMBED_API_KEY = 'sk-test';
+      process.env.PANSHA_EMBED_MODEL = 'text-embedding-3-small';
+      let captured: { url: string; init: any } | null = null;
+      globalThis.fetch = (async (url: any, init: any) => {
+        captured = { url, init };
+        return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }) as any;
+      const p = new RemoteEmbeddingProvider();
+      const v = await p.embedAsync('hello world');
+      assert.deepEqual(v, [0.1, 0.2, 0.3]);
+      assert.ok(captured, 'fetch 必须被调用');
+      assert.equal(captured!.url, 'https://embed.example.com/v1/embeddings');
+      assert.equal(captured!.init.method, 'POST');
+      const headers = captured!.init.headers as Record<string, string>;
+      assert.equal(headers['Authorization'], 'Bearer sk-test');
+      const body = JSON.parse(String(captured!.init.body));
+      assert.equal(body.model, 'text-embedding-3-small');
+      assert.equal(body.input, 'hello world');
+    } finally {
+      globalThis.fetch = origFetch;
+      restoreRemoteEnv(saved);
+    }
+  });
+
+  it('embedAsync 非 2xx → 抛错（含状态码）', async () => {
+    const saved = saveRemoteEnv();
+    const origFetch = globalThis.fetch;
+    try {
+      process.env.PANSHA_EMBED_BASE_URL = 'https://embed.example.com/v1';
+      process.env.PANSHA_EMBED_API_KEY = 'sk-test';
+      process.env.PANSHA_EMBED_MODEL = 'text-embedding-3-small';
+      globalThis.fetch = (async () => new Response('bad key', { status: 401 })) as any;
+      const p = new RemoteEmbeddingProvider();
+      await assert.rejects(() => p.embedAsync('hi'), /401/);
+    } finally {
+      globalThis.fetch = origFetch;
+      restoreRemoteEnv(saved);
+    }
   });
 });

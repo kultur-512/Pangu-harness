@@ -903,8 +903,6 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
       break;
     }
     case 'critique':
-      // 删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
-      r.writeLine(r.color(String(data.critique || data), 'yellow'));
       break;
     case 'tool':
       r.writeLine(r.color(`⚙ ${data.tool || ''} ${data.target || ''} [${data.status || ''}]`, 'cyan'));

@@ -141,7 +141,7 @@ export async function runAgentTask(
   // the flat fields (server / headless paths stay compatible).
   const session = req.session ?? new Session();
   if (!req.session) {
-    if (req.tier) session.tier = req.tier as any;
+    if (req.tier) session.tier = TierRegistry.normalize(req.tier as string);
     if (req.workspace) session.workspace = req.workspace;
     if (req.model) session.model = req.model;
   }
@@ -323,6 +323,14 @@ export async function runAgentTask(
       ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
     }
 
+    // 任务结束、记忆落定后：best-effort 触发任务状态归档（陈旧 >7 天 / 活跃 >200
+    // 的任务移入 <主文件>.archive.json）。任何异常都不影响任务成功返回。
+    try {
+      const { TaskStateStore } = await import('../memory/taskState.js');
+      const ts = new TaskStateStore(session.workspace, process.env.PANSHA_TASK_STATE_FILE?.trim() || undefined);
+      ts.archive();
+    } catch {}
+
     // R3: 从 trajectory 提取结构化字段（供宿主落 Turn.result）
     const trajSteps = result.bestTrajectory?.steps ?? [];
     const changedFiles = extractChangedFiles(trajSteps);
@@ -428,7 +436,8 @@ export async function finalizeTaskMemory(
   const cards = store.refine({
     trajectory: traj,
     taskStyle: traj.taskStyle ?? 'all',
-    applicableTiers: [session.tier],
+    // 提炼卡为全档通用（空 applicableTiers = 全档可见），不绑定产出档位——
+    // 否则某档学会的工程教训在其它档不可见，违背"记忆召回不随档位降级"。
     attemptCount: 1, // 本路径恒单 rollout（runMultiple 已摘除），1 即真实值
     writtenFiles,
     taskText,

@@ -58,7 +58,7 @@ export function collectUsage(session: Session, prices?: UsagePrices): UsageRepor
   lines.push(`累计 tokens（预算报告汇总）: ${fmt(sessionTokens)}`);
   lines.push(`当前上下文估算: ${fmt(contextTokens)} tokens`);
   if (lastBudget) {
-    lines.push(`最近一轮: estimatedUsed=${fmt(lastTurnEstimatedTokens)} tokens, usageRatio=${lastBudget.usageRatio != null ? (lastBudget.usageRatio * 100).toFixed(0) + '%' : '-'}${lastBudget.triggeredSoftLimit ? ' (softLimit 触发)' : ''}`);
+    lines.push(`最近一轮: estimatedUsed=${fmt(lastTurnEstimatedTokens)} tokens, usageRatio=${lastBudget.usageRatio != null ? (lastBudget.usageRatio * 100).toFixed(0) + '%' : '-'}`);
   } else {
     lines.push('最近一轮: (尚无预算报告)');
   }

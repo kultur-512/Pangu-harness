@@ -1,6 +1,7 @@
 // src/cli/repl/Session.ts
 // In-memory Session representation (blueprint v1.1)
 
+import { TierRegistry } from '../../tiers/TierConfig.js';
 import type { Tier } from '../../tiers/TierConfig.js';
 import type { SessionFile, Turn, SessionSummary, ModelProvider } from './types.js';
 import { randomUUID } from 'node:crypto';
@@ -60,7 +61,7 @@ export class Session {
     this.name = init?.name;
     this.createdAt = init?.createdAt ?? Date.now();
     this.updatedAt = init?.updatedAt ?? Date.now();
-    this.tier = (init?.tier ?? 'high') as Tier;
+    this.tier = TierRegistry.normalize(init?.tier);
     this.workspace = init?.workspace ?? process.cwd();
     this.model = init?.model ?? 'default';
     this.currentTaskId = (init as any)?.currentTaskId;
