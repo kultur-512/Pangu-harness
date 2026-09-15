@@ -58,11 +58,11 @@ export function InputBar(props: {
     providerOptions().then((r) => { if (r && Array.isArray(r.providers)) setProviders(r.providers); }).catch(() => {});
   }
 
-  // ---- cc-typeahead: single-source suggestions ----
+  // ---- cc-typeahead: single-source suggestions（历史不直显——↑/↓ 翻页）----
   const v = value || '';
   const suggestions = suggestionsDismissed
     ? []
-    : generateSuggestions(v, v.length, { commands: PANSHA_COMMANDS, providers, history, files: [] });
+    : generateSuggestions(v, v.length, { commands: PANSHA_COMMANDS, providers, files: [] });
   const selectedIndex = getPreservedSelection(suggestions, selectedId);
   const selected = suggestions[selectedIndex] || null;
   const ghost = ghostTextFor(v, suggestions);
@@ -131,7 +131,7 @@ export function InputBar(props: {
             submitLine(selected.replacement); // '/model a6:openPangu-7B'
             return;
           }
-          if (selected.type === 'history' || selected.type === 'file' || selected.type === 'directory') {
+          if (selected.type === 'file' || selected.type === 'directory') {
             submitLine(selected.replacement);
             return;
           }

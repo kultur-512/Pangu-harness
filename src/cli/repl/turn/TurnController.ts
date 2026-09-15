@@ -189,9 +189,15 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
 
   if (!useRich) {
     ctx.renderer.writeLine(ctx.renderer.color(`\n[提交任务] ${task.split('\n\n【用户插话')[0]}`, 'cyan'));
-  } else if (typeof bridge.setRunning === 'function') {
-    try { bridge.setRunning(true); } catch {}
-    ctx.runningBadgeOn = true;
+  } else {
+    // rich 模式：用户输入行同样进对话记录（CC 风格——不只展示模型输出）
+    try {
+      bridge.pushFeed({ type: 'text', text: `▸ ${task.split('\n\n【用户插话')[0]}`, level: 'info' });
+    } catch {}
+    if (typeof bridge.setRunning === 'function') {
+      try { bridge.setRunning(true); } catch {}
+      ctx.runningBadgeOn = true;
+    }
   }
 
   // Abort support: signal 贯穿 solveIssue → loop → 模型 fetch / 工具执行，

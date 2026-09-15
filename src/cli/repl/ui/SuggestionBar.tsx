@@ -12,7 +12,6 @@ const TYPE_COLOR: Record<string, string> = {
   file: 'green',
   directory: 'green',
   path: 'green',
-  history: 'gray',
 };
 
 const MAX_VISIBLE = 10;

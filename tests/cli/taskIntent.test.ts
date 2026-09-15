@@ -146,3 +146,39 @@ describe('T6 检索/枚举类动词分类', () => {
     assert.equal(classifyTaskIntent('memo.txt 在哪'), 'search', '位置疑问仍 search');
   });
 });
+
+// ==================== 查看目录/文件结构类请求 → execution ====================
+// 实证："看下我这个文件夹是什么结构" 被 QUESTION_MARK_RE（"什么"）误判 chat →
+// 零动作直答"不知道"。LOOK_AT_FS_RE 在疑问启发前拦截，让"查看+文件系统对象"走执行。
+describe('查看目录/文件结构类请求分类', () => {
+  it('看下/看看/查看/分析 + 文件夹/目录/项目/工作区 → execution', () => {
+    assert.equal(classifyTaskIntent('看下我这个文件夹是什么结构'), 'execution', '看下文件夹');
+    assert.equal(classifyTaskIntent('看看当前目录有什么'), 'execution', '看看目录');
+    assert.equal(classifyTaskIntent('分析下这个项目的结构'), 'execution', '分析项目');
+    assert.equal(classifyTaskIntent('查看一下工作区里都有哪些文件'), 'execution', '查看工作区');
+  });
+
+  it('不过度捕获：概念/区别提问仍 chat（无查看动词）', () => {
+    assert.equal(classifyTaskIntent('什么是文件夹'), 'chat', '概念提问');
+    assert.equal(classifyTaskIntent('文件夹和目录有什么区别'), 'chat', '区别提问');
+  });
+});
+
+// ==================== 0.8.8 意图分类重做：默认 execution ====================
+// 实证："整理本文件夹内容" 因"整理"不在旧动词表被判 chat → 模型直答
+// "好的，有什么可以帮您吗？"而不执行。重做后默认进执行循环（CC 风格），
+// 只有明确的闲聊/提问/文创走 chat 白名单。
+describe('0.8.8 默认 execution（CC 风格）', () => {
+  it('无白名单匹配的输入默认 execution（旧版漏判的"整理"类）', () => {
+    assert.equal(classifyTaskIntent('整理本文件夹内容'), 'execution', '整理文件夹');
+    assert.equal(classifyTaskIntent('整理一下 src 目录'), 'execution', '整理目录');
+    assert.equal(classifyTaskIntent('帮我分析一下这份数据'), 'execution', '分析数据');
+    assert.equal(classifyTaskIntent('写一个快速排序'), 'execution', '写代码');
+  });
+
+  it('chat 白名单不回归：纯数字/日期/情绪输入仍 chat', () => {
+    assert.equal(classifyTaskIntent('1'), 'chat', '纯数字');
+    assert.equal(classifyTaskIntent('今天几号'), 'chat', '日期询问');
+    assert.equal(classifyTaskIntent('谢谢'), 'chat', '致谢');
+  });
+});

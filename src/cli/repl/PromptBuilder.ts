@@ -389,7 +389,7 @@ export class PromptBuilder {
     // 时间锚定（0.8.3）：身份行带"今天是 …"——QA prompt 此前没有今天是几号，
     // "多久之前/多少周"类问题无从计算（temporal-reasoning 0/15 主因之二）。
     // 放 stable 段：resolveToday() 天内不变 → 天内字节稳定（前缀缓存友好）。
-    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。今天是 ${resolveToday()}。`;
+    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。当前工作区: ${this.session.workspace || process.cwd()}（工具的相对路径均以此为基准目录）。今天是 ${resolveToday()}。`;
     this.buildLines.push(systemLine);
 
     // === L0 硬约束（≤3 条精选，非整段注入） ===
