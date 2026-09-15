@@ -35,8 +35,38 @@ B11 是**团队源码里 2026-09-14 已注明"补齐属独立工作项"的申报
 - **Leader**：CHANGELOG 加 0.8.8 段；ROADMAP-NEXT §B7/B11 标销项；版本 0.8.0-rc → **0.8.8**（对齐 CHANGELOG 现存最高段 0.8.7；团队 package.json 自 0.8.4 起未 bump，如需统一口径请裁）。
 
 ## 各分支需要做什么
-- 无强制动作。基准验证：`npx tsc --noEmit` EXIT=0 + `npm test` **1396 例（1395 pass + 1 skip + 0 fail）**
+- 无强制动作。基准验证：`npx tsc --noEmit` EXIT=0 + `npm test` **1401 例（1400 pass + 1 skip + 0 fail）**
   + `verify-panshalach-cleanup` / `check-protected-files` / `verify-m2-e2e` 三契约 PASS（后者需先 `npm run build`）。
+- 追加两处现状核实（供 Leader 排期参考，**本批未动**）：
+  - **B3 已由团队修复**（`b598e60` A3：REPL 补传 windowTokens）——无需重做。
+  - **B4 属逃生门语义非缺陷**：`PromptBuilder.buildStableSegment` / `buildVolatileSegment` 的
+    唯一生产者在测试内（`tests/loop/messagesLoop.test.ts`），**无任何生产调用方**传
+    `stableSegment`/`volatileSegment` → chaser 的 `messagesEnabled` 恒假 → messages 通道在
+    生产路径不可达（与 `scripts/eval/` 从不设 `PANSHA_MESSAGES_MODE` 的事实一致，评测基线
+    全部跑在文本路径）。接线会一次性切换全部评测口径，属 S 级改动，需 Leader 决策后再动。
 
 ## 阻塞我
 - 无。等 Leader 评审合入 develop。
+
+---
+
+## 续批追加 — B5（MCP 结果验证尾标策略）
+
+- **日期**：2026-09-15
+- **性质**：常规（内部行为修复；导出签名不变）
+
+### 我改变了什么
+1. **MCP 工具结果走独立分支且不带任何 VERIFICATION 尾标**（`engineAdapter.describeResult`）
+   - 行为差异：MCP 调用成功的结果段落 head 从 `TOOL_OK: <name>`（或其他子串命中的前缀）**统一为 `MCP_OK: <name>`**，且**不追加** `VERIFICATION: PASS/APPLIED/NEUTRAL`。
+   - 依据：MCP 服务自述输出无外部退出码佐证；`classifySignal` 的 `PASS` 是 `completed` 的唯一来源，若 MCP 自述能触发 PASS 即等于第三方工具可伪造任务成功。
+   - **若你的测试断言依赖 MCP 结果的 head 前缀或尾标，需同步**（本批全量 1401 例已跑，仓库内无此类断言；`tests/tools/executor.test.ts` 的 MCP 用例只断言 `DENIED`/审批计数，不受影响）。
+2. **连带修复**：`mcp_srv_read` 等含 `read`/`glob`/`grep` 子串的 MCP 名此前被内置工具的 `name.includes(...)` 命中，误贴 `VERIFICATION: NEUTRAL`（=PARTIAL：清零连败计数）。现 MCP 分支前置于所有内置工具判定。
+3. **内置工具尾标行为完全不变**（bash=PASS / write·edit=APPLIED / read·glob·grep=NEUTRAL）。
+
+### 依赖我的人需要知道
+- **王浩宇（R6 评测）**：若评测涉及 MCP 工具，其 `verification.signal` 现在确定性地**不因 MCP 成功而变 PASS**——这正是 B5 的意图（防自述伪装）。内置六工具的 PASS/FAIL 口径未变，**评测基线不受影响**。
+- **赵天昂**：无影响。
+- **Leader**：ROADMAP-NEXT §B5 标销项；CHANGELOG 0.8.8 段增补 B5 小节 + 全量数 1396→**1401**。
+
+### 基准验证
+`npx tsc --noEmit` EXIT=0 + `npm test` **1401 例（1400 pass + 1 skip + 0 fail）** + 三契约 PASS。

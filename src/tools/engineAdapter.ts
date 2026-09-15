@@ -272,6 +272,12 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
 
   const executor = createToolExecutor(ctx, extra, mcpTools as any);
 
+  /**
+   * B5（ROADMAP-NEXT §B5）：MCP 工具名集合——供 describeResult 打验证尾标用。
+   * 名称为命名空间形态 `mcp_<server>_<tool>`（见上方 mcpTools 构造）。
+   */
+  const mcpToolNames = new Set(mcpTools.map((mt: any) => String(mt.name || '').trim().toLowerCase()));
+
   // 请求侧：内置工具的 OpenAI function schema。
   // 参数键与各工具实现实际读取的键严格一致（file_path/content/command/...）。
   const BUILTIN_TOOL_SCHEMAS: Record<string, { description: string; parameters: Record<string, unknown> }> = {
@@ -411,9 +417,16 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     // P0 (alias bypass) 配套：结果分段同样按归一化名分类，`write` 别名的
     // 成功结果也要带 WRITE_SUCCESS 语义与 VERIFICATION: APPLIED 尾标。
     const name = normalizeToolName(call.toolName);
+    // B5（ROADMAP-NEXT §B5）：MCP 工具（命名空间 `mcp_<server>_<tool>`）走独立分支——
+    // 其名字可能内含 read/glob/grep 子串（`mcp_srv_read`），此前会被
+    // `name.includes('read')` 误判，既贴错 head 又误标 `VERIFICATION: NEUTRAL`
+    // （NEUTRAL=PARTIAL：清零连败计数、看着像部分验证）。
+    const isMcp = mcpToolNames.has(name);
     let head: string;
     if (res.ok) {
-      if (name.includes('read')) {
+      if (isMcp) {
+        head = `MCP_OK: ${name}\n${res.output}`;
+      } else if (name.includes('read')) {
         head = `READ_SUCCESS: ${params.file_path || params.path || ''}\n${res.output}`;
       } else if (name === 'glob') {
         head = `GLOB_SUCCESS: ${res.meta?.lines ?? 0} file(s)\n${res.output}`;
@@ -451,7 +464,13 @@ export function createEngineAdapter(opts: EngineAdapterOptions): EngineAdapter {
     //   read_file / glob / grep     → 追加 VERIFICATION: NEUTRAL（只读，无验证效力）
     // 失败分支（TOOL_ERROR）不追加任何 VERIFICATION 行——失败永远不该长得像成功。
     if (res.ok) {
-      if (name === 'bash') {
+      if (isMcp) {
+        // B5：MCP 结果**不加任何验证尾标**，宁缺毋滥——MCP 服务自述的输出
+        // （"已完成/成功"）没有外部退出码佐证，追加 PASS 就是让第三方工具凭
+        // 自述伪装成真实验证（classifySignal 的 PASS 是 completed 唯一来源）。
+        // 分类策略留白：将来若 MCP 协议能带出结构化 exitCode/验证语义，再按
+        // 类型追加 PASS（此处是唯一决策点）。
+      } else if (name === 'bash') {
         head += '\nVERIFICATION: PASS';
       } else if (name === 'write_file' || name === 'edit_file') {
         head += '\nVERIFICATION: APPLIED';

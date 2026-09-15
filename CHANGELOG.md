@@ -1,6 +1,6 @@
 # Changelog
 
-> **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1393 例全绿（1392 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1401 例全绿（1400 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
 ## 0.8.7 token 口径收口（2026-09-15 · zhaiyuanhao1）
@@ -82,7 +82,13 @@ token 估算器口径审查（对照目标模型中文原生 tokenizer 实测 to
 - **classic REPL**（`Repl.ts`）：此前把整段 `enriched` 当 `issueDescription` 传给 chaser，chat 的 system/user 分离、记忆块、【最近对话】段全部缺失。现与 `runAgentTask` 同款：chat 意图传**原始输入** + `chatMemoryBlock` + `chatRecentTurns`
 - 回归：新增 `tests/repl/ChatClassicCoverage.test.ts`（3 例：段齐全 / 顺序固定 / 无段时不注空块头）
 
-**质量门**：`npx tsc --noEmit` EXIT=0；全量 **1396 例（1395 pass + 1 skip + 0 fail）**；`verify-panshalach-cleanup` + `check-protected-files` + `verify-m2-e2e` 三契约 PASS。
+**B5——MCP 工具结果验证尾标策略**（ROADMAP-NEXT §B5）：
+
+- **MCP 结果不追加任何验证尾标**（`engineAdapter.describeResult`）：MCP 工具走独立分支（`MCP_OK:` 前缀）并显式跳过 VERIFICATION 尾标——MCP 服务自述的输出（"已完成/成功"）没有外部退出码佐证，追加 `VERIFICATION: PASS` 就是让第三方工具凭自述伪装真实验证（`classifySignal` 的 PASS 是 `completed` 唯一来源，闭合会直接污染任务成功率）。规则落在尾部注释：将来 MCP 协议能带出结构化 exitCode 时再按类型追加（此处是唯一决策点）
+- **连带修一个真误判**：MCP 名是命名空间形态 `mcp_<server>_<tool>`，`mcp_srv_read` 此前会命中 `name.includes('read')` 而被贴 `VERIFICATION: NEUTRAL`（=PARTIAL：清零连败计数、看着像部分验证）。现 MCP 分支前置于所有内置工具子串判定
+- 回归：新增 `tests/tools/mcpVerificationTail.test.ts`（5 例：无尾标 / read 子串回归 / glob·grep 子串回归 / 内置工具尾标不变 / 同批互不串扰）
+
+**质量门**：`npx tsc --noEmit` EXIT=0；全量 **1401 例（1400 pass + 1 skip + 0 fail）**；`verify-panshalach-cleanup` + `check-protected-files` + `verify-m2-e2e` 三契约 PASS。
 
 ## 合并记录（2026-09-12 · 四分支收口 develop）
 

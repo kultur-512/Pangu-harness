@@ -32,7 +32,7 @@
 | B2 | 记忆审计 #4-#13 剩余项 | `src/memory/*`、`Repl.ts` | messages 分段接线补 Repl/Simulate 两调用方；CJK 2-gram 相关性增强；--classic 路径接 finalizeTaskMemory；prevEnvSnapshot 挂 Session 让 env 增量真正增量；档位契约对齐；磁盘压实 |
 | B3 | classic 路径 windowTokens 漏传 | `Repl.ts`（对照 `runAgentTask.ts:173`） | 窗口预算在 classic/`--headless` 单条命令路径不生效（~40 行，hermes 对齐唯一采纳项） |
 | B4 | classic 路径 messages 分段未接 | `Repl.ts` | classic 直调 solveIssue 走旧文本协议（逃生门语义，非缺陷；对齐后 classic 与主线一致） |
-| B5 | MCP 工具结果验证尾标策略 | `engineAdapter.ts` | MCP 调用成功不计 PASS（防自述伪装真实验证）——分类策略待定，宁缺毋滥 |
+| ~~B5~~ | ~~MCP 工具结果验证尾标策略~~ | `engineAdapter.ts` | ✅ **0.8.8 销项**：MCP 工具（命名空间 `mcp_<server>_<tool>`）走**独立结果分支**（`MCP_OK:` 前缀）且**不追加任何 VERIFICATION 尾标**——MCP 自述输出无外部退出码佐证，追加 PASS 即让第三方工具凭自述伪装真实验证（PASS 是 `completed` 唯一来源）。连带修一个真误判：`mcp_srv_read` 此前被 `name.includes('read')` 命中而误贴 `VERIFICATION: NEUTRAL`（=PARTIAL，清零连败计数）。回归 `tests/tools/mcpVerificationTail.test.ts`（5 例） |
 | B6 | 栈溢出守卫长会话自然复现验证 | 渲染层 | renderSseEvent 自递归守卫已修，待真机长会话自然复现确认 |
 | ~~B7~~ | ~~rewind 事件 replay 消费 / 双 synthetic 幂等 / listBranches O(N²)~~ | `rolloutStore.ts` | ✅ **0.8.1 销项**：rewind 边界在 `replayInto` 消费（回退后 resume 不再复活已回退轮次）；compact 标记幂等（同标记重放不产生重复轮）；分支解析改单次扫描索引（O(N×链深) → O(N)）。回归 `tests/repl/rolloutB7.test.ts` |
 | B8 | MMR 近重复惩罚 | `RefinedMemoryStore.ts:624-634` | 选 top-N 前贪心去重（3-gram 重叠 ≥60% → ×0.6，~30 行）；设计已备，落前需 run-product 单臂 A/B 证据 |
