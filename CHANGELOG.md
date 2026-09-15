@@ -1,17 +1,21 @@
 # Changelog
 
-> **当前状态（2026-09-15）**：v0.8.7 · tsc 干净 + `npm test` **1383 例全绿（1382 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1399 例全绿（1398 通过 + 1 跳过）**（CI 已挂 test 门）· **90 题 LongMemEval**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 六档 strict quick 22 / standard 23 / high 20 / max 27 / ex 20 / pangu 22（档位门禁修复后 quick/standard 不再零注入，详见 `scripts/eval/longmemeval-90/COMPARE-90.md`）· 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
-## 死代码收口（2026-09-15）
+## 0.8.8 tier 体系收口 + 记忆门禁改造（2026-09-15 · zhaiyuanhao1）
 
-档位定位收口 + 多 rollout/预算限流空壳与 critique/FailureMemory 死代码清理：
+六档评测暴露低档记忆召回塌缩（quick 2/90、standard 1/90）→ 归因根因是 tier 可见性过滤器把 chat-fact（insight）/偏好（general）卡挡在低档门外 → 系统性收口：
 
-- **high 档定位**：实用优先（日常主力，轻纪律 low 注入）；高纪律模式需用 `/tier max` / `/tier ex` / `/tier pangu`。
-- **单 rollout 诚实口径**：当前为单 rollout、预算仅事后报告（不截断执行）。
-- 删除 `BudgetBehavior`/`budgetBehavior`/`maxRollouts`/`parallelRollouts` 空壳字段；`BudgetReport` 删除 `triggeredSoftLimit`/`triggeredDegradation`。
-- 删除 critique 死代码（`buildCritiquePrompt` / `LoopStep.critique` / critique 渲染点）与 `FailureMemory`/`GenerativeTestEngine` 类（仅保留 `FailureCategory` 类型）。
-- `looksLikeRealPass` 删除 benchmark 定向 hack（硬编码"加法例子"数字判定），保留通用验证特征判定。
+- **tier 空壳删除**：`budgetBehavior`/`maxRollouts`/`parallelRollouts`/`explorationDepth`/`anchorMax`/`userConfirmationRequired` 及 `BudgetReport.triggeredSoftLimit/Degradation` 全部删除（单 rollout、预算仅事后报告、无并行、无确认面板，均已如实收口）；`ironLawInjectionLevel` 改可选（仅 max/ex/pangu 强档生效）；新增 `autoPullMemory` 配置化。
+- **门禁改造（核心）**：`loadFiltered` 删除按 memoryCategory 的 `isVisible` 阶梯过滤，改为按卡 `applicableTiers` 卡级门禁（空=全档、非空且不含当前档=排除）；任务提炼卡改为全档通用（不再绑定产出档位）。
+- **别名归一化**：`TierRegistry.normalize()` 统一入口（Session/envTier/TierCommand/loadFiltered/chaser 全接入），`strong` 对齐 `max`；`fromMode` 与 `TIER_ALIASES` 一致。
+- **记忆注入差异化**：quick `memoryLoadLevel` none→light（不再零注入）；light/medium/high/full 四档按窗口预算乘数差异化（0.6/1.0/1.2/1.4，medium=1.0 保 high 档行为不变）。
+- **死代码清理**：critique（`buildCritiquePrompt`/`LoopStep.critique`/渲染点）+ `FailureMemory`/`GenerativeTestEngine` 类（仅留 `FailureCategory`）+ `appendMemoryCards`/`isStrong`/`defaultTier`/`tierRequiresConfirmation`/`CritiqueFrequencySpec`；`looksLikeRealPass` 删 benchmark 定向 hack（硬编码"加法例子"数字判定）。
+- **语义检索收口**：`RemoteEmbeddingProvider.embed()` 同步兜底 n-gram（不再"设 remote 反而降级纯词面"）；`embedAsync()` 真远程留待 async 检索路径。
+- **taskState 归档**：活跃+归档拆分，任务结束自动触发 `archive()`（无归档任务短路，不读归档文件）。
+- **六档 × 1B 90 题复验**：strict quick 2→**22** / standard 1→**23** / high 24→20 / max 20→**27** / ex 20→20 / pangu 18→22——quick/standard 从个位数跃升，证实门禁是低档塌缩根因（`0210553`）。
+- 测试：1399 例全绿（1398 通过 + 1 跳过），6 个 tools fakeTierConfig 去死字段/补 `autoPullMemory`/去强转。
 
 ## 0.8.7 token 口径收口（2026-09-15 · zhaiyuanhao1）
 

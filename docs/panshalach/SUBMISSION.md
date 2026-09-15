@@ -18,7 +18,7 @@
 
 分层架构与推理流程全文见 [ARCHITECTURE.md](ARCHITECTURE.md)，要点：
 
-- **五层结构**：模型接入层（多 provider 配置驱动 + 原生 function calling/文本协议双通道）→ 执行循环层（单 loop、三路解析、Read-Before-Write / Verify-Before-Claim 铁律、四档审批）→ 记忆增强层（事件账本 → 任务状态 → 记忆卡投影）→ 提示工程层（L0 硬约束 + L1 记忆卡注入：档位可见性/参照文件交集/关键词相关性/token 预算）→ 交互层（CLI/REPL/SSE 服务化）。
+- **五层结构**：模型接入层（多 provider 配置驱动 + 原生 function calling/文本协议双通道）→ 执行循环层（单 loop、三路解析、Read-Before-Write / Verify-Before-Claim 铁律、四档审批）→ 记忆增强层（事件账本 → 任务状态 → 记忆卡投影）→ 提示工程层（L0 硬约束 + L1 记忆卡注入：卡级档位适用/参照文件交集/关键词相关性/token 预算）→ 交互层（CLI/REPL/SSE 服务化）。
 - **关键流程**：意图分类 → buildForTask 唯一记忆注入口 → 单次 loop.run → 回合落定（提炼写盘 + 注入审计 + rollout 追加）→ 需要时后台压缩（血统账本保护）→ 下一回合 L1 注入读到上一轮沉淀。
 - **多模型源**：`.panshalach.json` providers + `PANSHA_<PROV>_*` 环境变量三件套 + `apiKeyCmd`（密钥不落盘）+ `openpangu:openPangu-7B` 前缀路由。
 
