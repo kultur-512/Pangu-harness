@@ -181,3 +181,21 @@ token 估算器口径收口（`9fe0cf9`：文本路径裁剪统一 `estTokens` +
 | ZL-pipeline | 18/90 | haystack 原文整段内联 |
 
 旧 v2 口径（direct 29 / pipeline 23 / compact 32）经 v2.1 收紧后下移，排序不变。产品门控仍是 1B 最大瓶颈：compact 无门控 30 vs product 门控 19，差 11 分。
+
+---
+
+## 附录（2026-09-15）：ZL×7B 代码更新后复验
+
+代码更新后复验 ZL×7B 90 题（grader v2.1）：strict **27/90** · lenient 27/90 · 0 超时（平均 32.5s/题）。
+
+| 题型 | 新 zl-7b-90 | 旧 7b（31/90） |
+|---|---|---|
+| knowledge-update | 10/15 | 9/15 |
+| multi-session | 1/15 | 3/15 |
+| single-session-assistant | 5/15 | 8/15 |
+| single-session-preference | 1/15 | 1/15 |
+| single-session-user | 8/15 | 7/15 |
+| temporal-reasoning | 2/15 | 3/15 |
+| **TOTAL** | **27/90** | 31/90 |
+
+−4 主要来自 assistant(−3)/multi-session(−2)，无机制证据指向代码（同批改动在 M3 +6、1B 中性），落在 7B 采样方差带边缘（旧 7B 仅单样本）；3 个 300s 超时为偶发卡顿（重跑 8~98s 全过），非系统性慢。需 7B 双样本才能定「回归 vs 方差」。
