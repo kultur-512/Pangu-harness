@@ -55,7 +55,13 @@ describe('B8a：3-gram 工具', () => {
 
 // ==================== loadFiltered 集成 ====================
 describe('B8b：loadFiltered MMR 近重复惩罚（排序后、maxCards 切片前）', () => {
+  // it3 实测回退申报：MMR 对弱模型 KU 题是净损失（近重复重述=强化信号），
+  // 默认关闭、PANSHA_MMR=1 选择性启用——本 describe 沙箱 env 验证实现本体。
   const KWS = ['banana', 'split', 'grafting'];
+  const withMmr = async (fn: () => void): Promise<void> => {
+    process.env.PANSHA_MMR = '1';
+    try { await fn(); } finally { delete process.env.PANSHA_MMR; }
+  };
 
   /** dupA/dupB 近重复（重叠≈1），divC 主题不同但词面命中 grafting。
    *  α=1 时 score = 0.5*effN + 0.5*relN：dupA=dupB rel2 → 1.0；divC rel1 → 0.75。
@@ -76,20 +82,24 @@ describe('B8b：loadFiltered MMR 近重复惩罚（排序后、maxCards 切片�
 
   // 前置事实（既有行为，非 B8 改动项）：无 preference 卡时 maxCards=N 返回 N-1
   // 张（reservePreferenceSeat 恒预留给 preference 1 席）——用例按此口径断言。
-  it('近重复卡 ×0.6 放回重比 → 多样性卡反超，不再重复占席（maxCards=3 → 2 张）', () => {
-    const r = makeStore().loadFiltered({
-      tier: 'high', semantic: true, semanticWeight: 1,
-      queryText: 'banana split dessert grafting', keywords: KWS, maxCards: 3,
+  it('近重复卡 ×0.6 放回重比 → 多样性卡反超，不再重复占席（maxCards=3 → 2 张）', async () => {
+    await withMmr(() => {
+      const r = makeStore().loadFiltered({
+        tier: 'high', semantic: true, semanticWeight: 1,
+        queryText: 'banana split dessert grafting', keywords: KWS, maxCards: 3,
+      });
+      assert.deepEqual(r.map((c) => c.id), ['dup-a', 'div-c'], `got [${r.map((c) => c.id)}]`);
     });
-    assert.deepEqual(r.map((c) => c.id), ['dup-a', 'div-c'], `got [${r.map((c) => c.id)}]`);
   });
 
-  it('选满不丢席位：maxCards=4 时被罚卡仍回填末位（×0.6 重比而非跳过）', () => {
-    const r = makeStore().loadFiltered({
-      tier: 'high', semantic: true, semanticWeight: 1,
-      queryText: 'banana split dessert grafting', keywords: KWS, maxCards: 4,
+  it('选满不丢席位：maxCards=4 时被罚卡仍回填末位（×0.6 重比而非跳过）', async () => {
+    await withMmr(() => {
+      const r = makeStore().loadFiltered({
+        tier: 'high', semantic: true, semanticWeight: 1,
+        queryText: 'banana split dessert grafting', keywords: KWS, maxCards: 4,
+      });
+      assert.deepEqual(r.map((c) => c.id), ['dup-a', 'div-c', 'dup-b'], '近重复卡降权后仍在选集');
     });
-    assert.deepEqual(r.map((c) => c.id), ['dup-a', 'div-c', 'dup-b'], '近重复卡降权后仍在选集');
   });
 
   it('semantic 未激活 → 纯词面路径不变（近重复对照旧双占前二）', () => {

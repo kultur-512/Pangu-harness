@@ -772,7 +772,10 @@ export class RefinedMemoryStore {
     // B8：MMR 近重复惩罚——排序后、maxCards 切片前；仅 semanticActive 执行
     // （与语义同门，纯词面路径行为不变）。×0.6 重比实现（非直接跳过）申报：
     // 保持 maxCards 名额不塌缩（近重复降权后仍可在末位回填，注入预算不缩水）。
-    if (semanticActive && scored.length >= 2) {
+    // it3 实测回退（7B 90 题：MMR 激活时 KU 9→5，近重复重述对弱模型是
+    // 强化信号而非噪声——×0.6 惩罚恰好消弱 gold 重述）。默认关闭，env
+    // PANSHA_MMR=1 选择性启用（实现与测试保留，供强模型场景 A/B）。
+    if (semanticActive && scored.length >= 2 && process.env.PANSHA_MMR === '1') {
       filtered = mmrDiversify(scored, (c) => String(c.summary ?? ''));
     } else {
       filtered = scored.map(s => s.c);
