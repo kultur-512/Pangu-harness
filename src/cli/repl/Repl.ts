@@ -44,7 +44,7 @@ import FeatureCommand from './commands/FeatureCommand.js';
 import TreeCommand from './commands/TreeCommand.js';
 import { AgentTree } from './AgentTree.js';
 import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../loop/trajectory.js';
-import { finalizeTaskMemory } from '../../server/runAgentTask.js';
+import { finalizeTaskMemory, buildChatRecentTurnsBlock } from '../../server/runAgentTask.js';
 
 export class Repl {
   private registry = new CommandRegistry();
@@ -360,6 +360,12 @@ export class Repl {
     const intent = classifyTaskIntent(issue);
     let enriched = await pb.buildForTask(issue, intent);
 
+    // B11：chat 直答的记忆/上下文覆盖（与 runAgentTask 同款）——classic 路径此前把
+    // 整段 enriched 当 issueDescription 传给 chaser，chat 的 system/user 分离、
+    // 记忆块、【最近对话】段全部缺失（源码 2026-09-14 已申报为独立缺口）。
+    const chatMemoryBlock = intent === 'chat' ? pb.getChatMemoryBlock() : undefined;
+    const chatRecentTurns = intent === 'chat' ? buildChatRecentTurnsBlock(this.session) : undefined;
+
     // 捕获注入的记忆卡 ID（供 finalizeTaskMemory 消费——R2 markVerified 交集判定）
     const injectedCardIds: string[] = pb.lastBuildMeta?.injectedCardIds ?? [];
 
@@ -431,12 +437,17 @@ export class Repl {
     // Race the long-running solveIssue against the abort promise.
     // When the user presses Ctrl+C, currentAbort rejects abortPromise,
     // which unblocks this await immediately and lets us return the prompt.
-    const taskWork = chaser.solveIssue(enriched, this.session.workspace, {
+    // B11：chat 传原始输入（与 runAgentTask 同源）——chaser 的 chat 分支自行组装
+    // 「记忆块 + 最近对话 + 用户原话」，整段 enriched 会让输入在 payload 里重复。
+    const taskWork = chaser.solveIssue(intent === 'chat' ? issue : enriched, this.session.workspace, {
       tier: this.session.tier as any,
       yes: true,
       dryRun: simulate,
       memoryPreInjected: true,
       intent, // 入口前移的意图显式传入
+      // B11：chat 直答的记忆块 + 最近对话段（与 server 路径同款；非 chat 为 undefined）
+      chatMemoryBlock,
+      chatRecentTurns,
       // loop 70% 窗口预算裁剪的依据（此前只有 server/headless 路径传入，
       // 交互模式长任务在溢出前没有任何主动裁剪）。
       windowTokens: resolveWindowTokens(provider, modelName),

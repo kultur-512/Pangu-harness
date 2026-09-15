@@ -227,7 +227,14 @@ export class PanshalachChaser {
     // search 用只读搜索指令；execution 才走完整推理 + 格式教学。
     let basePrompt: string;
     if (intent === 'chat') {
-      basePrompt = StructuredReasoner.buildChatDirective(issueDescription);
+      // B11：chat 的 complete 回退通道同样携带记忆块 + 最近对话段。
+      // messages 通道（下方 chatMessages）已独立承载；此处内联进 basePrompt，
+      // 仅被「仅实现 complete、无 chat/streamChatMessages」的客户端消费——
+      // 此前该通道 chat 意图零记忆零上下文（源码 2026-09-14 已申报缺口）。
+      const chatFallbackUser = [config.chatMemoryBlock, config.chatRecentTurns, issueDescription]
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        .join('\n\n');
+      basePrompt = StructuredReasoner.buildChatDirective(chatFallbackUser);
     } else if (intent === 'search') {
       basePrompt = StructuredReasoner.buildSearchDirective(taskText);
     } else {
@@ -405,11 +412,8 @@ export class PanshalachChaser {
           chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
         } else {
           // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）。
-          // 覆盖边界申报（审查建议-5，2026-09-14 迭代）：此通道不含记忆块与
-          // 【最近对话】——仅有 complete 无 chat/streamChatMessages 的客户端在
-          // chat 意图下仍是"零记忆 + 零上下文"直答。已知缺口非本批回归；
-          // classic REPL 通道（Repl.ts solveIssue(enriched) 不传 chatMemoryBlock/
-          // chatRecentTurns）同样未覆盖，补齐属独立工作项。
+          // B11（已补齐）：basePrompt 现内联 chatMemoryBlock + chatRecentTurns
+          // （见上方 chat 分支组装），仅有 complete 的客户端不再零记忆零上下文。
           chatText = extractReplyText(await chatClient.complete(basePrompt, chatOpts));
         }
       } catch (e: any) {

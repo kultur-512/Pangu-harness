@@ -67,14 +67,22 @@ token 估算器口径审查（对照目标模型中文原生 tokenizer 实测 to
 
 **质量门**：`npx tsc --noEmit` 干净；`node --test --test-concurrency=4` **1162 例 1161 pass + 1 skip + 0 fail**；`smoke-eval.mjs` 20/20；三组安全 payload（别名写/换行命令/命令替换）在旧代码实证绕过存在、修复后全部拒绝。
 
-## 0.8.8（事件层 B7 销项：回退边界消费 + 压缩标记幂等 + 分支扫描降复杂度 · wangzuo1）
+## 0.8.8（事件层 B7 销项 + B11 通道记忆覆盖 · wangzuo1）
 
-`rolloutStore.ts` 三项工程遗留（ROADMAP-NEXT §B7，评测工程底座）：
+**B7——`rolloutStore.ts` 三项工程遗留**（ROADMAP-NEXT §B7，评测工程底座）：
 
 - **rewind 事件 replay 消费**：`replayInto` 新增回退边界处理（number=回合 timestamp / string=回合 id / 'last'）。此前 rewind 只写审计、resume 时跳过——回退后恢复会话会**复活已回退的轮次**（会话比真实历史长）。现按事件流顺序消费，回退后新写轮次、再压缩均与在线状态一致；目标不存在时不修改会话（审计事件保留）
 - **compact 标记幂等**：同一压缩标记重复回放（resume 重入 / 在线 apply 后再 replay）不再产生重复合成轮——按 `syntheticTurn.id` 先剔除历史副本再插入；重叠覆盖区间的多枚标记整批重放结果稳定
 - **分支解析降复杂度**：新增 `buildBranchIndex()` 单次扫描（每个 jsonl 只读一遍抽 meta.branchOf），`listBranches`/`directBranches`/`listSessionTree` 复用该索引——原实现对每个文件调 `isBranch` 且逐级向上读祖先文件，为 O(文件数 × 链深) 次整文件读；现为 O(文件数)。结果语义与旧实现一致（top-most origin 聚合 / 直接子节点 / 树结构 / 损坏行容错均不变）
 - 回归：新增 `tests/repl/rolloutB7.test.ts`（9 例：回退边界 4 / 幂等 3 / 分支索引 2）
+
+**B11——classic REPL 与 complete-only 回退通道的 chat 记忆覆盖**（ROADMAP-NEXT §B11，源码 2026-09-14 已申报的两处缺口）：
+
+- **complete-only 回退通道**（`PanshalachChaser`）：仅有 `complete()`、无 `chat`/`streamChatMessages` 的客户端在 chat 意图下此前**零记忆零上下文**直答。现 chat 分支的 `basePrompt` 内联「记忆块 + 【最近对话】段 + 用户原话」——与 messages 通道的 user 组装同序同内容，两通道行为对齐（messages 通道不受影响，仍走独立 system/user 分离）
+- **classic REPL**（`Repl.ts`）：此前把整段 `enriched` 当 `issueDescription` 传给 chaser，chat 的 system/user 分离、记忆块、【最近对话】段全部缺失。现与 `runAgentTask` 同款：chat 意图传**原始输入** + `chatMemoryBlock` + `chatRecentTurns`
+- 回归：新增 `tests/repl/ChatClassicCoverage.test.ts`（3 例：段齐全 / 顺序固定 / 无段时不注空块头）
+
+**质量门**：`npx tsc --noEmit` EXIT=0；全量 **1396 例（1395 pass + 1 skip + 0 fail）**；`verify-panshalach-cleanup` + `check-protected-files` + `verify-m2-e2e` 三契约 PASS。
 
 ## 合并记录（2026-09-12 · 四分支收口 develop）
 
