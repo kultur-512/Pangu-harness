@@ -1,6 +1,6 @@
 # Changelog
 
-> **当前状态（2026-09-15）**：v0.8.7 · tsc 干净 + `npm test` **1383 例全绿（1382 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 41/90（已追平 CC×M3）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-15）**：v0.8.7 · tsc 干净 + `npm test` **1383 例全绿（1382 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
 ## 0.8.7 token 口径收口（2026-09-15 · zhaiyuanhao1）
@@ -10,6 +10,7 @@ token 估算器口径审查（对照目标模型中文原生 tokenizer 实测 to
 - **文本路径裁剪口径收口**：`VerifyCritiqueLoop` 的 `pushToolMessages` / `buildHistoryPrompt` / `capStepPart` 从旧 `windowTokens*4` 字符预算统一到 `estTokens` + `sliceToTokenBudget`——messages 通道本就 CJK 感知，文本通道此前对中文按 4 字符/token 低估 ~6 倍；纯 ASCII 行为 ≤1 token 内等价
 - **CJK 系数 1.5→1.0 可配**：`estTokens` 的 CJK 系数抽成 `CJK_TOKENS_PER_CHAR`（默认 1.0，`PANSHA_CJK_TOKENS` 进程启动读一次覆盖，`setCjkTokensPerCharForTest` 测试 seam）。1.5 是按 LLaMA 系定的，对目标模型（openpangu/Pangu·MiniMax-M3·Qwen3·DeepSeek-R1，中文实测 ≈0.6~1.0 token/字）高估 ~1.5~2.5 倍 → 压缩/裁剪提前触发、浪费上下文容量；1.0 是真实区间上界，仍安全（70% 预算线 + 溢出应急档兜底）
 - 测试更新：`tokenEstimate`/`compactService` 断言随系数更新；`CjkBudget` 两条「每条 ≤ 单条封顶」断言放松为「总账 ≤ 70% 窗口 + 至少一条被二级截断」（对齐 `enforceMessagesBudget` 真实契约，review 核验非掩盖 bug）
+- **90 题复验（归因隔离）**：ZL×1B 19/90（vs it3-1b 20/90，噪声内无回归）· ZL×M3 **47/90**（vs gapfix-m3 41/90，+6）· 单变量隔离 `PANSHA_CJK_TOKENS=1.5` vs 1.0 → 46 vs 47 → **token fix 系数贡献 +1，其余 +5 为中间记忆/检索迭代**（factDate 重排/C4 数字句前置/R2 预算/B9 relTime/MMR 默认关闭，此前未单独在 M3 验证）。结论：token fix 是正确性收口（文本路径中文不再低估 6 倍、系数不再高估 1.5-2.5 倍），非 benchmark 提分杠杆；M3 47/90 新纪录主要来自记忆/检索迭代
 
 ## 0.8.5 全适用性迭代（2026-09-14 · zhaiyuanhao1）
 

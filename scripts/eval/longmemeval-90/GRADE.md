@@ -1,18 +1,39 @@
 # LME 90题 对照
 
-> 生成: 2026-09-14T21:36:06.517Z
+> 生成: 2026-09-15T03:19:14.274Z
 
-| 题型 | gapfix-1b | 7b | m3 | CC-90 |
-|---|---|---|---|---|
-| **knowledge-update** | strict 3/15 · len 5/15 | strict 9/15 · len 9/15 | strict 6/15 · len 7/15 | strict 8/15 · len 9/15 |
-| **multi-session** | strict 3/15 · len 5/15 | strict 3/15 · len 5/15 | strict 4/15 · len 9/15 | strict 8/15 · len 11/15 |
-| **single-session-assistant** | strict 8/15 · len 5/15 | strict 8/15 · len 5/15 | strict 7/15 · len 4/15 | strict 9/15 · len 3/15 |
-| **single-session-preference** | strict 0/15 · len 1/15 | strict 1/15 · len 1/15 | strict 0/15 · len 2/15 | strict 1/15 · len 2/15 |
-| **single-session-user** | strict 7/15 · len 4/15 | strict 7/15 · len 4/15 | strict 4/15 · len 3/15 | strict 8/15 · len 4/15 |
-| **temporal-reasoning** | strict 2/15 · len 4/15 | strict 3/15 · len 5/15 | strict 8/15 · len 9/15 | strict 7/15 · len 9/15 |
-| **TOTAL** | **strict 23/90 · len 24/90** | **strict 31/90 · len 29/90** | **strict 29/90 · len 34/90** | **strict 41/90 · len 38/90** |
+| 题型 | zl-m3-cjk15 | zl-m3-90 |
+|---|---|---|
+| **knowledge-update** | strict 9/15 · len 9/15 | strict 9/15 · len 9/15 |
+| **multi-session** | strict 7/15 · len 10/15 | strict 9/15 · len 11/15 |
+| **single-session-assistant** | strict 10/15 · len 5/15 | strict 10/15 · len 6/15 |
+| **single-session-preference** | strict 1/15 · len 2/15 | strict 0/15 · len 2/15 |
+| **single-session-user** | strict 10/15 · len 4/15 | strict 10/15 · len 4/15 |
+| **temporal-reasoning** | strict 9/15 · len 9/15 | strict 9/15 · len 8/15 |
+| **TOTAL** | **strict 46/90 · len 39/90** | **strict 47/90 · len 40/90** |
 
-- answers-gapfix-1b.jsonl: timeout=0 平均耗时=5.4s 平均落卡=9.1
-- answers-7b.jsonl: timeout=0 平均耗时=46.2s 平均落卡=9.1
-- answers-m3.jsonl: timeout=0 平均耗时=11.1s 平均落卡=9.1
-- answers-CC-90.jsonl: timeout=0 平均耗时=7.1s 平均落卡=0.0
+- answers-zl-m3-cjk15.jsonl: timeout=0 平均耗时=8.3s 平均落卡=9.1
+- answers-zl-m3-90.jsonl: timeout=0 平均耗时=8.6s 平均落卡=9.1
+
+## 逐题型 A/B 差值（answers-zl-m3-cjk15.jsonl → answers-zl-m3-90.jsonl，strict）
+
+| 题型 | A | B | Δ |
+|---|---|---|---|
+| knowledge-update | 9/15 | 9/15 | 0 |
+| multi-session | 7/15 | 9/15 | +2 |
+| single-session-assistant | 10/15 | 10/15 | 0 |
+| single-session-preference | 1/15 | 0/15 | -1 |
+| single-session-user | 10/15 | 10/15 | 0 |
+| temporal-reasoning | 9/15 | 9/15 | 0 |
+| **TOTAL** | 46/90 | 47/90 | **+1** |
+
+## 逐题翻转（7 题）
+
+- 0100672e [multi-session] 0→1（A→B 转对）
+- 09ba9854 [multi-session] 0→1（A→B 转对）
+- 2bf43736 [single-session-assistant] 1→0（A→B 转错）
+- 4388e9dd [single-session-assistant] 0→1（A→B 转对）
+- 35a27287 [single-session-preference] 1→0（A→B 转错）
+- 0db4c65d [temporal-reasoning] 0→1（A→B 转对）
+- 6e984301 [temporal-reasoning] 1→0（A→B 转错）
+
