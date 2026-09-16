@@ -287,8 +287,9 @@ export class PromptBuilder {
   // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
   private duplicatesSkipped = 0;
-  // previous environment snapshot (for incremental env-delta injection)
-  private prevEnvSnapshot: any = null;
+  // B2：环境快照挂在 Session 上（session.envSnapshot）——PromptBuilder 被每任务
+  // new 实例，快照若留在实例上会被每任务重置为 null，env 增量比对恒从 null 起
+  // → 每次全量 delta。跨任务/跨调用方的增量语义由长命 Session 承载。
   // 0.8 P2（M1-PROTOCOL）：三段拆分的共享行缓冲（buildForTask = summary 块 + stable + volatile 拼接）
   private buildLines: string[] = [];
   /** 本 build 溢出记忆拉取数（auto-pull 前后 injectedCardIds 差）。 */
@@ -564,8 +565,10 @@ export class PromptBuilder {
     try {
       const { snapshotEnv, buildEnvDelta, renderEnvDelta } = await import('./EnvContext.js');
       const now = snapshotEnv(this.session.workspace);
-      const delta = buildEnvDelta(this.prevEnvSnapshot, now);
-      this.prevEnvSnapshot = now;
+      // B2：上一快照取自 Session（跨任务存活）；?? null 防御非 Session 构造的
+      // mock（无该字段）——与旧"首 build 从 null 基线起"行为一致。
+      const delta = buildEnvDelta(this.session.envSnapshot ?? null, now);
+      this.session.envSnapshot = now;
       const block = renderEnvDelta(delta);
       if (block) {
         this.tryInject('env-delta', block, lines);
