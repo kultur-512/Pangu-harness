@@ -70,6 +70,8 @@ export interface LoopStep {
   /** 多任务风格每步信号 */
   terminalNoCheck?: boolean;
   automationNoEffectCheck?: boolean;
+  /** 空转 answered 步的用户正文（2026-09-16：answerText 带出的数据源） */
+  result?: string;
 }
 
 export interface VerifyCritiqueLoopOptions {
@@ -646,6 +648,8 @@ export class VerifyCritiqueLoop {
         break;
       }
       stepNum++;
+      // 空转 answered 步的用户正文（step.result；answerText 带出的数据源）
+      let idleAnswerText: string | undefined;
 
       let prompt = '';
       if (!messagesMode) {
@@ -1016,6 +1020,12 @@ export class VerifyCritiqueLoop {
         verificationResult = 'NO_TOOL_CALLS';
         signal = 'NO_TOOL_CALLS';
         this.stepsSinceLastRealVerification++;
+        // 2026-09-16：空转 answered 的用户正文暂存（step.result）——runAgentTask
+        // 的 answerText 提取读 trajSteps[last].result，此前该字段恒空 →
+        // "已回复"但三端都看不到回复内容（真机实证）。
+        idleAnswerText = !!(rawOrObj as any)?.truncated
+          ? undefined
+          : (this.extractUserText(rawContent) || undefined);
         // T4：连续空转计数喂 guardrails（格式停滞信号：只计数上报，不设硬闸——
         // maxSteps 已兜底）；工具调用恢复时清零（见上方 toolCalls>0 分支）。
         this.consecutiveNoToolCalls++;
@@ -1051,6 +1061,7 @@ export class VerifyCritiqueLoop {
         detectedFormat,
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
+        ...(idleAnswerText ? { result: idleAnswerText } : {}),
       };
 
       this.steps.push(step);
