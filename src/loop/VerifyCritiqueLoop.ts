@@ -1249,11 +1249,18 @@ export class VerifyCritiqueLoop {
         if (s.didRealVerification) flags.push('VERIFIED');
         if (s.readBeforeWriteViolation) flags.push('RBW');
         const iron = flags.length ? flags.join('+') : (isPractical ? '' : 'ok');
+        // 2026-09-16 真机缺陷：内部信号词 NO_TOOL_CALLS 被原样渲染进历史
+        // （"Step N [NO_TOOL_CALLS] / Result: NO_TOOL_CALLS"），1B 与 M3
+        // 双双学舌成正文输出（终局 answerText='NO_TOOL_CALLS'）。历史渲染
+        // 改用模型友好的本地化文案——信号是给引擎看的，不是给模型的。
+        const signalLabel = s.verificationSignal === 'NO_TOOL_CALLS' ? '无工具调用' : s.verificationSignal;
 
         // 保留 plan / verify 的核心结构（不被激进截断）
         const plan = safeSlice(s.reasoning.plan || '', 0, planLimit);
         const verify = safeSlice(s.reasoning.verify || '', 0, planLimit);
-        const fullResult = s.verificationResult || '';
+        const fullResult = s.verificationResult === 'NO_TOOL_CALLS'
+          ? '（本步未调用任何工具）'
+          : (s.verificationResult || '');
         let resultText = fullResult;
         let resultTruncated = false;
         if (fullResult.length > RESULT_LIMIT) {
@@ -1270,7 +1277,7 @@ export class VerifyCritiqueLoop {
         const thinking = safeSlice(s.reasoning.thinking || '', 0, thinkLimit);
 
         // 包含完整的结构化块（plan + verify + result）便于长链推理
-        const base = `Step ${s.stepNumber} [${s.verificationSignal}]${iron ? ' ['+iron+']' : ''}:
+        const base = `Step ${s.stepNumber} [${signalLabel}]${iron ? ' ['+iron+']' : ''}:
 Thinking: ${thinking}
 Plan: ${plan}
 Verify: ${verify}

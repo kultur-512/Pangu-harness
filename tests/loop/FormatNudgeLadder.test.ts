@@ -176,3 +176,23 @@ describe('T6 假成功收紧（loop 级）', () => {
     assert.equal(out.steps[0].didRealVerification, true, '输出含 VERIFICATION 标记 → 计真实验证');
   });
 });
+
+describe('历史渲染本地化（2026-09-16 NO_TOOL_CALLS 学舌修复）', () => {
+  it('空转步历史不把内部信号词 NO_TOOL_CALLS 喂给模型', async () => {
+    const model = textModel([IDLE_TEXT]);
+    const loop = new VerifyCritiqueLoop(model, { async execute() { return 'x'; } }, {
+      maxSteps: 10,
+      executionIntent: true,
+      practicalMode: true,
+    });
+    await loop.run('修复 bug');
+
+    // 第 2、3 次 prompt 携带 [历史执行记录]——其中不得出现内部信号词字面
+    for (const p of model.promptsSeen.slice(1)) {
+      assert.ok(p.includes('[历史执行记录]'), '后续 prompt 携带历史');
+      assert.ok(!p.includes('NO_TOOL_CALLS'), `历史渲染不得泄漏内部信号词，got: ${p.slice(p.indexOf('Step'), p.indexOf('Step') + 120)}`);
+      assert.ok(p.includes('无工具调用'), '信号本地化为模型友好文案');
+      assert.ok(p.includes('（本步未调用任何工具）'), '空转结果本地化为中文文案');
+    }
+  });
+});
