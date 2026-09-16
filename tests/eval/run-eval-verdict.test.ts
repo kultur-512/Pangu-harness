@@ -15,6 +15,7 @@ import {
   verdictToEvalVerdict,
   defaultSeedMemory,
   parseVerification,
+  parseMemory,
 } from '../../scripts/eval/run-eval.mjs';
 import { validateResult } from '../../scripts/eval/results/schema.mjs';
 
@@ -77,6 +78,19 @@ describe('parseVerification (R6 证据边界)', () => {
     assert.equal(result.signal, 'ALL_TESTS_PASSED');
   });
 });
+describe('parseMemory (R6 结构化审计)', () => {
+  it('解析 memory.finalized 中的 attemptCount', () => {
+    const result = parseMemory('memory.finalized: {"injectedCardIds":["c1"],"verifiedCardIds":[],"attemptCount":2,"refined":{"added":1}}');
+    assert.equal(result.attemptCount, 2);
+    assert.deepEqual(result.injectedCardIds, ['c1']);
+  });
+
+  it('缺失或非法 attemptCount 不伪造计数', () => {
+    assert.equal(parseMemory('memory.finalized: {"injectedCardIds":[]}').attemptCount, undefined);
+    assert.equal(parseMemory('memory.finalized: {"attemptCount":0}').attemptCount, undefined);
+  });
+});
+
 describe('defaultSeedMemory (R6 follow-up #1)', () => {
   it('结构合法:meta + cards[] 含 2 张合成卡', () => {
     const seed = defaultSeedMemory(1700000000000);
@@ -131,6 +145,19 @@ describe('defaultSeedMemory (R6 follow-up #1)', () => {
       assert.ok(['failure', 'implementation', 'insight'].includes(c.memoryCategory),
         `T2 卡 ${c.id} memoryCategory=${c.memoryCategory} 应在 high 档可见`);
     }
+  });
+});
+
+describe('validateResult attemptCount 防伪造', () => {
+  it('completed 缺失 attemptCount 时拒绝', () => {
+    const result = validateResult({ verdict: 'completed' });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.includes('attemptCount')));
+  });
+
+  it('completed attemptCount=1 时不因计数规则拒绝', () => {
+    const result = validateResult({ verdict: 'completed', attemptCount: 1 });
+    assert.ok(!result.errors.some((e) => e.includes('attemptCount')));
   });
 });
 

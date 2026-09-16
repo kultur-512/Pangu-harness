@@ -288,6 +288,9 @@ export function validateResult(obj) {
   if (r.ablation !== undefined && !(r.ablation in ABLATIONS)) {
     errors.push(`invalid ablation: ${r.ablation}`);
   }
+  if (r.verdict === 'completed' && (!Number.isInteger(r.attemptCount) || r.attemptCount < 1)) {
+    errors.push('completed result requires attemptCount >= 1');
+  }
   if (r.taskFamily !== undefined && !['T1', 'T2', 'T3', 'T4', 'T5'].includes(r.taskFamily)) {
     errors.push(`invalid taskFamily: ${r.taskFamily}`);
   }

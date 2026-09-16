@@ -458,10 +458,11 @@ export function parseVerification(stdout, stderr, exitCode) {
  * 从 harness 输出中解析记忆信息。
  * 优先抓 SSE/JSON 格式的 memory.finalized 事件；回退到正则文本匹配。
  */
-function parseMemory(stdout) {
+export function parseMemory(stdout) {
   const injected = [];
   const verified = [];
   const refined = { added: 0, merged: 0, written: 0, capped: 0 };
+  let attemptCount;
 
   // 优先：抓 memory.finalized 事件（JSON 行）
   const memFinalizedMatch = stdout.match(/memory\.finalized[:\s]*(\{[^\n]+\})/i);
@@ -470,6 +471,8 @@ function parseMemory(stdout) {
       const data = JSON.parse(memFinalizedMatch[1]);
       if (Array.isArray(data.injectedCardIds)) injected.push(...data.injectedCardIds);
       if (Array.isArray(data.verifiedCardIds)) verified.push(...data.verifiedCardIds);
+      // attemptCount 防伪造：只收真实值（正整数），缺失/0/负数不伪造计数
+      if (Number.isInteger(data.attemptCount) && data.attemptCount >= 1) attemptCount = data.attemptCount;
       if (data.refined) {
         refined.added = data.refined.added ?? 0;
         refined.merged = data.refined.merged ?? 0;
@@ -495,7 +498,7 @@ function parseMemory(stdout) {
     }
   }
 
-  return { injectedCardIds: injected, verifiedCardIds: verified, refined };
+  return { injectedCardIds: injected, verifiedCardIds: verified, refined, attemptCount };
 }
 
 /**
@@ -764,6 +767,7 @@ async function runOne(fixture, ablation, opts) {
         verifiedCardIds: memory.verifiedCardIds,
       };
       if (memory.refined) result.refined = memory.refined;
+      if (memory.attemptCount !== undefined) result.attemptCount = memory.attemptCount;
 
       // 判定 verdict（按 RESULT_SCHEMA 语义：completed / max-steps / aborted / no-verification）
       // R6 runner 方言：line-defense-failed / overflow-skipped 直接落 verdict 到 EVAL_VERDICTS
@@ -837,7 +841,6 @@ async function runOne(fixture, ablation, opts) {
     await mkdir(artifactDir, { recursive: true });
     await writeFile(join(artifactDir, 'stdout.txt'), stdout, 'utf8');
     await writeFile(join(artifactDir, 'stderr.txt'), stderr, 'utf8');
-    await writeFile(join(artifactDir, 'result.json'), JSON.stringify(result, null, 2), 'utf8');
     if (externalVerify) {
       let wsListing = '';
       try {
@@ -857,6 +860,8 @@ ${externalVerify.tail || ''}`, 'utf8');
       stdoutTail: relative(ROOT, join(artifactDir, 'stdout.txt')),
       traceJson: relative(ROOT, join(artifactDir, 'result.json')),
     };
+    // result.json 在 artifacts 字段赋值后写盘——否则落盘内容缺 artifacts 引用（stash 恢复时一并带回的顺序修复）
+    await writeFile(join(artifactDir, 'result.json'), JSON.stringify(result, null, 2), 'utf8');
 
   } catch (err) {
     result.durationMs = tick();

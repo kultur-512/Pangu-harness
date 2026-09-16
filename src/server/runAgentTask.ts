@@ -56,6 +56,8 @@ export interface RunResult {
   changedFiles?: string[];
   /** R3: 验证命令（从 trajectory bash 步骤提取） */
   verifyCmd?: string[];
+  /** R6 评测观测：本次请求实际执行的 rollout 次数。当前执行器为单 rollout。 */
+  attemptCount?: number;
   /**
    * 本任务触发过溢出截断重试（loop context_overflow → trim → retry）。
    * 评测 A 档的机器可读正源——RunCommand 打 `[ctx] contextOverflowCompacted=1`
@@ -307,6 +309,7 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      attemptCount: 1,
       ...(partialText ? { partialText } : {}),
       ...(answerText ? { answerText } : {}),
     });
@@ -318,6 +321,8 @@ export async function runAgentTask(
       budgetReport: result.budgetReport,
       changedFiles,
       verifyCmd,
+      // R6 评测观测：单次 solveIssue 调用即一次真实 rollout。
+      attemptCount: 1,
       contextOverflowCompacted: (result as any).contextOverflowCompacted === true,
       // 0.8.2 证据链透出：headless/one-shot 宿主（RunCommand/eval runner）可从此
       // 读取逐任务注入账本——此前注入审计只在 rollout context 事件里，stdout 不可见。
@@ -401,6 +406,7 @@ export async function finalizeTaskMemory(
     cards: cards.length,
     verified: verifiedIds.length,
     verifiedCardIds: verifiedIds,
+    attemptCount: 1,
     refined: { added: cards.length, merged: 0, written: cards.length, capped: 0 },
   });
 }

@@ -155,6 +155,7 @@ const command: Command = {
           const audit = {
             injectedCardIds: Array.isArray(result.injectedCardIds) ? result.injectedCardIds : [],
             verifiedCardIds: Array.isArray(memFinalized?.verifiedCardIds) ? memFinalized.verifiedCardIds : [],
+            attemptCount: Number.isInteger(result.attemptCount) ? result.attemptCount : undefined,
             refined: memFinalized?.refined ?? { added: 0, merged: 0, written: 0, capped: 0 },
           };
           process.stdout.write('memory.finalized: ' + JSON.stringify(audit) + '\n');
