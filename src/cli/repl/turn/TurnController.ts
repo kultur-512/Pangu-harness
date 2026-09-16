@@ -393,7 +393,9 @@ export async function runTaskViaSse(ctx: TurnContext, task: string, bridge?: any
       // R1（0.8.1）：正文改读 RunResult.answerText（runAgentTask 从轨迹末步带出）。
       // 旧实现读 (r as any).bestTrajectory——RunResult 无此字段，恒 undefined →
       // chat/answered 正文三端不可见（lock 测试 mock 漂移掩盖成假阴性）。
-      const answerText = stopReason === 'answered' ? String((r as any)?.answerText ?? '') : '';
+      // 2026-09-16：不再按 stopReason 门控——execution 终局的末步总结正文同样
+      // 落 turn.result，供 chat 追问的【最近对话】段取用（工具任务后追问有上下文）。
+      const answerText = String((r as any)?.answerText ?? '');
       const turn = {
         id: Date.now().toString(36),
         timestamp: Date.now(),

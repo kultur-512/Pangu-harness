@@ -357,12 +357,14 @@ export async function runAgentTask(
 
     // R1（0.8.1）：answered 正文带出——chat 直答正文在轨迹末步 result 里，
     // 此前 RunResult 不携带 → TurnController/RunCommand 三端全部拿不到正文。
+    // 2026-09-16 放宽：不再限定 answered——execution 终局（completed/
+    // no-verification）模型常输出总结/结论，chat 追问的【最近对话】段
+    // （buildChatRecentTurnsBlock 读 result.answerText）依赖它；此前工具任务
+    // 后追问"这些文件是干嘛的"，模型因助手行为空而零上下文硬答（真机实证）。
     const lastStepResult = trajSteps.length > 0
       ? String(trajSteps[trajSteps.length - 1]?.result ?? '')
       : '';
-    const answerText = result.bestTrajectory?.stopReason === 'answered' && lastStepResult.trim()
-      ? lastStepResult
-      : undefined;
+    const answerText = lastStepResult.trim() ? lastStepResult : undefined;
 
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
     // 此前产卡门只认 completed（工程任务）——纯对话的事实永远不入记忆，
