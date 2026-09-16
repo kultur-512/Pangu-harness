@@ -15,7 +15,7 @@ import { ToolCallGuardrailController, type ToolCallGuardrailOptions } from './gu
 import { UniversalToolCallAdapter, ToolCallFormat } from '../adapter/UniversalToolCallAdapter.js';
 import { ToolCall, inferToolCategory } from '../types/toolCall.js';
 import { BenchmarkProfiles, BenchmarkType } from '../benchmarks/BenchmarkProfiles.js';
-import { TierConfig, TierRegistry, DEFAULT_TIER, CritiqueFrequencySpec, IronLawInjectionLevel, Tier } from '../tiers/TierConfig.js';
+import { IronLawInjectionLevel } from '../tiers/TierConfig.js';
 import { classifyApiError } from '../model/errorClassify.js';
 import type { StaticAnalysisResult } from '../review/Reviewer.js';
 import type { ChatMessage, TurnStopReason } from '../cli/repl/types.js';
@@ -64,7 +64,6 @@ export interface LoopStep {
   toolCalls: ToolCall[];
   verificationResult: string;
   verificationSignal: VerificationSignal;
-  critique?: string;
   detectedFormat?: ToolCallFormat;
   didRealVerification?: boolean;
   readBeforeWriteViolation?: boolean;
@@ -97,8 +96,6 @@ export interface VerifyCritiqueLoopOptions {
   benchmarkType?: BenchmarkType | string;
   /** 是否高纪律模式，等同于 !practicalMode 的高纪律路径。 */
   isStrongMode?: boolean;
-  /** 【休眠】critique 机制已摘除（archive/2026-09-05-removals/），字段仅为兼容保留、运行期忽略 */
-  critiqueFrequency?: CritiqueFrequencySpec;
   /** 纪律规则注入强度 */
   ironLawInjectionLevel?: IronLawInjectionLevel;
   /** tier 名称 */
@@ -179,8 +176,7 @@ export class VerifyCritiqueLoop {
   private isStrongMode?: boolean;
   private signal?: AbortSignal;
   private profile = BenchmarkProfiles.get('swe');
-  // critique 频率 / 纪律规则注入强度 / tier 名称
-  private critiqueFrequency?: CritiqueFrequencySpec;
+  // 纪律规则注入强度 / tier 名称
   private ironLawInjectionLevel?: IronLawInjectionLevel;
   private tierName?: string;
   /** 原始静态分析结果 */
@@ -236,8 +232,7 @@ export class VerifyCritiqueLoop {
     this.searchIntentFlag = options.searchIntent === true;
     this.benchmarkType = options.benchmarkType ?? this.taskStyle;
     this.profile = BenchmarkProfiles.get(this.taskStyle ?? this.benchmarkType);
-    // 接收 critique 频率、纪律规则注入强度、tier 名称
-    this.critiqueFrequency = options.critiqueFrequency;
+    // 接收纪律规则注入强度、tier 名称
     this.ironLawInjectionLevel = options.ironLawInjectionLevel;
     this.tierName = options.tier;
     // 静态分析
@@ -1073,9 +1068,7 @@ export class VerifyCritiqueLoop {
         const looksLikeRealPass =
           (lower.includes('exit_code:0') && (verificationFeature || verificationMarker)) ||
           lower.includes('all_tests_passed') ||
-          lower.includes('verification: pass') ||
-          (lower.includes('pass') && lower.includes('5')) || // 针对我们的加法例子
-          lower.includes('正确') && (lower.includes('5') || lower.includes('pass'));
+          lower.includes('verification: pass');
 
           if (looksLikeRealPass) {
             didRealVerificationThisStep = true;
@@ -1130,18 +1123,12 @@ export class VerifyCritiqueLoop {
         }
       }
 
-      // critique 自我批判已摘除（archive/2026-09-05-removals/）——
-      // 每次触发是一次额外完整模型调用，且打分器归档后其打分激励不复存在。
-      // LoopStep.critique 恒 undefined；buildCritiquePrompt/上下文装配保留为休眠代码。
-      const critique: string | undefined = undefined;
-
       const step: LoopStep = {
         stepNumber: stepNum,
         reasoning,
         toolCalls,
         verificationResult,
         verificationSignal: signal,
-        critique,
         detectedFormat,
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
@@ -1162,15 +1149,6 @@ export class VerifyCritiqueLoop {
       // consecutive-failures / max-steps 决定。
       if (signal === 'PASS' || this.isPassTail(verificationResult)) {
         this.hasPerformedRealVerification = true;
-      }
-
-      // critique 文本单独不能终止任务（#2：critique 已摘除，本判定为休眠保留——
-      // LoopStep.critique 恒 undefined，条件永假）
-      if (critique && /任务已解决|已修复|问题已解决|完全正确|验证通过/i.test(critique)) {
-        // 必须本步有真实验证（PASS 信号或 ALL_TESTS_PASSED 尾标）才允许终止
-        if (signal === 'PASS' || this.isPassTail(verificationResult) || didRealVerificationThisStep) {
-          done = true;
-        }
       }
 
       const failureLimit = highRigor ? this.maxConsecutiveFailures + 2 : this.maxConsecutiveFailures;
@@ -1258,7 +1236,6 @@ export class VerifyCritiqueLoop {
     // 按 tier + practical 给出合理上限，但确保结构化块完整
     const planLimit = isPractical ? 200 : 300;
     const thinkLimit = isPractical ? 200 : 300;
-    const critiqueLimit = isPractical ? 150 : 200;
     // 结果截断改"超阈值才剪"——≤4000 字符原样保留（read_file 输出
     // 常超旧上限 200-300，静默剪掉会让模型误以为文件不完整）；超限保留
     // 头 2500 + 尾 800 + 显式修剪标记。
@@ -1291,17 +1268,13 @@ export class VerifyCritiqueLoop {
           ? `\n[⚠ 上一轮结果过长已修剪中段（保留头 ${RESULT_HEAD} + 尾 ${RESULT_TAIL} 字符）。若需要完整内容（尤其 read_file 输出），请用 read_file 重新读取目标文件（输出中会给出 offset 续读位置）。]`
           : '';
         const thinking = safeSlice(s.reasoning.thinking || '', 0, thinkLimit);
-        const critique = s.critique
-          ? safeSlice(s.critique, 0, critiqueLimit)
-          : 'N/A';
 
         // 包含完整的结构化块（plan + verify + result）便于长链推理
         const base = `Step ${s.stepNumber} [${s.verificationSignal}]${iron ? ' ['+iron+']' : ''}:
 Thinking: ${thinking}
 Plan: ${plan}
 Verify: ${verify}
-Result: ${resultText}${resultNote}
-Critique: ${critique}`;
+Result: ${resultText}${resultNote}`;
 
         return isPractical ? base : base + `\nFormat: ${s.detectedFormat ?? 'unknown'}`;
       });

@@ -81,9 +81,6 @@ const command: Command = {
             if (event.type === 'step') {
               ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
             }
-            if (event.type === 'critique') {
-              ctx.renderer.writeLine(ctx.renderer.color('Critique: ' + event.critique, 'yellow'));
-            }
 
             // Forward to ink bridge for rich UI
             const b = inkBridge;

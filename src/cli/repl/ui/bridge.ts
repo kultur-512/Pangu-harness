@@ -159,7 +159,6 @@ export function createBridge(
   };
 
   const pushCritique = (c: any) => {
-    pushFeed({ type: 'critique', stepNumber: c.stepNumber || 0, critique: c.critique } as any);
   };
 
   const pushTool = (t: any) => {

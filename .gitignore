@@ -76,3 +76,9 @@ scripts/eval/longmemeval-90/ws/
 # 评测运行时工作区与产品活记忆（运行时状态不入库）
 scripts/eval/longmemeval-*/tmp-*/
 /memory.json
+
+# ZCode 会话工作目录（工具运行时产物，不入库）
+.zcode/
+
+# hermes 对比 harness（独立实验脚本+运行时产物，不入主流水线）
+scripts/eval/longmemeval-hermes/

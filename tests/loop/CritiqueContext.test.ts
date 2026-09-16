@@ -61,7 +61,6 @@ describe('fix-#10 buildHistory truncation marker (v2, T2#9 契约)', () => {
       practicalMode: false,   // high tier → resultLimit = 300
       isStrongMode: true,
       maxSteps: 2,
-      critiqueFrequency: { periodicEvery: 1, onProblem: true, longNoVerifyThreshold: 1, skipFirstN: 0 }
     });
 
     await loop.run('Issue: add maxDepth\n\nExploration: {}');
@@ -85,4 +84,4 @@ describe('fix-#10 buildHistory truncation marker (v2, T2#9 契约)', () => {
 // P0.5-A CritiqueContext ordering（2 例）已随 critique 机制摘除归档
 // （archive/2026-09-05-removals/，2026-09-05）：它们驱动 loop.run() 断言 critique
 // prompt 装配顺序，而 critique 运行期生成已不存在。休眠的
-// StructuredReasoner.buildCritiquePrompt 恢复时随归档一起恢复用例。
+// StructuredReasoner.buildCritiquePrompt 已随死代码收口整体删除，用例不再恢复。

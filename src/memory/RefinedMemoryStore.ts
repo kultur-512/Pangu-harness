@@ -11,11 +11,13 @@ import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
 import { normalizeRelPath } from './trajectoryFiles.js';
 import { atomicWriteFileSync } from '../utils/atomicFile.js';
-// B3 混合排序的语义底座（embed.js 零依赖、零副作用）。申报：原设想"动态
+// B3 混合排序的相似度底座（embed.js 零依赖、零副作用）：默认是字符 n-gram 哈希
+// 词面扩展（词面 + 字符 n-gram 哈希，非真语义）；真 embedding 经
+// PANSHA_EMBEDDING=remote 可插拔，缺配置/异常自动降级纯词面。申报：原设想"动态
 // import('./embed.js')"——但 loadFiltered 必须保持同步签名（不传 queryText 的
 // 现有调用方行为逐字节不变是硬约束，改成 async 会破坏全部同步消费方），import()
 // 是异步的，故降为静态 import + 惰性实例化（provider 仅在 semantic 激活时创建）。
-import { cosineSimilarity, embedCards, embedQuery, createDefaultProvider } from './embed.js';
+import { cosineSimilarity, embedCards, embedQuery, createConfiguredProvider } from './embed.js';
 // B9 相对时间检索信号（ROADMAP B9）：查询时间表达 → [start,end) 区间，卡
 // factDate 落入则 relevance+1。"今天"经 resolveToday()（尊重 PANSHA_TODAY，
 // 与评测锚定同源）；解析器零依赖纯函数，异常由接线处 try/catch 兜底。
@@ -152,7 +154,10 @@ function normalizeFilterKey(filter: LoadFilter): string {
   ].join('&');
 }
 
-// ==================== B3 混合排序（词面 + 语义融合） ====================
+// ==================== B3 混合排序（词面 + 字符 n-gram 哈希扩展） ====================
+// 诚实口径：默认 provider 是字符 n-gram 哈希（词面扩展，非真语义 embedding）。
+// 真 embedding 经 PANSHA_EMBEDDING=remote 可插拔；缺配置/异常由下方 try/catch
+// 自动降级纯词面（旧公式 0.7×eff + 0.3×rel）。
 
 export type SemanticEmbedder = (texts: string[]) => number[][];
 
@@ -180,7 +185,10 @@ export function hybridScore(eff: number, maxEff: number, rel: number, sem: numbe
 /**
  * 对候选集计算查询余弦：返回 Map<cardId, cos>。
  * 走 embed.js 产品路径（embedCards 进程级增量缓存）；测试可注入 override。
- * 任何异常向上抛出，由 loadFiltered 捕获后回退纯词面。
+ * 默认 provider 为词面 n-gram（createConfiguredProvider）；PANSHA_EMBEDDING=remote
+ * 当前同步路径仍回退词面 n-gram（RemoteEmbeddingProvider.embed 内持
+ * LocalNGramHashProvider 兜底），真远程 embedding 待 async 检索路径。任何异常
+ * 向上抛出，由 loadFiltered 捕获后回退纯词面。
  */
 function computeSemanticScores(cards: RefinedMemoryCard[], queryText: string): Map<string, number> {
   const out = new Map<string, number>();
@@ -194,7 +202,7 @@ function computeSemanticScores(cards: RefinedMemoryCard[], queryText: string): M
     });
     return out;
   }
-  const provider = createDefaultProvider();
+  const provider = createConfiguredProvider();
   const qv = embedQuery(queryText, provider);
   const vecs = embedCards(cards.map((c) => ({ id: c.id, summary: String(c.summary ?? '') })), provider);
   for (const c of cards) {
@@ -605,7 +613,9 @@ export class RefinedMemoryStore {
   loadFiltered(filter: LoadFilter = {}): RefinedMemoryCard[] {
     const file = this.load();
     const now = filter.now ?? Date.now();
-    const tierName = filter.tier ? (TierRegistry.isTier(filter.tier as string) ? filter.tier as Tier : undefined) : undefined;
+    const tierName = filter.tier && TierRegistry.isTier(String(filter.tier))
+      ? TierRegistry.normalize(String(filter.tier))
+      : undefined;
 
     // 规范化老卡片（无 memoryCategory 时按 kind 补默认）
     const normalized = file.cards.map(c => {
@@ -624,23 +634,6 @@ export class RefinedMemoryStore {
       } as RefinedMemoryCard & { referencedFiles?: string[] };
     });
 
-    // Tier 可见性规则（architecture 始终可见）
-    const isVisible = (t: Tier | undefined, mc: MemoryCategory): boolean => {
-      if (mc === 'architecture') return true;
-      if (!t) return true;
-      switch (t) {
-        case 'quick': return mc === 'failure';
-        case 'standard': return mc === 'failure' || mc === 'implementation';
-        case 'high': return mc === 'failure' || mc === 'implementation' || mc === 'insight';
-        case 'max':
-        case 'ex':
-        case 'pangu':
-          return true;
-        default:
-          return true;
-      }
-    };
-
     // 对抗评审修正（第二轮攻击1c）：归档卡必须退出注入——否则 merge 软删后
     // 原卡与合并卡同时注入，"合并"净增重复内容，中期遗忘机制结构失效。
     const activeCards = normalized.filter(c => (c as any).status !== 'archived');
@@ -650,10 +643,12 @@ export class RefinedMemoryStore {
       if (filter.taskStyle && c.taskStyle !== 'all' && c.taskStyle !== filter.taskStyle) {
         return false;
       }
-      // 档位可见性（使用 memoryCategory）
-      const mc = (c.memoryCategory || 'general') as MemoryCategory;
-      if (tierName && !isVisible(tierName, mc)) {
-        return false;
+      // 档位门禁（applicableTiers）：空数组 = 全档可见；非空且不含当前档 = 排除
+      if (tierName) {
+        const tiers = (c as any).applicableTiers;
+        if (Array.isArray(tiers) && tiers.length > 0 && !tiers.includes(tierName)) {
+          return false;
+        }
       }
       return true;
     });

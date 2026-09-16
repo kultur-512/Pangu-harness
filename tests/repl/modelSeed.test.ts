@@ -57,8 +57,8 @@ test('envTier parses PANSHA_TIER（六档 + 别名）and rejects invalid values'
     assert.equal(envTier(), 'max');
     process.env.PANSHA_TIER = 'PANGU';
     assert.equal(envTier(), 'pangu');
-    process.env.PANSHA_TIER = 'rapid'; // 旧别名 → 合法（TierRegistry 解析为 quick）
-    assert.equal(envTier(), 'rapid');
+    process.env.PANSHA_TIER = 'rapid'; // 旧别名 → 归一化为规范 tier（quick）
+    assert.equal(envTier(), 'quick');
     process.env.PANSHA_TIER = 'yolo';
     assert.equal(envTier(), undefined);
   } finally {

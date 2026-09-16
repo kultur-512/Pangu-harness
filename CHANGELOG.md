@@ -3,6 +3,16 @@
 > **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1405 例全绿（1404 通过 + 1 跳过）**（concurrency=4，CI 已挂 test 门）+ eval 冒烟 A/B/C/C4 全过 · **90 题 LongMemEval 交付口径**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 23/90 为 1B 基线（详见 `scripts/eval/longmemeval-90/COMPARE-90.md`） · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
 
+## 死代码收口（2026-09-15）
+
+档位定位收口 + 多 rollout/预算限流空壳与 critique/FailureMemory 死代码清理：
+
+- **high 档定位**：实用优先（日常主力，轻纪律 low 注入）；高纪律模式需用 `/tier max` / `/tier ex` / `/tier pangu`。
+- **单 rollout 诚实口径**：当前为单 rollout、预算仅事后报告（不截断执行）。
+- 删除 `BudgetBehavior`/`budgetBehavior`/`maxRollouts`/`parallelRollouts` 空壳字段；`BudgetReport` 删除 `triggeredSoftLimit`/`triggeredDegradation`。
+- 删除 critique 死代码（`buildCritiquePrompt` / `LoopStep.critique` / critique 渲染点）与 `FailureMemory`/`GenerativeTestEngine` 类（仅保留 `FailureCategory` 类型）。
+- `looksLikeRealPass` 删除 benchmark 定向 hack（硬编码"加法例子"数字判定），保留通用验证特征判定。
+
 ## 0.8.7 token 口径收口（2026-09-15 · zhaiyuanhao1）
 
 token 估算器口径审查（对照目标模型中文原生 tokenizer 实测 token/字 比）→ 两包并行实现 + 子代理 review（9 项全 pass、无阻塞缺陷）→ 全量 1383 例绿（1382 通过 + 1 跳过）。

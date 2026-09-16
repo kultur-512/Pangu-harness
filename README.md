@@ -57,6 +57,12 @@ status / memory / review / config / init / history / trace / session /
 workspace / feature / tree / clear / help / exit
 ```
 
+## 档位定位
+
+- **high（默认）**：实用优先（日常主力，轻纪律 low 注入）——常规开发默认档，token 更省。
+- **高纪律模式**：需用 `/tier max` / `/tier ex` / `/tier pangu`（重纪律 + 验证密集）。
+- 当前为单 rollout（不并行）、预算仅事后报告（不截断执行）。
+
 ## 测试与验证
 
 ```bash

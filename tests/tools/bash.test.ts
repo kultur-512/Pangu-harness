@@ -18,20 +18,14 @@ function fakeTierConfig(tier: string = 'high'): TierConfig {
   return {
     tier,
     typicalUseCase: 'test',
-    maxRollouts: 1,
     maxStepsPerRollout: 5,
-    critiqueFrequency: { periodicEvery: 0, onProblem: true, longNoVerifyThreshold: 0, skipFirstN: 0 },
     ironLawInjectionLevel: 'high',
     maxConsecutiveFailures: 3,
     verifyFirstBias: true,
-    explorationDepth: 2,
     memoryLoadLevel: 'none',
-    budgetBehavior: 'soft_limit',
-    parallelRollouts: 1,
-    userConfirmationRequired: false,
     isStrongMode: true,
-    anchorMax: 4,
-  } as unknown as TierConfig;
+    autoPullMemory: true,
+  };
 }
 
 function setStdoutTty(v: boolean | undefined): void {
