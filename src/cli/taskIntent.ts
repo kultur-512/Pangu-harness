@@ -21,7 +21,7 @@ const EXECUTION_VERBS =
   /(创建|修改|删除|修复|重构|实现|添加|新增|优化|测试|构建|编译|安装|部署|生成|运行|读取|写入|执行|完成|继续|接着|处理|搞定|收尾|补全|列出|列举|搜索|查找|查看|改|写|建|加|删|跑|测)|(\b(?:build|test|compile|install|deploy|generate|refactor|implement|create|fix|add|delete|remove|run|write|read|edit|change|update|continue|finish|resume|list|search|find)\b)/i;
 
 /** 文件后缀 token（无执行动词时触发 search）。 */
-const FILE_EXT_RE = /\b[A-Za-z0-9_.\-/\\]+\.(?:ts|tsx|js|jsx|json|md|py|go|rs|java|cpp|c|h|txt|yaml|yml|toml|sh|css|html|sql)\b/i;
+const FILE_EXT_RE = /\b[A-Za-z0-9_.\-/\\]+\.(?:ts|tsx|js|jsx|json|md|py|go|rs|java|cpp|c|h|txt|yaml|yml|toml|sh|css|html|sql)\b|\b(?:txt|json|md|csv|yaml|yml|log|ini|cfg|ts|js|py)\s+(?:文件|文件名|配置|格式)\b/i;
 
 /** @path 引用（视为执行/搜索素材）。 */
 const AT_PATH_RE = /@[^\s"'`]+/;
@@ -40,7 +40,7 @@ const EN_INTERROGATIVE_RE = /^(what|when|where|who|whom|whose|which|why|how)\b/i
 
 /** R7（0.8.2）：第一人称经历回忆（中英）——问的是用户自己的历史，
  *  属对话问答（个人化记忆场景），不进执行循环。 */
-const FIRST_PERSON_RECALL_RE = /(我(的|曾|有|在|什么时候|哪个|多少|第一次|最近))|\b(did|do|have|has)\s+i\b|\b(my|our)\s+(first|last|new|old|current)\b/i;
+const FIRST_PERSON_RECALL_RE = /(我(的|曾|有|在|什么时候|多少|第一次|最近)|我哪个时候|我哪个阶段)|\b(did|do|have|has)\s+i\b|\b(my|our)\s+(first|last|new|old|current)\b/i;
 
 /** R5（0.8.1）：文创/文字润饰类宾语——写诗/优化表达等纯文本创作（无文件参照时 → chat 直答）。 */
 const TEXT_CRAFT_RE = /(一首|诗|歌词|对联|谜语|故事|小说|散文|作文|文案|表达|措辞|润色)/;
