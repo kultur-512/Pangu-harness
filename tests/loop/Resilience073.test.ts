@@ -94,9 +94,9 @@ describe('0.7.3 T2#5 answered 空转防呆（execution 意图）', () => {
       { maxSteps: 6, isStrongMode: true, practicalMode: false } // execution 意图（isStrongMode）
     );
     const out = await loop.run('修复 bug');
-    assert.equal(out.stopReason, 'answered', '空转有正文 → answered（nudge 阶梯已摘除）');
-    assert.equal(out.success, true, 'answered 一律计 success（T6 假成功防线摘除）');
-    assert.equal(out.steps.length, 1, '一步即停，不再注入格式提醒重试');
+    assert.equal(out.stopReason, 'answered', '空转有正文 → answered（纠偏一次后尊重）');
+    assert.equal(out.success, true, 'answered 一律计 success');
+    assert.equal(out.steps.length, 2, '首次空谈注入纠偏重试一步，二次空谈尊重');
   });
 
   it('非 execution 意图（practical 弱模式）保持旧行为：有正文 1 步 answered', async () => {

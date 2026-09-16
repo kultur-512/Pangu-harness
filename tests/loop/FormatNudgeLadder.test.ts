@@ -33,8 +33,11 @@ describe('空转步语义（nudge 阶梯摘除后）', () => {
     });
     const out = await loop.run('修复 bug');
 
-    assert.equal(model.promptsSeen.length, 1, '一步即停，不再注入两级引导');
-    assert.equal(out.steps.length, 1);
+    // 2026-09-16 窄版纠偏：execution 意图 + 全程零工具 + 首次空谈 → 注入一次
+    // 纠偏重试；二次仍空谈 → 尊重 answered。
+    assert.equal(model.promptsSeen.length, 2, '纠偏一次后二次空谈尊重 answered');
+    assert.equal(out.steps.length, 2);
+    assert.ok(model.promptsSeen[1].includes('需要实际行动'), '第 2 次 prompt 携带纠偏提示');
     assert.equal(out.stopReason, 'answered', '空转有正文 → answered');
     assert.equal(out.success, true, 'answered 一律计 success（T6 摘除）');
   });

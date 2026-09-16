@@ -273,6 +273,13 @@ export class VerifyCritiqueLoop {
   /** 上一步响应被 max_tokens 截断，下一步 prompt 注入精简提示。 */
   private pendingTruncationNotice = false;
   /**
+   * 执行类任务 + 全程零工具调用 + 空转有正文 → 首次注入一次纠偏提示
+   * （"只给建议不动手"的假完成，2026-09-16 真机：修测试任务第 1 步就
+    * answered）。一次性——二次仍零工具则尊重 answered（防死循环）。
+   */
+  private pendingActionNudge = false;
+  private actionNudgeUsed = false;
+  /**
    */
   /** 连续 NO_TOOL_CALLS 步数（喂 guardrails 作格式停滞信号：只计数上报，不设硬闸——maxSteps 已兜底）。 */
   private consecutiveNoToolCalls = 0;
@@ -669,6 +676,12 @@ export class VerifyCritiqueLoop {
         this.pendingOverflowNotice = false;
         prompt += '\n\n【上下文长度已超限——历史已溢出截断（仅保留首尾步骤）。请精简输出继续当前任务；如需背景信息请用 read_file/glob 重新获取，不要复述历史。】';
       }
+      // 执行类零工具纠偏——一次性提示重试（2026-09-16 真机：修测试任务
+      // 第 1 步就零工具 answered 假完成）。
+      if (this.pendingActionNudge) {
+        this.pendingActionNudge = false;
+        prompt += '\n\n【需要实际行动】当前是执行类任务，但你至今没有调用任何工具，只给了建议。请立即开始实际操作：用 read_file 查看相关文件、用 bash 运行测试或命令，实际修改并验证后才能报告完成。';
+      }
 
       // 构建 prompt 时根据 practicalMode + 任务风格调整纪律规则/格式注入强度
       // 高纪律模式设计目标：工程强 + 分数强
@@ -1049,9 +1062,21 @@ export class VerifyCritiqueLoop {
         // nudge 逼出的工具调用是噪音动作。空转无正文仍记 no-verification。
         const hasText = this.hasUserFacingText(rawContent);
         const truncatedResponse = !!(rawOrObj as any)?.truncated;
+        const executionIntent = (this.executionIntentFlag ?? (!!this.isStrongMode
+          || String(this.taskStyle ?? this.benchmarkType ?? '') === 'execution'))
+          || this.searchIntentFlag;
+        // 2026-09-16 二次修复（真机：修测试任务第 1 步就零工具"answered"）：
+        // execution 意图 + 全程零工具 + 首次空谈 → 注入一次纠偏提示重试；
+        // 二次仍零工具 → 尊重 answered（防循环）。有工具工作的总结（只读
+        // 任务 glob/read 后总结）不触发——那是正确完成。
+        const everTools = this.steps.some((s) => s.toolCalls.length > 0);
         if (truncatedResponse) {
           this.pendingTruncationNotice = true;
           // done 保持 false——截断响应继续下一步
+        } else if (hasText && executionIntent && !everTools && !this.actionNudgeUsed) {
+          this.actionNudgeUsed = true;
+          this.pendingActionNudge = true;
+          // done 保持 false——纠偏后重试一步
         } else {
           done = true;
           stopReason = hasText ? 'answered' : 'no-verification';

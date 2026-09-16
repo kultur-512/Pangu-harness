@@ -358,7 +358,7 @@ describe('0.8 P2 chaser 接线（messages 通道）', () => {
       assert.equal(chatCalls, 0, 'off 模式零 messages 调用');
       // 2026-09-16 success 语义摘除：execution 意图文本空转有正文 → 一步
       // answered 终局（nudge 阶梯已摘除，不再两级引导）。
-      assert.equal(prompts.length, 1, '空转有正文 → 一步 answered 终局');
+      assert.equal(prompts.length, 2, '首次空谈注入纠偏重试，二次空谈终局');
       assert.ok(prompts[0].includes('修复 login 页面'), 'off 模式任务文本走 issueDescription');
       assert.ok(!prompts[0].includes('STABLE-SEG'), 'off 模式 segments 不进入 prompt');
       assert.equal(res.bestTrajectory?.stopReason, 'answered');
