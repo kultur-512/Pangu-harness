@@ -2,8 +2,8 @@
 
 > 命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》· 国产操作系统软件组
 > 产品：烛龙（Zhulong）· 内部代号 Panshalach（盤沙拉克）
-> 版本基线：v0.8.0-rc（0.7 终止语义重构/意图前移/记忆落定 → 0.8 turn 四模块会话壳 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链三缺陷治理 + 身份画像通用化）
-> 配套文档：[ARCHITECTURE.md](ARCHITECTURE.md)（架构）· [MEMORY-DESIGN.md](MEMORY-DESIGN.md)（记忆子系统）· [DEPLOY-CN.md](DEPLOY-CN.md)（部署）· [EVALUATION.md](EVALUATION.md)（评测，数据位为诚实占位）
+> 版本基线：v0.8.8（0.7 终止语义重构 → 0.8 turn 四模块会话壳 + messages 双通道 + stable/volatile 三段 prompt + 执行层七项 + CC 级交互 + 记忆链治理 → 0.8.2-0.8.8 压缩对抗审查/四路子系统深审/记忆架构优化/tier 体系收口与记忆门禁改造；分版详录见 [CHANGELOG.md](../../CHANGELOG.md)）
+> 配套文档：[ARCHITECTURE.md](ARCHITECTURE.md)（架构）· [MEMORY-DESIGN.md](MEMORY-DESIGN.md)（记忆子系统）· [DEPLOY-CN.md](DEPLOY-CN.md)（部署）· [EVALUATION.md](EVALUATION.md)（评测，§4 已回填 2026-09-16 真实 openPangu 数据）
 > 事实纪律：本文只声明已在代码中落地的能力；未完成项与待验证项显式标注，评测数据一律以真实 openPangu 运行回填（见 §6）。
 
 ## 1. 项目概述（≤1000 字）
@@ -48,12 +48,15 @@
 
 本地（Windows/Linux/macOS）、远端 OpenAI 兼容网关、昇腾 310P/910（vLLM-ascend / MindIE）、麒麟等国产 OS 的从零到一路径、两级配置全集、`PANSHA_*` 环境变量表与常见问题，见 **[DEPLOY-CN.md](DEPLOY-CN.md)**。依赖基线：Node ≥18（实测 22）、零运行时依赖（富 UI 为 optionalDependencies，非 TTY 自动降级）。
 
-## 6. 效果评测（数据位保留占位）
+## 6. 效果评测（2026-09-16 真实数据已回填）
 
 评测方法、基线档位（A 无记忆 / B 记忆卡 / C 全能力 + C4 语义检索消融）、任务族（T1 约束保持 / T2 跨文件 / T3 长文档 / T4 中断续接 / T5 压缩后保持）与指标定义见 **[EVALUATION.md](EVALUATION.md)**。
 
-> **数据状态声明**：§4 结果表当前全部为占位，仅真实 openPangu 运行（`scripts/eval/run-eval.mjs`，评测基建接入中）后回填；任何合成/演示数据不虚报为真模型结果。本文不预填任何数字。
+> **数据状态声明（2026-09-16）**：真实 openPangu（openpangu-embedded-1b-i1 本地端点）已跑两线——
+> 1. **自建消融（EVALUATION.md §4）**：T1-T5 × A/B/C/C4 全量 20 runs（0 通过 / 18 失败 / 2 不适用）。防线验证正常（A 档 0 注入、B/C/C4 档 seed 注入非空）；1B 模型未通过任务族约束（约束遵循/跨文件重构对 1B 超出能力边界），T3/T5 档 A 档溢出在 1B 端点未触发防护证据（如实标 not_applicable，7B 端点复验为后续项）；逐题质量注记随表。
+> 2. **外部锚点 LongMemEval-90（COMPARE-90.md）**：**ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）** · ZL×7B 31/90（本地最优）· ZL×1B 六档 20-27/90（档位门禁修复后）。temporal 题型 8/15 反超 CC×M3——时间锚定（sessionDate/factDateText/"今天是 X"）为跨模型稳定增益。
+> 本文不预填任何表格数字，全部指向上述两份数据文件。
 
 ## 7. 总结与展望
 
-已完成：0.6.0–0.7.x 把多模型接入、记忆 v3（二态/衰减锚/账本）、终止语义重构（判官摘除 + 三态 + 意图分类 + AbortSignal）落到主线；0.8 周期完成换地基——turn 四模块会话壳、messages 双通道协议、stable/volatile 三段 prompt、执行层七项强化、Claude Code 级交互手感、记忆链三缺陷治理（对抗性审计驱动）、身份画像通用化，全套自动化测试（合并收口后基线 1008 例）以 `npm test` 实际输出为准。进行中：评测基建（R6）真机数据回填、真机 openPangu 端到端验证与资源实测。后续：语义检索 C4 消融、跨任务连续 messages 会话、不对称压缩、[M1] 卡号引用实验（7B）、昇腾/麒麟真机部署验证——路线与验收门见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。
+已完成：0.6.0–0.7.x 把多模型接入、记忆 v3（二态/衰减锚/账本）、终止语义重构（判官摘除 + 三态 + 意图分类 + AbortSignal）落到主线；0.8 周期完成换地基——turn 四模块会话壳、messages 双通道协议、stable/volatile 三段 prompt、执行层七项强化、Claude Code 级交互手感、记忆链三缺陷治理（对抗性审计驱动）、身份画像通用化；0.8.2-0.8.8 完成压缩对抗审查、四路子系统深审（3 P0 + 12 P1 全修）、记忆架构优化（时间锚定/宽进严排/混合检索）、tier 体系收口与记忆门禁改造；全套自动化测试 **1446 例**（`npm test` 实际输出为准，CI 已挂 test 门）。评测线：LongMemEval-90 六格完成（ZL×M3 47/90 旗舰）+ 自建 T1-T5 消融真机 20 runs 回填。待办：真机 openPangu 7B 级验证与资源实测、昇腾/麒麟真机部署验证。后续：语义检索 C4 注入融合、跨任务连续 messages 会话、不对称压缩、[M1] 卡号引用实验（7B）——路线与验收门见 [ROADMAP-NEXT.md](ROADMAP-NEXT.md)。

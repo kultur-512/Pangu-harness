@@ -1,12 +1,13 @@
-# Panshalach / 烛龙 Zhulong —— 路线与未完成项（2026-09-12 收口版）
+# Panshalach / 烛龙 Zhulong —— 路线与未完成项（2026-09-16 更新）
 
 > 内部代号 盤沙拉克 Panshalach / 外部产品 烛龙 Zhulong。命题：华为《基于 openPangu 的记忆增强智能体架构设计与优化》。交付：**9/24**。
 > 本文档只维护两件事：**项目当前成果状态**与**未完成项**。已销项历史不再列表——分版本成果见 [CHANGELOG.md](../../CHANGELOG.md)，设计过程文档见 `archive/`（2026-09-05-* 摘除装置与过程方案、2026-09-12-process-docs/ 迭代方案与归档说明）。
 
-## 当前成果状态（2026-09-12 合并收口）
+## 当前成果状态（2026-09-16）
 
-- **版本 v0.8.0-rc**，四分支已全部合入 develop（`5105ebf`）：主线 0.8.0-rc（turn 四模块会话壳 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七件套 + CC 级交互四件套 + 记忆链三缺陷治理 + 身份画像通用化）+ 王佐 R4/R5 挂载（/memory events、TaskState.record*）+ 王浩宇 U5（Repl 三口接线 + TurnStopReason 同步）+ 赵天昂 R5 task CLI 三子命令 + R6 follow-up。
-- **质量基线**：`npx tsc --noEmit` 干净；`npm test` **1008 例全绿**（1007 pass + 1 skip）；`verify-m2-e2e` + `check-protected-files` 双契约 PASS；`scripts/eval/smoke-eval.mjs` A/B/C/C4 四档冒烟全过（评测管线就绪，待真机端点）。
+- **版本 v0.8.8**（zhaiyuanhao1）：0.8.6 工具调用配合度 + 压缩检索迭代 → 0.8.7 token 口径收口 → 0.8.8 tier 体系收口 + 记忆门禁改造（六档 × 1B 复验 quick 22 / standard 23 / high 20 / max 27 / ex 20 / pangu 22）。2026-09-16 真机测试轮又修：交互播种 env 模型（PANSHA_MODEL 此前被交互 REPL 静默忽略）、/workspace 统一派发、侦察内容透出（recon 事件三端渲染）、rich Ctrl+C 中断语义、env 增量快照挂 Session（B2）、npm test 并行死亡加固（快速并行+串行兜底）。
+- **质量基线**：`npx tsc --noEmit` 干净；`npm test` **1446 例全绿**（1445 pass + 1 skip，2 分钟，CI 已挂 test 门）；`verify-m2-e2e` + `check-protected-files` 双契约 PASS。
+- **评测状态**：LongMemEval-90 六格完成——**ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）· ZL×7B 31/90 · ZL×1B 六档 20-27**（[COMPARE-90.md](../../scripts/eval/longmemeval-90/COMPARE-90.md)）；自建 T1-T5 消融 **2026-09-16 真机 20 runs 已跑**（0 通过 / 18 失败 / 2 不适用，防线验证正常，质量注记随表见 [EVALUATION.md](EVALUATION.md) §4；runner 四处缺陷与 T3 溢出校准已修）。
 - 旧分支（zhaiyuanhao1/wangzuo1/wanghaoyu1/zhaotianang1）**已冻结**，新工作自 develop 拉 `<pinyin>2`。
 - **0.8.2 上下文压缩对抗审查修复（2026-09-13，zhaiyuanhao1）**：P1 计量地基（tokenEstimate 收口 / 实测 usage 锚点 lastPromptTokens / CJK-aware 估算 / REPL windowTokens 接线 / 裁剪后复查 + 单步封顶 / messages 模式溢出重试真实截断）+ P2 摘要质量（提炼统一到 apply 写盘后 / turnFullBrief 逐字保留落地 / fallback 嵌套封顶 / 压缩摘要注入 prompt / kept 字节感知收缩）+ 文案诚实化（溢出应急=确定性截断，与摘要压缩严格区分）。测试 1039 绿。
 
@@ -20,19 +21,19 @@
 
 | # | 项 | Owner | 说明 |
 |---|---|---|---|
-| A1 | **R6 真机评测数据** | 赵天昂+王浩宇 | 端点就绪后 `scripts/eval/run-eval.mjs` 跑 A/B/C/C4（A 档必须真溢出；B 档零注入=防线失败不计有效样本）→ `fill-evaluation.mjs` 回填 [EVALUATION.md](EVALUATION.md) §4。**当前唯一无备用方案的关键项**——最迟 9/17 开跑。基准选型与扩展（LongMemEval 锚点/窗口探测）见 [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md)；**前置：T3 fixture 按 32K 窗口校准溢出规模（§1.5），否则 A 档整档无效** |
-| A2 | **提交物定稿（R9）** | Leader+全员 | SUBMISSION 终稿（评测段按 A1 数据回填）、DEPLOY-CN 昇腾/麒麟实测口径、ARCHITECTURE §5 资源实测表（U7 待测数据） |
+| A1 | **R6 真机评测数据** | 赵天昂+王浩宇 | **已跑（2026-09-16）**：本机 LM Studio openpangu-embedded-1b-i1 端点完成 T1-T5 × A/B/C/C4 全量 20 runs（0 通过 / 18 失败 / 2 不适用），已回填 [EVALUATION.md](EVALUATION.md) §4（质量注记随表）。遗留：**A 档真溢出场景在 1B 端点未触发防护证据**（LM Studio 对超窗请求 200 静默截断、loop 溢出重试证据链断）——判定已如实标 not_applicable；7B 端点复验为后续项。基准选型与扩展见 [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md) |
+| A2 | **提交物定稿（R9）** | Leader+全员 | SUBMISSION 终稿（评测段按 A1 数据已更新）、DEPLOY-CN 昇腾/麒麟实测口径、ARCHITECTURE §5 资源实测表（U7 待测数据） |
 | A3 | **master 发布** | kultur | develop 冻结 + A1 回填后，走 CI gate（agent-branch-guard）合入并打 tag；国创赛后台提报 |
 
 ### B. 工程遗留（已登记，按带宽排期）
 
 | # | 项 | 位置 | 说明 |
 |---|---|---|---|
-| B1 | 全量测试 concurrency=4 并行跑进程静默死亡（串行全绿） | `tests/` | 疑某测试与多路 stdout 捕获冲突；**CI 强制前必须定位** |
-| B2 | 记忆审计 #4-#13 剩余项 | `src/memory/*`、`Repl.ts` | messages 分段接线补 Repl/Simulate 两调用方；CJK 2-gram 相关性增强；--classic 路径接 finalizeTaskMemory；prevEnvSnapshot 挂 Session 让 env 增量真正增量；档位契约对齐；磁盘压实 |
-| B3 | classic 路径 windowTokens 漏传 | `Repl.ts`（对照 `runAgentTask.ts:173`） | 窗口预算在 classic/`--headless` 单条命令路径不生效（~40 行，hermes 对齐唯一采纳项） |
+| B1 | 全量测试高并发（默认=CPU 核数）并行跑进程静默死亡（串行全绿） | `tests/` | **已加固（2026-09-16）**：`npm test` 改 concurrency=4 快速跑 + 失败自动串行兜底（1446 例 2 分钟全绿）；根因（疑 spawn 类测试与 runner TAP 流竞争）二分定位仍遗留，CI 的 retry 同属 workaround |
+| B2 | 记忆审计剩余项 | `src/memory/*`、`Repl.ts` | messages 分段接线补 Repl/Simulate 两调用方、CJK 2-gram 相关性增强、--classic 路径接 finalizeTaskMemory、档位契约对齐、磁盘压实仍遗留；**prevEnvSnapshot 挂 Session 已修（2026-09-16）** |
+| B3 | classic 路径 windowTokens 漏传 | `Repl.ts` | **已销（0.8.2）**：Repl.ts 已接 `resolveWindowTokens(provider, modelName)` |
 | B4 | classic 路径 messages 分段未接 | `Repl.ts` | classic 直调 solveIssue 走旧文本协议（逃生门语义，非缺陷；对齐后 classic 与主线一致） |
-| B5 | MCP 工具结果验证尾标策略 | `engineAdapter.ts` | MCP 调用成功不计 PASS（防自述伪装真实验证）——分类策略待定，宁缺毋滥 |
+| B5 | MCP 工具结果验证尾标策略 | `tools/engineAdapter.ts` | MCP 调用成功不计 PASS（防自述伪装真实验证）——分类策略待定，宁缺毋滥 |
 | B6 | 栈溢出守卫长会话自然复现验证 | 渲染层 | renderSseEvent 自递归守卫已修，待真机长会话自然复现确认 |
 | B7 | rewind 事件 replay 消费 / 双 synthetic 幂等 / listBranches O(N²) | `rolloutStore.ts` | 随评测工程处理 |
 | B11 | classic REPL 与 complete-only 回退的记忆覆盖缺口 | `Repl.ts:434`、`PanshalachChaser.ts:406` | classic chat 直答不传 chatMemoryBlock/chatRecentTurns；complete-only 客户端 chat 零记忆零上下文——两通道均已在源码注释申报（2026-09-14 迭代），补齐属独立工作项 |

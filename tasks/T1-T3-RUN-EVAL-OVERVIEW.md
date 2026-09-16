@@ -4,6 +4,8 @@
 > 接收人：王浩宇（wanghaoyu1，U4 接力补 repo/document + verify.sh 强化 + R6 runner 接入）
 > 起草日期：2026-09-06
 > 真机端点：ollama + 千问 7B（R6 runner 真机跑分；A/B/C/C4 消融按 plan）
+>
+> ⚠️ **执行状态（2026-09-16 注记）**：本计划的 ollama/千问 7B 路线未执行。实际真机跑分由本地 **LM Studio openpangu-embedded-1b-i1** 端点完成（2026-09-16，T1-T5 × A/B/C/C4 全量 20 runs，结果与质量注记见 [docs/panshalach/EVALUATION.md §4](../../docs/panshalach/EVALUATION.md)）。本文保留 fixture 历史背景；7B 级真机复跑（含 A 档真溢出场景）为后续工作项。
 
 ---
 

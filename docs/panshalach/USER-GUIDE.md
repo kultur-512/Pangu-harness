@@ -1,7 +1,7 @@
 # Panshalach 使用手册（烛龙 Zhulong）
 
 > 烛龙（Zhulong）· 内部代号盤沙拉克 Panshalach：基于 openPangu 的记忆增强通用智能体。
-> 本手册对齐 **v0.8.0-rc**（0.7 终止语义重构/意图前移/记忆落定 → 0.8 turn 四模块 + messages 双通道 + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理 + 身份画像通用化）。
+> 本手册对齐 **v0.8.8**（0.7 终止语义重构/意图前移/记忆落定 → 0.8 turn 四模块 + messages 双通道 + 执行层七项强化 + Claude Code 级交互手感 + 记忆链治理 + 身份画像通用化）。
 
 ## 1. 环境要求
 - Node ≥ 18（含全局 fetch；开发实测 Node 22）；TypeScript 5.6（构建）。
