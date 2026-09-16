@@ -177,7 +177,7 @@ export class PanshalachChaser {
       console.log(`Tier        : ${tierConfig.tier} (${tierConfig.typicalUseCase})`);
       console.log(`Task Style  : ${taskStyle ?? 'auto'}`);
       console.log(`Budget      : ${budgetTokens} tokens`);
-      console.log(`Max Steps   : ${maxStepsPerRollout}`);
+      console.log(`Max Steps   : ${maxStepsPerRollout > 0 ? maxStepsPerRollout : '∞（不限，预算闸兜底）'}`);
       console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel ?? 'N/A（实用模式）'}`);
       console.log(`Memory      : ${tierConfig.memoryLoadLevel}`);
       return { success: false, totalRollouts: 0, tierConfig };
@@ -465,7 +465,11 @@ export class PanshalachChaser {
     const isSearchIntent = intent === 'search';
     const dynamicOptions: VerifyCritiqueLoopOptions = {
       strictStructured: isHighRigor && !isSearchIntent,
-      maxSteps: isSearchIntent ? Math.min(3, maxStepsPerRollout) : maxStepsPerRollout,
+      // 2026-09-16 取消步数限制：0 = 不限步数（预算闸兜底）。search 意图保留
+      // 3 步窄检索上限（受限路径语义不变）。
+      maxSteps: isSearchIntent
+        ? (maxStepsPerRollout > 0 ? Math.min(3, maxStepsPerRollout) : 3)
+        : maxStepsPerRollout,
       maxConsecutiveFailures: tierConfig.maxConsecutiveFailures,
       verifyFirstBias: tierConfig.verifyFirstBias,
       practicalMode: !isHighRigor || isSearchIntent,

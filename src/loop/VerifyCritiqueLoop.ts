@@ -218,7 +218,11 @@ export class VerifyCritiqueLoop {
     // useUniversalAdapter 选项仅为兼容保留，恒真；<> 严格独占解析路径已归档。
     this.useUniversal = true;
     this.strictStructured = options.strictStructured ?? true;
-    this.maxSteps = options.maxSteps ?? 25;
+    // 2026-09-16 取消步数限制：maxSteps ≤0（或缺省）= 不限步数，预算闸兜底；
+    // 显式正数仍生效（eval/测试可用）。
+    this.maxSteps = options.maxSteps !== undefined && options.maxSteps > 0
+      ? options.maxSteps
+      : Number.POSITIVE_INFINITY;
     this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? 3;
     this.verifyFirstBias = options.verifyFirstBias ?? this.strictStructured;
     // 高纪律模式判定（behavioral）：优先 isStrongMode，其次 !practicalMode，再次 strictStructured

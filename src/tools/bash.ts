@@ -11,7 +11,8 @@
 // - DANGER MARKING ONLY (enforcement belongs to the approval layer, 2.4):
 //   rm -rf / del / format / reg add|delete / git push --force / mkfs / shutdown …
 
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
+import { existsSync } from 'node:fs';
 import type { ToolImpl } from './types.js';
 
 export const BASH_HARD_CAP_MS = 600_000;
@@ -20,6 +21,37 @@ const OUTPUT_CAP = 20_000;
 // can persist it to scratch; memory guard stops capture past 1MB (the middle
 // beyond that stays lost — `truncated` remains true either way).
 const FULL_CAPTURE_CAP = 1_000_000;
+
+/**
+ * Windows bash 解析（2026-09-16 真机缺陷）：bash 工具旧实现 win32 走
+ * `shell:true` = cmd.exe，而模型（1B/M3 真机实测）普遍输出 unix 命令
+ * （pwd/ls/cat），cmd 全部报错 → guardrail 无进展硬闸假失败。优先用
+ * Git for Windows 的 bash.exe 执行；探测一次并缓存，排除 WSL 的
+ * System32\bash.exe（会把命令跑进 Linux、无法访问 win32 工作区路径）。
+ * 无 bash 时回退 cmd（旧行为）。
+ */
+let winBashPath: string | null | undefined;
+function resolveWinBash(): string | null {
+  if (winBashPath !== undefined) return winBashPath;
+  const candidates = [
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) { winBashPath = c; return c; }
+  }
+  try {
+    const out = execFileSync('where', ['bash'], { encoding: 'utf8', timeout: 5_000, windowsHide: true });
+    const hit = out.split(/\r?\n/).find((l) => {
+      const t = l.trim();
+      return t.toLowerCase().endsWith('bash.exe') && !/system32/i.test(t);
+    });
+    if (hit) { winBashPath = hit; return hit; }
+  } catch { /* where 失败 → 无 bash */ }
+  winBashPath = null;
+  return null;
+}
 
 export function bashTimeoutForTier(tier: string | undefined): number {
   const t = String(tier || '').toLowerCase();
@@ -64,17 +96,35 @@ export function createBashTool(opts: BashToolOptions = {}): ToolImpl {
     return new Promise((resolve) => {
       let child: any;
       try {
-        child = spawn(String(cmd), {
-          shell: true,
-          cwd: ctx.workspaceRoot,
-          // detached is only needed on POSIX (negative-pid tree kill).
-          // On Windows detached detaches the console and grandchildren (exe
-          // spawned by the shell) stop inheriting our stdout pipe → empty
-          // captures. Windows tree-kill uses taskkill /T which doesn't need it.
-          detached: process.platform !== 'win32',
-          env: { ...process.env, PANSHA_EXEC: '1' },
-          windowsHide: true,
-        });
+        if (process.platform === 'win32') {
+          const bashExe = resolveWinBash();
+          if (bashExe) {
+            child = spawn(bashExe, ['-c', String(cmd)], {
+              cwd: ctx.workspaceRoot,
+              env: { ...process.env, PANSHA_EXEC: '1' },
+              windowsHide: true,
+            });
+          } else {
+            child = spawn(String(cmd), {
+              shell: true,
+              cwd: ctx.workspaceRoot,
+              env: { ...process.env, PANSHA_EXEC: '1' },
+              windowsHide: true,
+            });
+          }
+        } else {
+          child = spawn(String(cmd), {
+            shell: true,
+            cwd: ctx.workspaceRoot,
+            // detached is only needed on POSIX (negative-pid tree kill).
+            // On Windows detached detaches the console and grandchildren (exe
+            // spawned by the shell) stop inheriting our stdout pipe → empty
+            // captures. Windows tree-kill uses taskkill /T which doesn't need it.
+            detached: true,
+            env: { ...process.env, PANSHA_EXEC: '1' },
+            windowsHide: true,
+          });
+        }
       } catch (e: any) {
         resolve({ ok: false, output: `✗ spawn failed: ${e?.message || e}`, durationMs: Date.now() - start, error: 'IO' });
         return;
