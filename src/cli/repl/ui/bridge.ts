@@ -238,17 +238,6 @@ export function createBridge(
       result: step.result,
     } as any);
 
-    // Surface reasoning as a collapsible ThoughtBlock if we have thinking text
-    if (step && typeof step.thinking === 'string' && step.thinking.trim()) {
-      const full = step.thinking.trim();
-      const short = full.length > 140 ? full.slice(0, 137) + '…' : full;
-      pushFeed({
-        type: 'thought',
-        stepNumber: step.stepNumber || 0,
-        short,
-        full,
-      } as any);
-    }
 
     // If plan looks substantial, also surface as markdown for nice formatting
     if (step && typeof step.plan === 'string' && step.plan.trim().length > 0) {
