@@ -116,6 +116,14 @@ export function classifyTaskIntent(input: string): TaskIntent {
   // 显式写/续接请求 + 文件参照（"能在 memo.txt 里加一行吗"仍是写请求）
   if (EXPLICIT_WRITE_RE.test(t) && hasFileRef) return 'execution';
 
+  // ===== 运行/执行/跑 + 具体命令标识符：疑问词不豁免 =====
+  // 2026-09-16 真机 B："运行命令 typoiswrong123，怎么修正"被"怎么"豁免误判
+  // chat → 模型自称"被设定为只回答"拒执行。要求具体命令标识符（避免单字
+  // 动词 写/改/跑 误伤文创/咨询提问）。
+  if (/(运行|执行|跑)[\s]*(?:命令|脚本|测试)?[\s]*[A-Za-z_][A-Za-z0-9_.\-]{2,}/.test(t)) {
+    return 'execution';
+  }
+
   // ===== 疑问/概念提问豁免（旧行为保持）：句中疑问词/句尾"吗"→ 不进执行 =====
   if (QUESTION_MARK_RE.test(t)) {
     return hasFileRef ? 'search' : 'chat';
