@@ -197,17 +197,18 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     ctx.renderer.writeLine(ctx.renderer.color(banner[0], 'bold'));
     ctx.renderer.writeLine(ctx.renderer.color(banner[1], 'gray'));
     ctx.renderer.writeLine(ctx.renderer.color(banner[2], 'gray'));
-    // 首跑预检——横幅处探测无任何可用 provider 时打一行灰字配置
-    // 指引（不阻塞、不报错；用户配置好后 /model list 会热加载）。
+    // 首跑预检——横幅处探测【当前 session 模型】是否可解析（不阻塞、不报错；
+    // 用户配置好后 /model list 会热加载）。2026-09-16 修：旧实现对 listModels()
+    // 返回的 provider 名逐个 createClient——provider 名 ≠ 模型名恒 NULL，导致
+    // 已正确配置（用户级 config.json 的 minimax）仍误报"未检测到可用模型"。
     try {
       const { createDefaultModelProvider } = await import('../../cli/repl/ModelProvider.js');
       const probe = opts.provider ?? createDefaultModelProvider();
-      const names = typeof probe.listModels === 'function' ? probe.listModels() : [];
-      const anyUsable = names.some((n) => { try { return !!probe.createClient(n); } catch { return false; } })
-        || !!(typeof probe.createDefaultClient === 'function' && probe.createDefaultClient());
-      if (!anyUsable) {
+      const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
+      const { client } = await resolveSharedClient(session.model, probe);
+      if (!client) {
         ctx.renderer.writeLine(ctx.renderer.color(
-          '未检测到可用模型。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3） ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择',
+          `当前模型 ${session.model} 不可解析。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3） ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择`,
           'gray'
         ));
       }
