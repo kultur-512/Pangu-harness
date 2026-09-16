@@ -24,7 +24,7 @@
 
 | # | 项 | 位置 | 说明 |
 |---|---|---|---|
-| B1 | 全量测试 concurrency=4 并行跑进程静默死亡（串行全绿） | `tests/` | 疑某测试与多路 stdout 捕获冲突；**CI 强制前必须定位** |
+| B1 | ~~全量测试并行跑进程静默死亡~~ **已定位+规避（2026-09-16，wanghaoyu1）**：Node v24 test runner IPC 反序列化 bug——高并发（≥16）下父进程 `processRawBuffer (node:internal/test_runner/runner:485)` 抛 `Unable to deserialize cloned data due to invalid or unsupported version`（uncaughtException），spec reporter 下 runner 静默 exit 1，TAP reporter 下报 not ok 可继续；TurnBehavior.lock / TurnUxAlign 两个文件是受害者非元凶。**规避**：`npm test` 固定 `--test-concurrency=8`（8 稳定复绿 ×3，16/32 稳定复现）；CI 并发=4 不受影响 | `package.json` scripts.test | CI 强制可放开 |
 | B2 | 记忆审计 #4-#13 剩余项 | `src/memory/*`、`Repl.ts` | messages 分段接线补 Repl/Simulate 两调用方；CJK 2-gram 相关性增强；--classic 路径接 finalizeTaskMemory；prevEnvSnapshot 挂 Session 让 env 增量真正增量；档位契约对齐；磁盘压实 |
 | B3 | classic 路径 windowTokens 漏传 | `Repl.ts`（对照 `runAgentTask.ts:173`） | 窗口预算在 classic/`--headless` 单条命令路径不生效（~40 行，hermes 对齐唯一采纳项） |
 | B4 | classic 路径 messages 分段未接 | `Repl.ts` | classic 直调 solveIssue 走旧文本协议（逃生门语义，非缺陷；对齐后 classic 与主线一致） |
