@@ -84,41 +84,19 @@ describe('0.7.3 T2#5 answered 空转防呆（execution 意图）', () => {
       },
     };
   }
-
-  it('第一次只说话不动作 → 注入格式提醒重试；第二次动手 → completed', async () => {
-    const model = textModel([
-      '我会先写入文件，然后运行验证。（只是说了，没有调用工具）',
-      writeCallBlock,
-      '任务完成，验证通过。',
-    ]);
-    const loop = makeLoop(
-      model,
-      { async execute(calls: any[]) { void calls; return 'Wrote 1 lines to out.txt\nVERIFICATION: PASS'; } },
-      { maxSteps: 6, isStrongMode: true, practicalMode: false } // execution 意图（isStrongMode）
-    );
-    const out = await loop.run('写 out.txt 并验证');
-
-    assert.equal(out.stopReason, 'completed', '重试一步后动手 → completed');
-    assert.equal(out.success, true);
-    // 格式提醒确实注入过一次
-    const nudged = model.prompts.find((p) => p.includes('只输出了文字说明而没有输出任何工具调用块'));
-    assert.ok(nudged, '第二次 prompt 必须携带格式提醒');
-    assert.equal(out.steps[0].verificationSignal, 'NO_TOOL_CALLS', '第一步是空转步');
-  });
-
-  it('第二次仍无动作 → no-verification 终局（success=false，不再按 answered 计成功）', async () => {
+  it('只说话不动作 → 有正文即 answered（2026-09-16 success 语义摘除后）', async () => {
     const model = textModel([
       '我觉得直接改配置就行，不需要动手。',
-      '我说了两次了，还是只想口头说明。',
     ]);
     const loop = makeLoop(
       model,
       { async execute() { return 'VERIFICATION: PASS'; } },
-      { maxSteps: 6, isStrongMode: true, practicalMode: false }
+      { maxSteps: 6, isStrongMode: true, practicalMode: false } // execution 意图（isStrongMode）
     );
     const out = await loop.run('修复 bug');
-    assert.equal(out.stopReason, 'no-verification', 'execution 意图 + 零验证 + 二次空转 → no-verification');
-    assert.equal(out.success, false, '有正文的假完成不再计 success');
+    assert.equal(out.stopReason, 'answered', '空转有正文 → answered（nudge 阶梯已摘除）');
+    assert.equal(out.success, true, 'answered 一律计 success（T6 假成功防线摘除）');
+    assert.equal(out.steps.length, 1, '一步即停，不再注入格式提醒重试');
   });
 
   it('非 execution 意图（practical 弱模式）保持旧行为：有正文 1 步 answered', async () => {
