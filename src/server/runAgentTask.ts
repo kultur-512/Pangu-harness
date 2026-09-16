@@ -369,7 +369,7 @@ export async function runAgentTask(
     // 都不该把引擎信号词当模型回答。
     const RAW_SIGNAL_ONLY_RE = /^\s*(?:NO_TOOL_CALLS|TOOL_ERROR:[^\n]*)\s*$/i;
     const answerText = lastStepResult.trim() && !RAW_SIGNAL_ONLY_RE.test(lastStepResult)
-      ? lastStepResult
+      ? lastStepResult.replace(/\n*\s*VERIFICATION:\s*PASS\s*$/i, '').trimEnd()
       : undefined;
 
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。

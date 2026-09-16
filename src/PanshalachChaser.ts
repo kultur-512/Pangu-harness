@@ -702,7 +702,10 @@ export class PanshalachChaser {
           thought: s.reasoning.thinking,
           plan: s.reasoning.plan,
           action: s.toolCalls,
-          result: s.verificationResult,
+          // 2026-09-16：verificationResult（工具结果）为空时回退 step.result
+          // （空转 answered 步的用户正文）——此前空转正文在此处被空串覆盖，
+          // answerText 带出链路断在最后一环（"已回复"但无内容）。
+          result: s.verificationResult || (s as any).result || '',
           detectedFormat: s.detectedFormat,
           didRealVerification: s.didRealVerification,
           readBeforeWriteViolation: s.readBeforeWriteViolation,

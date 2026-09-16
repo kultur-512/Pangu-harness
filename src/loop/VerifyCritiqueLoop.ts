@@ -1017,7 +1017,11 @@ export class VerifyCritiqueLoop {
           }
         }
       } else {
-        verificationResult = 'NO_TOOL_CALLS';
+        // 2026-09-16：空转步 verificationResult 不再填充 'NO_TOOL_CALLS' 字面——
+        // 该字面经轨迹映射（result: s.verificationResult）喂给模型导致 1B/M3
+        // 双学舌。用户正文走 idleAnswerText（step.result）；内部信号仅存
+        // verificationSignal（guardrails 计数/测试消费）。
+        verificationResult = '';
         signal = 'NO_TOOL_CALLS';
         this.stepsSinceLastRealVerification++;
         // 2026-09-16：空转 answered 的用户正文暂存（step.result）——runAgentTask
