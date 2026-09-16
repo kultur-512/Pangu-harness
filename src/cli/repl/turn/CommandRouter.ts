@@ -531,6 +531,10 @@ export async function handleSlashCommand(
     // ctxUsedChars 清零 + 窗口立即重取（下次任务边界也会再取一次兜底）。
     ctx.ctxUsedChars = 0;
     ctx.ctxWindowTokens = resolveCtxWindowTokens(ctx);
+    // TopBar 同步（真机实测：切换后 TopBar 仍显示旧模型——只有 /tier 有 setTop）
+    if (useRich && typeof bridge.setTop === 'function') {
+      try { bridge.setTop({ model: sub }); } catch {}
+    }
     emit(`模型已切换: ${sub}（下次任务生效）`, 'success');
     return true;
   }

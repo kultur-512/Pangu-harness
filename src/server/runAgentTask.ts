@@ -364,7 +364,13 @@ export async function runAgentTask(
     const lastStepResult = trajSteps.length > 0
       ? String(trajSteps[trajSteps.length - 1]?.result ?? '')
       : '';
-    const answerText = lastStepResult.trim() ? lastStepResult : undefined;
+    // 正文净化（2026-09-16）：末步正文为纯内部信号词（如历史渲染泄漏期的
+    // 学舌残留 "NO_TOOL_CALLS"）时不作为回复带出——展示/落盘/最近对话段
+    // 都不该把引擎信号词当模型回答。
+    const RAW_SIGNAL_ONLY_RE = /^\s*(?:NO_TOOL_CALLS|TOOL_ERROR:[^\n]*)\s*$/i;
+    const answerText = lastStepResult.trim() && !RAW_SIGNAL_ONLY_RE.test(lastStepResult)
+      ? lastStepResult
+      : undefined;
 
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
     // 此前产卡门只认 completed（工程任务）——纯对话的事实永远不入记忆，
