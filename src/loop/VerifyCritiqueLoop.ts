@@ -72,6 +72,8 @@ export interface LoopStep {
   automationNoEffectCheck?: boolean;
   /** 空转 answered 步的用户正文（2026-09-16：answerText 带出的数据源） */
   result?: string;
+  /** 该步 result 是面向用户的正文（空转 answered），区别于工具输出原文 */
+  userFacing?: boolean;
 }
 
 export interface VerifyCritiqueLoopOptions {
@@ -1065,7 +1067,7 @@ export class VerifyCritiqueLoop {
         detectedFormat,
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
-        ...(idleAnswerText ? { result: idleAnswerText } : {}),
+        ...(idleAnswerText ? { result: idleAnswerText, userFacing: true } : {}),
       };
 
       this.steps.push(step);

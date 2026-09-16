@@ -409,6 +409,7 @@ export class PanshalachChaser {
           plan: '',
           action: [],
           result: chatText,
+          userFacing: true, // chat 直答正文即面向用户回复（answerText 带出的标记）
         }],
         success: true,
         stopReason: 'answered',
@@ -706,6 +707,7 @@ export class PanshalachChaser {
           // （空转 answered 步的用户正文）——此前空转正文在此处被空串覆盖，
           // answerText 带出链路断在最后一环（"已回复"但无内容）。
           result: s.verificationResult || (s as any).result || '',
+          ...(s.userFacing ? { userFacing: true } : {}),
           detectedFormat: s.detectedFormat,
           didRealVerification: s.didRealVerification,
           readBeforeWriteViolation: s.readBeforeWriteViolation,

@@ -368,8 +368,13 @@ export async function runAgentTask(
     // 学舌残留 "NO_TOOL_CALLS"）时不作为回复带出——展示/落盘/最近对话段
     // 都不该把引擎信号词当模型回答。
     const RAW_SIGNAL_ONLY_RE = /^\s*(?:NO_TOOL_CALLS|TOOL_ERROR:[^\n]*)\s*$/i;
-    const answerText = lastStepResult.trim() && !RAW_SIGNAL_ONLY_RE.test(lastStepResult)
-      ? lastStepResult.replace(/\n*\s*VERIFICATION:\s*PASS\s*$/i, '').trimEnd()
+    // 2026-09-16：回复只取【面向用户的正文步】（空转 answered 的 step.result，
+    // userFacing 标记）——工具步的 result 是工具输出原文（READ_SUCCESS…），
+    // 不能当模型回复（真机：工具步终局时 answerText 泄漏工具原文）。
+    const userFacingSteps = trajSteps.filter((s) => (s as any)?.userFacing && String((s as any)?.result ?? '').trim());
+    const lastUserFacing = userFacingSteps.length > 0 ? String(userFacingSteps.at(-1)!.result) : '';
+    const answerText = lastUserFacing.trim() && !RAW_SIGNAL_ONLY_RE.test(lastUserFacing)
+      ? lastUserFacing.replace(/\n*\s*VERIFICATION:\s*PASS\s*$/i, '').trimEnd()
       : undefined;
 
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
