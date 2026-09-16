@@ -24,6 +24,8 @@ import {
   buildIdleStatusLine,
   endMessageStream,
   flushBufferedMarkdown,
+  mapSseToBridge,
+  reconLine,
   renderInlineMarkdown,
   renderSseEvent,
   spinnerRunningLine,
@@ -540,5 +542,77 @@ describe('handleSlashCommand /tier 内联分支：滑杆 + 编号直达', () => 
     assert.ok(renderer.lines.some((l: string) => l.includes('超出范围')));
     await handleSlashCommand(ctx, { cmd: '/tier', arg: 'nope', emit, useRich: false, bridge: null });
     assert.ok(renderer.lines.some((l: string) => l.includes('无效档位: nope')));
+  });
+});
+
+// ==================== 侦察内容透出（recon 事件，2026-09-15） ====================
+// 真机实证：侦察相位线与执行相位线之间此前无任何内容（记忆注入审计只进 HOME
+// 账本）。recon 事件把侦察结论（注入记忆数/意图/档位）带进 rich/line/headless。
+
+describe('reconLine：侦察结论行组装（纯函数）', () => {
+  it('组装核心字段：注入记忆数 + 意图 + 档位；缺失字段静默省略', () => {
+    assert.equal(
+      reconLine({ memoryCards: 3, intent: 'execution', tier: 'max' }),
+      '侦察完成: 注入记忆 3 张 · 意图 execution · 档位 max'
+    );
+    assert.equal(
+      reconLine({ memoryCards: 0, intent: 'search' }),
+      '侦察完成: 注入记忆 0 张 · 意图 search'
+    );
+    assert.equal(
+      reconLine({ memoryCards: 2, memoryOverflow: 5, promptChars: 100 }),
+      '侦察完成: 注入记忆 2 张 · 记忆溢出 5 张 · 提示 100 字符'
+    );
+    assert.equal(reconLine({}), '侦察完成: 注入记忆 0 张', '空事件仍有基线文案');
+    assert.equal(reconLine(null), '侦察完成: 注入记忆 0 张', 'null 安全');
+  });
+});
+
+describe('recon 事件渲染：rich 桥 + line 模式', () => {
+  it('rich 桥：pushFeed 落 info 文本行（toSafeFeedItem 安全形态）', () => {
+    const feeds: any[] = [];
+    mapSseToBridge('recon', { memoryCards: 2, intent: 'execution', tier: 'high' }, { pushFeed: (f: any) => feeds.push(f) });
+    assert.deepEqual(feeds, [{ type: 'text', text: '侦察完成: 注入记忆 2 张 · 意图 execution · 档位 high', level: 'info' }]);
+  });
+
+  it('line 模式：renderSseEvent 输出侦察行（相位线之间的内容）', () => {
+    const { ctx, renderer } = makeHarness();
+    renderSseEvent(ctx, 'phase', { phase: 'explore' }, ctx.renderer);
+    renderSseEvent(ctx, 'recon', { memoryCards: 4, intent: 'execution', tier: 'max' }, ctx.renderer);
+    renderSseEvent(ctx, 'phase', { phase: 'rollout' }, ctx.renderer);
+    const idx = renderer.lines.findIndex((l: string) => l.includes('侦察完成'));
+    assert.ok(idx >= 0, `侦察行已渲染，got: ${JSON.stringify(renderer.lines).slice(0, 200)}`);
+    const phaseIdx = renderer.lines.findIndex((l: string) => l === '── 侦察 ──');
+    const rollIdx = renderer.lines.findIndex((l: string) => l === '── 执行 ──');
+    assert.ok(phaseIdx >= 0 && rollIdx >= 0, '相位线双在');
+    assert.ok(phaseIdx < idx && idx < rollIdx, '侦察行位于侦察/执行相位线之间');
+  });
+});
+
+describe('handleSlashCommand /workspace：统一派发器补全（D2）', () => {
+  it('带参：session.workspace 更新 + 成功回执；无参：打印当前工作区', async () => {
+    const { session, ctx, renderer } = makeHarness();
+    const { createCommandEmitter, handleSlashCommand } = await import('../../../src/cli/repl/turn/CommandRouter.js');
+    const emit = createCommandEmitter(ctx, false, null);
+    const target = tmpWs();
+    const handled = await handleSlashCommand(ctx, { cmd: '/workspace', arg: target, emit, useRich: false, bridge: null });
+    assert.equal(handled, true, '本地处理，绝不提交引擎');
+    assert.equal(session.workspace, target, 'workspace 即时生效');
+    assert.ok(renderer.lines.some((l: string) => l.includes(`工作区已切换到: ${target}`)));
+
+    renderer.lines.length = 0;
+    const handled2 = await handleSlashCommand(ctx, { cmd: '/workspace', arg: '', emit, useRich: false, bridge: null });
+    assert.equal(handled2, true);
+    assert.ok(renderer.lines.some((l: string) => l.includes(`当前工作区: ${target}`)), '无参打印当前工作区');
+  });
+
+  it('/ws 别名等价派发', async () => {
+    const { session, ctx, renderer } = makeHarness();
+    const { createCommandEmitter, handleSlashCommand } = await import('../../../src/cli/repl/turn/CommandRouter.js');
+    const emit = createCommandEmitter(ctx, false, null);
+    const target = tmpWs();
+    const handled = await handleSlashCommand(ctx, { cmd: '/ws', arg: target, emit, useRich: false, bridge: null });
+    assert.equal(handled, true);
+    assert.equal(session.workspace, target, '/ws 别名切换生效');
   });
 });

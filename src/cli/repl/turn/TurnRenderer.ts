@@ -690,6 +690,17 @@ export function localizePhase(phase: string): string {
   return map[String(phase || '')] || String(phase || '');
 }
 
+/** recon 事件 → 单行灰字（侦察相位线与执行相位线之间的侦察结论）。 */
+export function reconLine(data: any): string {
+  const n = Number(data?.memoryCards) || 0;
+  const parts = [`侦察完成: 注入记忆 ${n} 张`];
+  if (data?.intent) parts.push(`意图 ${data.intent}`);
+  if (data?.tier) parts.push(`档位 ${data.tier}`);
+  if (data?.memoryOverflow) parts.push(`记忆溢出 ${data.memoryOverflow} 张`);
+  if (data?.promptChars) parts.push(`提示 ${data.promptChars} 字符`);
+  return parts.join(' · ');
+}
+
 /** rollout 状态本地化（/agents 展示用）。 */
 export function localizeRolloutStatus(status: string): string {
   const map: Record<string, string> = { running: '进行中', done: '完成', failed: '失败', pending: '等待' };
@@ -737,6 +748,11 @@ export function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnConte
     const ph = localizePhase(data.phase || data);
     if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'phase', phase: ph });
     if (typeof b.setTop === 'function') b.setTop({ phase: ph });
+    return;
+  }
+  if (t === 'recon' || event === 'recon') {
+    // 侦察结论（记忆注入/意图/档位）——相位线之间的侦察内容
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: reconLine(data), level: 'info' });
     return;
   }
   if (t === 'thinking.start' || event === 'thinking.start') {
@@ -1009,6 +1025,10 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
     case 'phase':
       // phase 值本地化（渲染层映射，不改事件值）
       r.writeLine(r.color(`── ${localizePhase(String(data.phase || data))} ──`, 'gray'));
+      break;
+    case 'recon':
+      // 侦察结论（记忆注入/意图/档位）——相位线之间的侦察内容
+      r.writeLine(r.color(reconLine(data), 'gray'));
       break;
     case 'step': {
       // 流式段收尾：thinking 折叠为统计行、正文流补换行

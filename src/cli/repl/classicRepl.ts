@@ -8,7 +8,7 @@
 import { Repl } from './Repl.js';
 import { getSharedModelProvider } from './ModelProvider.js';
 import { Session } from './Session.js';
-import { applyConfigModel } from './modelSeed.js';
+import { applyConfigModel, applyEnvModel } from './modelSeed.js';
 
 export interface ClassicReplOptions {
   /** B8: carry a restored session (e.g. --resume) into the classic fallback. */
@@ -22,15 +22,17 @@ export async function startClassicRepl(opts: ClassicReplOptions = {}): Promise<v
   const repl = new Repl({
     provider,
     ...(opts.session
-      ? { session: applyConfigModel(opts.session, opts.session.workspace) as Session }
-      : { session: applyConfigModel(new Session()) as Session }),
+      // D1：env 优先（applyEnvModel）→ 配置兜底（applyConfigModel），
+      // 与 rich/line 路径同序（PANSHA_MODEL 此前在 classic 路径同样被忽略）。
+      ? { session: applyConfigModel(applyEnvModel(opts.session), opts.session.workspace) as Session }
+      : { session: applyConfigModel(applyEnvModel(new Session())) as Session }),
   });
   await repl.start();
 }
 
 export async function runClassicOneShot(args: string[]): Promise<void> {
   const provider = getSharedModelProvider();
-  const session = applyConfigModel(new Session()) as Session;
+  const session = applyConfigModel(applyEnvModel(new Session())) as Session;
   const repl = new Repl({ session, provider });
   await repl.runOneShot(args);
 }

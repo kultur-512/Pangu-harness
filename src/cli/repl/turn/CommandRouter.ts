@@ -18,6 +18,7 @@ export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> 
   { name: 'help', aliases: ['?', 'h'] },
   { name: 'mode' },
   { name: 'model' },
+  { name: 'workspace', aliases: ['ws'] },
   { name: 'memory' },
   { name: 'usage' },
   { name: 'undo' },
@@ -260,6 +261,40 @@ export async function handleEditPrefill(ctx: TurnContext, useRich: boolean, brid
     }
   }
   return true;
+}
+
+/**
+ * 注册表命令的最小 CommandContext（/resume /workspace 等经共享注册表执行的
+ * 命令共用）：rich 的 renderer 走 emit 进 feed、line 走真 renderer；审批桥与
+ * abort signal 与主任务路径同源（sseInteractive 的 CommandContext 注册点）。
+ */
+function buildRegistryCommandCtx(
+  ctx: TurnContext,
+  useRich: boolean,
+  emit: (text: string, level?: 'info' | 'warn' | 'error' | 'success') => void,
+  reg: any
+): any {
+  return {
+    session: ctx.session,
+    registry: reg,
+    renderer: useRich
+      ? {
+          writeLine: (t: string) => emit(t, 'info'),
+          color: (t: string) => t,
+          warn: (t: string) => emit(t, 'warn'),
+          error: (t: string) => emit(t, 'error'),
+          success: (t: string) => emit(t, 'success'),
+          info: (t: string) => emit(t, 'info'),
+        }
+      : ctx.renderer,
+    input: null,
+    repl: null,
+    provider: (ctx.session as any).provider,
+    approvalBridge: useRich
+      ? (req: { tool: string; description: string; danger: boolean }) => (ctx.bridgeRef.current.setConfirm(req) as Promise<string>)
+      : createCliApprovalBridge(),
+    signal: ctx.currentAbort?.signal,
+  };
 }
 
 /**
@@ -527,22 +562,18 @@ export async function handleSlashCommand(
   if (cmd === '/resume') {
     // 委托注册表里的 ResumeCommand（只依赖 renderer）
     const reg = await getSharedRegistry(ctx);
-    const rctx: any = {
-      session: ctx.session,
-      registry: reg,
-      renderer: useRich ? { writeLine: (t: string) => emit(t, 'info'), color: (t: string) => t, warn: (t: string) => emit(t, 'warn'), error: (t: string) => emit(t, 'error'), success: (t: string) => emit(t, 'success'), info: (t: string) => emit(t, 'info') } : ctx.renderer,
-      input: null,
-      repl: null,
-      provider: (ctx.session as any).provider,
-      // sseInteractive 的 CommandContext 注册点——
-      // 注入与当前路径一致的现成审批桥 + 在途任务的 abort signal，使经此
-      // 派发的 registry 命令与主任务路径共享审批/中断语义。
-      approvalBridge: useRich
-        ? (req: { tool: string; description: string; danger: boolean }) => (ctx.bridgeRef.current.setConfirm(req) as Promise<string>)
-        : createCliApprovalBridge(),
-      signal: ctx.currentAbort?.signal,
-    };
+    const rctx = buildRegistryCommandCtx(ctx, useRich, emit, reg);
     const res = await reg.execute(rctx, 'resume', arg ? arg.split(/\s+/) : []);
+    if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
+    return true;
+  }
+  // D2（2026-09-15 真机实测：rich UI 输入 /workspace 落"未知命令"）——
+  // WorkspaceCommand 只在 classic 路径消费，统一派发器无此分支。委托共享
+  // 注册表（与 /resume 同款 rctx），/ws 别名一并收口。
+  if (cmd === '/workspace' || cmd === '/ws') {
+    const reg = await getSharedRegistry(ctx);
+    const rctx = buildRegistryCommandCtx(ctx, useRich, emit, reg);
+    const res = await reg.execute(rctx, 'workspace', arg ? arg.split(/\s+/) : []);
     if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
     return true;
   }

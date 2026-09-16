@@ -8,6 +8,21 @@ import { ConfigManager } from './ConfigManager.js';
 import type { SessionApprovalMode } from './Session.js';
 import { TierRegistry } from '../../tiers/TierConfig.js';
 
+/**
+ * PANSHA_MODEL env seeds the session model（headless one-shot 多 provider，
+ * e.g. PANSHA_MODEL="a6:openPangu-7B"）。返回 session 本身便于链式播种。
+ * D1（真机实测 2026-09-15）：交互 REPL（rich/classic）此前从不调用本函数，
+ * PANSHA_MODEL 被静默忽略——带 minimax:MiniMax-M3 启动仍落在配置文件 1B。
+ * 播种顺序纪律：applyEnvModel → applyConfigModel（env 优先，配置兜底）。
+ */
+export function applyEnvModel(session: { model: string }): { model: string } {
+  const envModel = process.env.PANSHA_MODEL;
+  if (envModel && typeof envModel === 'string' && envModel.trim()) {
+    session.model = envModel.trim();
+  }
+  return session;
+}
+
 /** 仅当 model 仍是占位 'default' 时才用配置兜底；env / 显式 /model 选择永远优先。 */
 export function applyConfigModel(
   session: { model: string },

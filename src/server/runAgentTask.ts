@@ -235,7 +235,23 @@ export async function runAgentTask(
   // F3（0.8.1 第 2 轮）：chat 直答不发 explore 相位——真机实测 `── 侦察 ──`
   // 相位线是 rollout 语义噪声，chat 直答应只见正文流 + 终态行。intent 在入口
   // 已对原始输入分类（与传入 chaser 的 intent 同源），此处直接按其门控。
-  if (intent !== 'chat') ctx.onEvent({ type: 'phase', phase: 'explore' });
+  if (intent !== 'chat') {
+    ctx.onEvent({ type: 'phase', phase: 'explore' });
+    // 侦察内容透出（2026-09-15 真机实证"侦察/执行相位线之间无任何内容"）：
+    // 侦察实际工作（记忆检索/意图分类/prompt 组装）在 explore 事件前已静默
+    // 完成，UI 只见两条相位线、记忆注入审计只进 HOME 账本不进 feed。现把
+    // 侦察结论作为 recon 事件发出——rich（mapSseToBridge）/ line
+    // （renderSseEvent）/ classic·headless（RunCommand）三端各渲染一行灰字。
+    ctx.onEvent({
+      type: 'recon',
+      intent,
+      tier: session.tier,
+      memoryCards: injectedCardIds.length,
+      memoryOverflow: pb.lastBuildMeta?.memoryOverflowCount ?? 0,
+      promptChars: enriched.length,
+      workspace: session.workspace,
+    });
+  }
 
   let success = false;
 

@@ -228,6 +228,22 @@ describe('PANSHA_MODEL env seed (fix-a6-routing)', () => {
       if (prev !== undefined) process.env.PANSHA_MODEL = prev;
     }
   });
+
+  it('D1 播种顺序：applyEnvModel → applyConfigModel，env 优先于配置文件', async () => {
+    const { applyConfigModel } = await import('../../src/cli/repl/modelSeed.js');
+    const prev = process.env.PANSHA_MODEL;
+    // 配置兜底只认 model==='default' 的占位门：env 已写入时不得被覆盖
+    process.env.PANSHA_MODEL = 'minimax:MiniMax-M3';
+    try {
+      const s = applyConfigModel(applyEnvModel(new Session())) as Session;
+      assert.equal(s.model, 'minimax:MiniMax-M3', 'env 模型不被配置兜底覆盖');
+      const s2 = applyConfigModel(applyEnvModel(new Session({ model: 'default' }))) as Session;
+      assert.equal(s2.model, 'minimax:MiniMax-M3', '占位 default 被 env 先行填充');
+    } finally {
+      if (prev === undefined) delete process.env.PANSHA_MODEL;
+      else process.env.PANSHA_MODEL = prev;
+    }
+  });
 });
 
 // B12 (review defect): upward project-root discovery used `require('path')`
