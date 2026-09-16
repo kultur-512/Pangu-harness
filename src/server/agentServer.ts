@@ -53,6 +53,13 @@ export interface AgentServerOptions {
    * explicitly to allow any (not recommended without a token).
    */
   corsOrigins?: string | string[];
+  /**
+   * 本地事件镜像（缺陷：/api/run 的事件此前只走 SSE 给 HTTP 客户端，REPL 终端
+   * 对运行中的任务完全静默——真机要求"做题时 REPL 终端出现模型实时输出"）。
+   * /serve 分支注入：把 run 事件桥接到 REPL 本地渲染（rich=mapSseToBridge /
+   * line=renderSseEvent）。抛错被吞（不影响 SSE 主通道）。
+   */
+  onEventLocal?: (event: any) => void;
 }
 
 type ActiveRun = {
@@ -190,6 +197,8 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
             onEvent: (event) => {
               // Forward every internal event as SSE
               sse.send(event.type || 'event', event);
+              // 本地镜像：同一事件渲染到 REPL 终端（桥接失败不影响 SSE 通道）
+              try { opts.onEventLocal?.(event); } catch {}
             },
             signal: abortController.signal,
           });

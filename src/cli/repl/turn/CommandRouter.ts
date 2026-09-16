@@ -11,7 +11,7 @@ import { buildHelpView } from '../commands/HelpCommand.js';
 import { createCliApprovalBridge } from '../../../tools/approval.js';
 import type { TurnContext } from './TurnContext.js';
 import { getLastOutput, isRunning, resolveCtxWindowTokens, emitFeed, runSyncCompact } from './TurnContext.js';
-import { buildEffortSliderBlock, localizeRolloutStatus, modeBadgeVisual, modeSwitchReceipt, redrawEffortSliderLines } from './TurnRenderer.js';
+import { buildEffortSliderBlock, localizeRolloutStatus, mapSseToBridge, modeBadgeVisual, modeSwitchReceipt, redrawEffortSliderLines, renderSseEvent } from './TurnRenderer.js';
 
 /** line 模式实际支持的命令（Tab 补全 + 未知命令建议的数据源；顺序 = 常用度）。 */
 export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> = [
@@ -316,6 +316,17 @@ export async function handleSlashCommand(
     if (!serveToken && process.env.PANSHA_SERVE_TOKEN) serveToken = process.env.PANSHA_SERVE_TOKEN;
     try {
       const { createAgentServer } = await import('../../../server/agentServer.js');
+      // 本地镜像器：/api/run 的每个事件同步渲染到本 REPL 终端（模型实时输出
+      // ——真机要求"做题时终端出现模型输出"，此前 /serve 通道完全静默）。
+      const mirrorEvent = (ev: any) => {
+        try {
+          if (useRich && typeof bridge.pushFeed === 'function') {
+            mapSseToBridge(ev.type || 'event', ev, bridge, ctx);
+          } else {
+            renderSseEvent(ctx, ev.type || 'event', ev, ctx.renderer);
+          }
+        } catch {}
+      };
       const server = createAgentServer({
         port,
         host,
@@ -325,6 +336,7 @@ export async function handleSlashCommand(
         defaultTier: ctx.session.tier,
         defaultWorkspace: ctx.session.workspace,
         serveToken,
+        onEventLocal: mirrorEvent,
       });
       await server.listen();
       emit(`✓ SSE agent server 已启动：http://${host}:${port}（POST /api/run {task, tier?, workspace?} → SSE 流）。服务随 REPL 进程常驻。`, 'success');
