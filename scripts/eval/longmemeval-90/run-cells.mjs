@@ -38,7 +38,6 @@ const IS_MAIN = (() => {
 
 const DIR = resolve(dirname(fileURLToPath(import.meta.url)));
 const REPO = resolve(DIR, '../../..');
-const Q_PATH = join(DIR, 'questions.jsonl');
 const HAY_DIR = join(DIR, 'haystacks');
 const MEM_DIR = 'C:/Users/19395/.claude/projects/P--MY-codes-Pangu/memory';
 const OUT_DIR = DIR;
@@ -51,13 +50,29 @@ const CELLS = {
   'Pi-90':          { harness: 'Pi',          model: '1B', mode: 'recall' },
 };
 
-const cellId = IS_MAIN ? process.argv[process.argv.indexOf('--cell') + 1] : undefined;
+const argValue = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i > -1 && i + 1 < process.argv.length ? process.argv[i + 1] : undefined;
+};
+// --questions 子集覆盖（smoke-90 每题型冒烟用）：相对仓库根解析；缺省用完整题集
+const Q_PATH = (IS_MAIN && argValue('--questions'))
+  ? resolve(REPO, argValue('--questions'))
+  : join(DIR, 'questions.jsonl');
+const cellId = IS_MAIN ? argValue('--cell') : undefined;
 if (IS_MAIN && (!cellId || !CELLS[cellId])) {
-  console.error('Usage: node run-cells.mjs --cell <' + Object.keys(CELLS).join('|') + '>');
+  console.error('Usage: node run-cells.mjs --cell <' + Object.keys(CELLS).join('|') + '> [--model 1B|7B|M3|<全名>] [--label <输出文件名后缀>] [--limit N] [--questions <子集文件>]');
   process.exit(2);
 }
 const cfg = IS_MAIN ? CELLS[cellId] : undefined;
 const ONE_B = 'openpangu:openpangu-embedded-1b-i1';
+// 模型别名（run-matrix 矩阵入口用）：1B/7B=M3 本地/云端点；全名透传。
+// ZL 系格子可换模型；CC/Pi 格子的模型由各自 CLI 固定（--model 不改变它们）。
+const MODEL_ALIASES = { '1B': ONE_B, '7B': 'openpangu:openpangu7b-with-medusa', 'M3': 'minimax:MiniMax-M3' };
+const modelOverride = IS_MAIN ? argValue('--model') : undefined;
+const label = IS_MAIN ? (argValue('--label') ?? cellId) : cellId;
+const ZL_MODEL = modelOverride ? (MODEL_ALIASES[modelOverride] ?? modelOverride) : ONE_B;
+const displayModel = cfg && (cfg.harness === 'CC' || cfg.harness === 'Pi') ? cfg.model : ZL_MODEL;
+const limitN = IS_MAIN ? Number(argValue('--limit') ?? 0) : 0;
 
 const readMem = (qid) => {
   const p = `${MEM_DIR}/lme-${qid}.md`;
@@ -147,7 +162,7 @@ async function runZL({ qid, prompt, today }) {
   const wsDir = join(tmpDir, qid);
   mkdirSync(wsDir, { recursive: true });
   writeFileSync(join(wsDir, 'prompt.txt'), prompt, 'utf8');
-  const env = { ...process.env, PANSHA_MODEL: ONE_B, PANSHA_MEMORY_FILE: 'memory.json' };
+  const env = { ...process.env, PANSHA_MODEL: ZL_MODEL, PANSHA_MEMORY_FILE: 'memory.json', PANSHA_EVAL: '1' };
   let facts = null;
   if (cfg.mode === 'recall') env.PANSHA_NO_MEMORY = '1';
   if (cfg.mode === 'pipeline-compact') {
@@ -256,15 +271,15 @@ async function main() {
   } else if (cfg.mode === 'pipeline-compact') {
     console.warn(`[run-cells] oracle 数据缺失（${ORACLE}）——ZL-compact 格 PANSHA_TODAY 不可用，回退真实当天`);
   }
-  const outFile = join(OUT_DIR, `answers-${cellId}.jsonl`);
+  const outFile = join(OUT_DIR, `answers-${label}.jsonl`);
   const existing = new Set();
   if (existsSync(outFile)) {
     for (const l of readFileSync(outFile, 'utf8').split(/\r?\n/).filter(Boolean)) {
       try { existing.add(JSON.parse(l).question_id); } catch {}
     }
   }
-  const todo = rows.filter((r) => !existing.has(r.question_id));
-  console.log(`[${cellId}] harness=${cfg.harness} model=${cfg.model} mode=${cfg.mode} — ${rows.length} q (${existing.size} done, ${todo.length} todo)`);
+  const todo = rows.filter((r) => !existing.has(r.question_id)).slice(0, limitN > 0 ? limitN : undefined);
+  console.log(`[${label}] cell=${cellId} harness=${cfg.harness} model=${displayModel} mode=${cfg.mode} — ${rows.length} q (${existing.size} done, ${todo.length} todo)`);
 
   for (const row of todo) {
     process.stdout.write(`[${cellId}] ${row.question_id} ... `);
@@ -293,7 +308,7 @@ async function main() {
       facts: r.facts ?? undefined,
       cell: cellId,
       harness: cfg.harness,
-      model: cfg.model,
+      model: displayModel,
       mode: cfg.mode,
     };
     writeFileSync(outFile, JSON.stringify(out) + '\n', { flag: 'a' });

@@ -83,3 +83,25 @@ scripts/eval/longmemeval-*/tmp-*/
 
 # hermes 对比 harness（独立实验脚本+运行时产物，不入主流水线）
 scripts/eval/longmemeval-hermes/
+
+# === 评测数据归档（2026-09-17：结果/中间产物不再入 git；输入 fixture 与脚本保留） ===
+eval-archive/
+scripts/eval/compare/report.json
+scripts/eval/longmemeval-48/answers-*.jsonl
+scripts/eval/longmemeval-48/compare-48.jsonl
+scripts/eval/longmemeval-48/phase1.log.jsonl
+scripts/eval/longmemeval-90/answers-*.jsonl
+scripts/eval/longmemeval-90/graded.jsonl
+scripts/eval/longmemeval-90/phase1.log.jsonl
+scripts/eval/longmemeval-90/matrix-*.json
+scripts/eval/longmemeval-zhulong/answers.jsonl
+scripts/eval/longmemeval-zhulong/results.jsonl
+scripts/eval/longmemeval-zhulong/compare-results.jsonl
+scripts/eval/longmemeval-zhulong/product-pipeline-answers.jsonl
+scripts/eval/longmemeval-zhulong/ws/
+scripts/eval/longmemeval-pi/answers.jsonl
+scripts/eval/longmemeval-pi/results.jsonl
+scripts/eval/longmemeval-claudecode/answers.jsonl
+scripts/eval/longmemeval-claudecode/results.jsonl
+scripts/eval/longmemeval/ws/
+scripts/eval/longmemeval-90/diff-*.md
