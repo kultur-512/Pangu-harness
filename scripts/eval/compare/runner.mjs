@@ -20,27 +20,66 @@ const ENV_MINIMAX = {
   PANSHA_MINIMAX_BASE_URL: 'https://api.minimaxi.com/v1',
   PANSHA_MINIMAX_MODEL: 'MiniMax-M3',
   PANSHA_APPROVAL: 'full',
+  // R-01 评测豁免：评测运行不向任何工作区落记忆卡（防评测残留污染）
+  PANSHA_EVAL: '1',
 };
 
 const ZL_TSX = 'P:/MY_codes/Pangu/node_modules/tsx/dist/loader.mjs';
 const ZL_CLI = 'P:/MY_codes/Pangu/src/cli.ts';
 
+// R-02 修复：per-call settled 旗标（旧实现 `runCmd._done` 挂在函数静态属性上，
+// 并发命令共享——首个命令 finish 后其余命令的超时/击杀全部失效，挂死无兜底）。
+// 静默击杀不再伪报成功：exit 一律 124 + killedBy 标记，结果行可归因，
+// harness 缺陷不再伪装成 agent 失败。
 function runCmd(cmd, args, opts) {
   return new Promise((resolve) => {
     const cp = spawn(cmd, args, { ...opts, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', lastOut = Date.now();
-    const finish = (code) => { if (!runCmd._done) { runCmd._done = true; try { cp.kill(); } catch {} resolve({ code, stdout, stderr }); } };
-    runCmd._done = false;
-    const timer = setTimeout(() => finish(code0(opts.timeoutMs || 600000)), opts.timeoutMs || 600000);
-    const quiet = setInterval(() => { if (Date.now() - lastOut > 30000 && stdout.length > 0) finish(0); }, 5000);
-    const tick = (d) => { stdout += d; lastOut = Date.now(); };
-    cp.stdout?.on('data', tick);
-    cp.stderr?.on('data', d => { stderr += d; lastOut = Date.now(); });
-    cp.on('close', (code) => { clearTimeout(timer); clearInterval(quiet); resolve({ code, stdout, stderr }); });
-    cp.on('error', (e) => { clearTimeout(timer); clearInterval(quiet); resolve({ code: -1, stdout, stderr: String(e) }); });
+    let settled = false;
+    let killedBy = null;
+    const killTree = () => {
+      try {
+        if (process.platform === 'win32' && cp.pid) {
+          spawn('taskkill', ['/pid', String(cp.pid), '/T', '/F'], { windowsHide: true });
+        } else {
+          cp.kill('SIGKILL');
+        }
+      } catch {}
+    };
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      killTree();
+      clearTimeout(timer);
+      clearInterval(quiet);
+      resolve({ code, killedBy, stdout, stderr });
+    };
+    const timer = setTimeout(() => { killedBy = 'timeout'; finish(124); }, opts.timeoutMs || 600000);
+    // 静默检测：产出过输出后 30s 无增量 → 视为挂死击杀（保留旧阈值，语义改为诚实记录）
+    const quiet = setInterval(() => {
+      if (!settled && stdout.length > 0 && Date.now() - lastOut > 30000) {
+        killedBy = 'quiet';
+        finish(124);
+      }
+    }, 5000);
+    cp.stdout?.on('data', (d) => { stdout += d; lastOut = Date.now(); });
+    cp.stderr?.on('data', (d) => { stderr += d; lastOut = Date.now(); });
+    cp.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(quiet);
+      resolve({ code, killedBy: null, stdout, stderr });
+    });
+    cp.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(quiet);
+      resolve({ code: -1, killedBy: null, stdout, stderr: stderr + String(e) });
+    });
     if (opts.input) { try { cp.stdin.write(opts.input); } catch {} }
     try { cp.stdin.end(); } catch {}
-    function code0(ms) { return 124; }
   });
 }
 
@@ -50,7 +89,7 @@ async function runZL(ws, taskFile) {
     cwd: ws, timeoutMs: 600000,
     env: { ...process.env, ...ENV_MINIMAX, PANSHA_HEADLESS: '1' },
   });
-  return { ms: Date.now() - t0, stdout: r.stdout, exit: r.code };
+  return { ms: Date.now() - t0, stdout: r.stdout, stderr: r.stderr, exit: r.code, killedBy: r.killedBy };
 }
 
 async function runCC(ws, prompt) {
@@ -58,7 +97,7 @@ async function runCC(ws, prompt) {
   const r = await runCmd('claude.cmd', ['--print', '--dangerously-skip-permissions'], {
     cwd: ws, timeoutMs: 600000, shell: true, input: prompt,
   });
-  return { ms: Date.now() - t0, stdout: r.stdout, exit: r.code };
+  return { ms: Date.now() - t0, stdout: r.stdout, stderr: r.stderr, exit: r.code, killedBy: r.killedBy };
 }
 
 // 并发队列
@@ -81,24 +120,28 @@ await pool(TASKS.filter(t => !ONLY || ONLY.includes(t.id)), CONC, async (task) =
   for (const ws of [zlWs, ccWs]) { rmSync(ws, { recursive: true, force: true }); mkdirSync(ws, { recursive: true }); task.setup(ws); }
 
   console.log(`[${task.id}] running ${SKIP_ZL ? 'cc' : 'zl + cc'}...`);
-  const ccP = SKIP_CC ? Promise.resolve({ ms: 0, stdout: '(skipped)', exit: 0 }) : runCC(ccWs, task.prompt);
-  const zlP = SKIP_ZL ? Promise.resolve({ ms: 0, stdout: '(skipped)', exit: 0 }) : runZL(zlWs, join(zlWs, 'task.txt'));
+  const skipResult = { ms: 0, stdout: '(skipped)', stderr: '', exit: 0, killedBy: null };
+  const ccP = SKIP_CC ? Promise.resolve(skipResult) : runCC(ccWs, task.prompt);
+  const zlP = SKIP_ZL ? Promise.resolve(skipResult) : runZL(zlWs, join(zlWs, 'task.txt'));
   const [zl, cc] = await Promise.all([zlP, ccP]);
 
   const zlV = task.verify(zlWs);
   const ccV = task.verify(ccWs);
   const row = {
     id: task.id, size: task.size,
-    zl: { ms: zl.ms, exit: zl.exit, ...Object.fromEntries([['ok', zlV[0]], ['detail', zlV[1]]]) },
-    cc: { ms: cc.ms, exit: cc.exit, ...Object.fromEntries([['ok', ccV[0]], ['detail', ccV[1]]]) },
+    zl: { ms: zl.ms, exit: zl.exit, ...(zl.killedBy ? { killedBy: zl.killedBy } : {}), ...Object.fromEntries([['ok', zlV[0]], ['detail', zlV[1]]]) },
+    cc: { ms: cc.ms, exit: cc.exit, ...(cc.killedBy ? { killedBy: cc.killedBy } : {}), ...Object.fromEntries([['ok', ccV[0]], ['detail', ccV[1]]]) },
     zlAnswerHead: String(zl.stdout.split('已通过验证')[0] ?? '').slice(-150),
     ccAnswerHead: cc.stdout.slice(0, 150),
   };
   results.push(row);
-  console.log(`[${task.id}] zl: ${zlV[0] ? 'PASS' : 'FAIL'} (${(zl.ms / 1000).toFixed(0)}s) ${zlV[1]} | cc: ${ccV[0] ? 'PASS' : 'FAIL'} (${(cc.ms / 1000).toFixed(0)}s) ${ccV[1]}`);
-  // 保存两 agent 回复全文
+  console.log(`[${task.id}] zl: ${zlV[0] ? 'PASS' : 'FAIL'} (${(zl.ms / 1000).toFixed(0)}s) ${zlV[1]} | cc: ${ccV[0] ? 'PASS' : 'FAIL'} (${(cc.ms / 1000).toFixed(0)}s) ${ccV[1]}`
+    + (zl.killedBy || cc.killedBy ? ` [killed: ${zl.killedBy || '-'}/${cc.killedBy || '-'}]` : ''));
+  // 保存两 agent 回复全文 + stderr（R-02：stderr 落盘，排障证据不再丢）
   writeFileSync(`P:/MY_codes/Pangu/.zcode/compare/out-${task.id}-zl.txt`, zl.stdout);
   writeFileSync(`P:/MY_codes/Pangu/.zcode/compare/out-${task.id}-cc.txt`, cc.stdout);
+  if (zl.stderr) writeFileSync(`P:/MY_codes/Pangu/.zcode/compare/out-${task.id}-zl.err.txt`, zl.stderr);
+  if (cc.stderr) writeFileSync(`P:/MY_codes/Pangu/.zcode/compare/out-${task.id}-cc.err.txt`, cc.stderr);
 });
 
 console.log('\n================ 矩阵 ================');
