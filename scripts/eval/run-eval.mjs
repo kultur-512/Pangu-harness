@@ -324,7 +324,8 @@ function ablationConfig(key) {
  * @returns {Record<string, string>}
  */
 function ablationEnv(ablation) {
-  const env = { ...process.env, PANSHA_HEADLESS: '1' };
+  // R-01 评测豁免：评测运行不落记忆卡（finalizeTaskMemory/recordChatFact 双豁免）
+  const env = { ...process.env, PANSHA_HEADLESS: '1', PANSHA_EVAL: '1' };
 
   if (ablation.overflowWindow) {
     env.PANSHA_CTX_WINDOW = '8000';

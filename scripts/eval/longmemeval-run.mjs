@@ -184,7 +184,7 @@ async function runQA(q, wsDir, tier, model) {
   await writeFile(questionFile, q.question, 'utf8');
   // 0.8.2 纰漏修复：模型显式透传——此前只在日志显示默认值，spawn env 里没有
   // PANSHA_MODEL → 子进程回落 .panshalach.json 默认模型（本地端点没开就必挂）。
-  const env = { ...process.env, PANSHA_MEMORY_FILE: 'memory.json', PANSHA_MODEL: model };
+  const env = { ...process.env, PANSHA_MEMORY_FILE: 'memory.json', PANSHA_MODEL: model, PANSHA_EVAL: '1' };
   if (tier === 'A') env.PANSHA_NO_MEMORY = '1';
   else delete env.PANSHA_NO_MEMORY;
   const { stdout, stderr, exitCode, error } = await spawnWithTimeout(

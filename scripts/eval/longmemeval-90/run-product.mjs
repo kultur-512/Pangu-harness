@@ -137,7 +137,7 @@ function isoFrom(y, mo, d) {
 async function runQA(q, wsDir, model) {
   const questionFile = join(wsDir, 'question.txt');
   writeFileSync(questionFile, q.question, 'utf8');
-  const env = { ...process.env, PANSHA_MEMORY_FILE: 'memory.json', PANSHA_MODEL: model };
+  const env = { ...process.env, PANSHA_MEMORY_FILE: 'memory.json', PANSHA_MODEL: model, PANSHA_EVAL: '1' };
   delete env.PANSHA_NO_MEMORY;
   const today = looseParseQuestionDate(q.question_date);
   if (today) env.PANSHA_TODAY = today;

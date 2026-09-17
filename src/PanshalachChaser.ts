@@ -606,11 +606,16 @@ export class PanshalachChaser {
 
       const makeStreamingComplete = (): ((prompt: string, opts?: any) => Promise<string | ModelClientOutput>) => {
         const streamable = originalClient as any;
+        // E2：调用方（loop）注入的 onUsage 与本包装器累加器链式合并，两条计量线互不覆盖
+        const chainUsage = (opts?: any) => (u: any) => {
+          onUsage(u);
+          if (opts && typeof opts.onUsage === 'function') opts.onUsage(u);
+        };
         if (typeof streamable?.streamChat !== 'function') {
           // M2-4：非流式路径同样透传 onUsage（网关 usage 直接计量）
-          return (prompt: string, opts?: any) => originalClient.complete(prompt, { ...(opts ?? {}), onUsage });
+          return (prompt: string, opts?: any) => originalClient.complete(prompt, { ...(opts ?? {}), onUsage: chainUsage(opts) });
         }
-        return (prompt: string, opts?: any) => consumeChunks(streamable.streamChat(prompt, { ...(opts ?? {}), onUsage }));
+        return (prompt: string, opts?: any) => consumeChunks(streamable.streamChat(prompt, { ...(opts ?? {}), onUsage: chainUsage(opts) }));
       };
 
       // 0.8 P2（M1-PROTOCOL）：messages 通道 wrapper——优先 streamChatMessages
@@ -621,11 +626,16 @@ export class PanshalachChaser {
         const canStream = typeof streamable?.streamChatMessages === 'function';
         const canChat = typeof streamable?.chat === 'function';
         if (!canStream && !canChat) return undefined;
+        // E2：与文本路径同规则——调用方 onUsage 链式合并，不覆盖累加器
+        const chainUsage = (opts?: any) => (u: any) => {
+          onUsage(u);
+          if (opts && typeof opts.onUsage === 'function') opts.onUsage(u);
+        };
         return async (messages: any[], opts?: any): Promise<string | ModelClientOutput> => {
           if (canStream) {
-            return consumeChunks(streamable.streamChatMessages(messages, { ...(opts ?? {}), onUsage }));
+            return consumeChunks(streamable.streamChatMessages(messages, { ...(opts ?? {}), onUsage: chainUsage(opts) }));
           }
-          return streamable.chat(messages, { ...(opts ?? {}), onUsage });
+          return streamable.chat(messages, { ...(opts ?? {}), onUsage: chainUsage(opts) });
         };
       };
 
@@ -714,6 +724,11 @@ export class PanshalachChaser {
           readBeforeWriteViolation: s.readBeforeWriteViolation,
           terminalNoCheck: s.terminalNoCheck,
           automationNoEffectCheck: s.automationNoEffectCheck,
+          // E2 性能埋点透传（runAgentTask 据此产出 stepTimings 证据）
+          ...(typeof s.ts === 'number' ? { ts: s.ts } : {}),
+          ...(typeof s.durationMs === 'number' ? { durationMs: s.durationMs } : {}),
+          ...(typeof s.promptTokens === 'number' ? { promptTokens: s.promptTokens } : {}),
+          ...(typeof s.completionTokens === 'number' ? { completionTokens: s.completionTokens } : {}),
         })),
         isStrongTarget: isHighRigor,
         benchmarkType: taskStyle,
