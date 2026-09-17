@@ -72,9 +72,52 @@ async function initMcpServers(ctx: TurnContext): Promise<void> {
  * - idle:   normal task flow
  * - running: '/' → immediate local command; '!' → steer; else → queued task
  */
+/**
+ * 多行输入拆分（导出供测试）：命令行（/ 开头）与任务行分离。
+ * 真机 M3 REPL 实测缺陷的修复前置——/workspace + 任务文本多行一起提交时，
+ * 整段命中 startsWith('/') 被当作命令参数，任务文本被静默吞掉。
+ */
+export function splitMultiLineInput(text: string): { commandLines: string[]; taskText: string } {
+  const lines = String(text || '')
+    .trim()
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const commandLines = lines.filter((l) => l.startsWith('/'));
+  const taskText = lines.filter((l) => !l.startsWith('/')).join('\n');
+  return { commandLines, taskText };
+}
+
 export async function handleUserLine(ctx: TurnContext, text: string, bridge?: any) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return;
+
+  // 多行输入：命令行逐条执行（环境切换必须先于任务落定），任务行合并为
+  // 一条，按当前运行态路由（空闲直跑 / 运行中入队或 steer）。
+  const { commandLines, taskText } = splitMultiLineInput(trimmed);
+  if (commandLines.length > 0 && (commandLines.length > 1 || taskText)) {
+    for (const line of commandLines) {
+      await runTaskViaSse(ctx, line, bridge);
+    }
+    if (taskText) {
+      if (!isRunning(ctx)) {
+        await runTaskViaSse(ctx, taskText, bridge);
+      } else {
+        const routed = classifyRunningInput(taskText);
+        if (routed.kind === 'steer') {
+          if (routed.payload) {
+            ctx.queue.enqueueSteer(routed.payload);
+            emitFeed(ctx, `steered ×${ctx.queue.steerCount}（下一轮注入）：${routed.payload.slice(0, 60)}…`, 'info');
+          }
+        } else {
+          ctx.queue.enqueueTask(routed.payload);
+          emitFeed(ctx, `queued ×${ctx.queue.taskCount}：${routed.payload.slice(0, 60)}…`, 'info');
+        }
+        updateQueueCount(ctx);
+      }
+    }
+    return;
+  }
 
   if (!isRunning(ctx)) {
     await runTaskViaSse(ctx, trimmed, bridge);

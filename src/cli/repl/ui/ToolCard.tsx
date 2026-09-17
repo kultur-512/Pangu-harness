@@ -74,7 +74,12 @@ export function ToolCard(props: {
   }
 
   const { text: bodyText, diff } = parseDiffFromResult(rawResult);
-  const body = bodyText.length > 200 ? bodyText.slice(0, 200) + '…' : bodyText;
+  // 真机 M3 REPL 实测：200 字符把 read_file 4 行结果截得残缺（一行 80 列
+  // 不到 3 行就吃满）。放到 800 字符，超出仍截断但标注剩余量。
+  const BODY_LIMIT = 800;
+  const body = bodyText.length > BODY_LIMIT
+    ? bodyText.slice(0, BODY_LIMIT) + `…（剩余 ${bodyText.length - BODY_LIMIT} 字符省略）`
+    : bodyText;
 
   if (Box && Text) {
     const children: any[] = [

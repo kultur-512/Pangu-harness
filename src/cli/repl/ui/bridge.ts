@@ -151,9 +151,33 @@ export function createBridge(
   };
 
   // live streaming buffers
+  // SSE delta 节流合并（真机 M3 实测：逐 token dispatch → ink 全屏重绘频率
+  // 过高，观感闪烁）。40ms 批量 ≈25fps，人眼连贯；resetStream 先 flush
+  // pending 再清，保证流尾内容不丢。
+  const STREAM_FLUSH_MS = 40;
+  let streamPending: { thinking: string; message: string } = { thinking: '', message: '' };
+  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushStream = () => {
+    if (streamFlushTimer) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    const pending = streamPending;
+    streamPending = { thinking: '', message: '' };
+    if (!currentDispatch) return;
+    if (pending.thinking) currentDispatch({ type: 'APPEND_STREAM', kind: 'thinking', text: pending.thinking });
+    if (pending.message) currentDispatch({ type: 'APPEND_STREAM', kind: 'message', text: pending.message });
+  };
+
   const appendStream = (kind: 'thinking' | 'message', text: string) => {
-    if (!text || !currentDispatch) return;
-    currentDispatch({ type: 'APPEND_STREAM', kind, text });
+    if (!text) return;
+    streamPending[kind] += text;
+    if (streamFlushTimer) return;
+    streamFlushTimer = setTimeout(() => {
+      streamFlushTimer = null;
+      flushStream();
+    }, STREAM_FLUSH_MS);
   };
 
   /**
@@ -163,6 +187,7 @@ export function createBridge(
    * - resetStream('message') → clear only message
    */
   const resetStream = (kind?: 'thinking' | 'message') => {
+    flushStream();
     if (!currentDispatch) return;
     currentDispatch({ type: 'RESET_STREAM', kind });
   };

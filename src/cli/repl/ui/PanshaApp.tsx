@@ -14,6 +14,16 @@ import { ConfirmBar } from './ConfirmBar.js';
 import { TierPicker } from './TierPicker.js';
 import { StreamingAssistant } from './streamingAssistant.js';
 
+// memo 包装（模块级单次）——props 浅比较不变时跳过子树 reconcile：
+// stream delta 高频帧里 Feed（几十项历史）与 TopBar 整体跳过（抗闪烁
+// React 层，配合 bridge 的 40ms delta 合并）。ui/ 树由 startInkUI 在
+// 注入 __PANSHA_INK_REACT__ 之后动态 import，模块加载时实例已就绪。
+const REACT_MODULE: any = (globalThis as any).__PANSHA_INK_REACT__ || {};
+const memoOnce = (C: any): any =>
+  typeof REACT_MODULE.memo === 'function' ? REACT_MODULE.memo(C) : C;
+const MemoTopBar: any = memoOnce(TopBar);
+const MemoFeed: any = memoOnce(Feed);
+
 export function PanshaApp(props: {
   bridge: any;
   initialSession?: { tier?: string; model?: string; workspace?: string };
@@ -184,7 +194,11 @@ export function PanshaApp(props: {
   }, [bridge]);
 
   // Submit from InputBar
-  const handleSubmit = (text: string) => {
+  // useCallback 稳定回调引用 + memo 子组件（见下）：stream delta 高频重渲染
+  // 时跳过 Feed/TopBar/InputBar 子树的 reconcile（抗闪烁的 React 层，配合
+  // bridge 的 40ms delta 合并）。history 只在提交时变化，不影响 delta 期间
+  // 的引用稳定。
+  const handleSubmit = (R.useCallback ? R.useCallback((text: string) => {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
     const newHistory = [...(state.input.history || []), trimmed].slice(-50);
@@ -193,18 +207,54 @@ export function PanshaApp(props: {
     if (bridge && typeof bridge.submitInput === 'function') {
       bridge.submitInput(trimmed);
     }
-  };
-
-  const handleChange = (v: string) => {
-    dispatch({ type: 'UPDATE_INPUT', value: v });
-    if (bridge && typeof bridge.updateInput === 'function') {
-      bridge.updateInput(v);
+  }, [bridge, state.input.history]) : (text: string) => {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return;
+    const newHistory = [...(state.input.history || []), trimmed].slice(-50);
+    dispatch({ type: 'UPDATE_INPUT', value: '' });
+    dispatch({ type: 'SET_HISTORY', history: newHistory });
+    if (bridge && typeof bridge.submitInput === 'function') {
+      bridge.submitInput(trimmed);
     }
-  };
+  });
+
+  const handleChange = R.useCallback
+    ? R.useCallback((v: string) => {
+        dispatch({ type: 'UPDATE_INPUT', value: v });
+        if (bridge && typeof bridge.updateInput === 'function') {
+          bridge.updateInput(v);
+        }
+      }, [bridge])
+    : (v: string) => {
+        dispatch({ type: 'UPDATE_INPUT', value: v });
+        if (bridge && typeof bridge.updateInput === 'function') {
+          bridge.updateInput(v);
+        }
+      };
+
+  const handleDoubleEsc = R.useCallback
+    ? R.useCallback(() => {
+        dispatch({ type: 'UPDATE_INPUT', value: '' });
+        if (bridge && typeof bridge.clearQueue === 'function') {
+          try { bridge.clearQueue(); } catch {}
+        }
+        if (bridge && typeof bridge.pushFeed === 'function') {
+          bridge.pushFeed({ type: 'text', text: '（双 Esc：输入与队列已清空）', level: 'info' });
+        }
+      }, [bridge])
+    : () => {
+        dispatch({ type: 'UPDATE_INPUT', value: '' });
+        if (bridge && typeof bridge.clearQueue === 'function') {
+          try { bridge.clearQueue(); } catch {}
+        }
+        if (bridge && typeof bridge.pushFeed === 'function') {
+          bridge.pushFeed({ type: 'text', text: '（双 Esc：输入与队列已清空）', level: 'info' });
+        }
+      };
 
   // Compose sub-components (static ESM imports per M1-2.0.2)
-  const TopBarComp: any = TopBar;
-  const FeedComp: any = Feed;
+  const TopBarComp: any = MemoTopBar;
+  const FeedComp: any = MemoFeed;
   const InputBarComp: any = InputBar;
   const ConfirmBarComp: any = ConfirmBar;
   const TierPickerComp: any = TierPicker;
@@ -277,15 +327,7 @@ export function PanshaApp(props: {
         providerOptions: bridge && typeof bridge.providerOptions === 'function' ? bridge.providerOptions : undefined,
         // B5: double-Esc (clear input + wipe queue) is owned by the InputBar;
         // it reports here so the app can also clear its own input state.
-        onDoubleEsc: () => {
-          dispatch({ type: 'UPDATE_INPUT', value: '' });
-          if (bridge && typeof bridge.clearQueue === 'function') {
-            try { bridge.clearQueue(); } catch {}
-          }
-          if (bridge && typeof bridge.pushFeed === 'function') {
-            bridge.pushFeed({ type: 'text', text: '（双 Esc：输入与队列已清空）', level: 'info' });
-          }
-        },
+        onDoubleEsc: handleDoubleEsc,
       });
 
   // Root: column, full height. Feed grows, input/confirm docks at bottom.
