@@ -60,10 +60,40 @@ export class UniversalToolCallAdapter {
   private static readonly ROOT_OPEN = '<>';
   private static readonly ROOT_CLOSE = '</>';
 
+  /** 路径类参数名——值会被做闭合残片清洗 */
+  private static readonly PATH_PARAM_KEYS = new Set(['file_path', 'path', 'file', 'target']);
+
   /**
-   * Primary parse entry point.
+   * 2026-09-16 真机（M3）：路径参数值偶带闭合标签残片（".panshalach.json]<]minimax[>"、
+   * "todo.js]"）——写文件写错名、跑脚本跑错路径，6/21 对比任务因此失败。
+   * 清洗：从第一个 `]` 截断（残片起点），剥首尾引号。合法路径含 `]` 极罕见，可接受。
    */
+  private static sanitizePathValue(v: string): string {
+    let s = String(v ?? '').trim();
+    const cut = s.search(/\]/);
+    if (cut > 0) s = s.slice(0, cut);
+    return s.replace(/^["'`]+|["'`]+$/g, '').trim();
+  }
+
+  private static sanitizeToolCalls(calls: ToolCall[]): ToolCall[] {
+    return calls.map(c => {
+      if (!c.params || c.params.length === 0) return c;
+      const params = c.params.map(p =>
+        (p.name && UniversalToolCallAdapter.PATH_PARAM_KEYS.has(String(p.name).toLowerCase()))
+          ? { ...p, value: UniversalToolCallAdapter.sanitizePathValue(p.value) }
+          : p);
+      return { ...c, params };
+    });
+  }
+
+  /** Primary parse entry point. */
   parse(content: string, options: UniversalParseOptions = {}): UniversalParseResult {
+    const r = this.parseInner(content, options);
+    if (r.toolCalls.length > 0) r.toolCalls = UniversalToolCallAdapter.sanitizeToolCalls(r.toolCalls);
+    return r;
+  }
+
+  private parseInner(content: string, options: UniversalParseOptions = {}): UniversalParseResult {
     const warnings: string[] = [];
     const attempts: string[] = [];
     let detectedFormat: ToolCallFormat = 'unknown';
