@@ -462,14 +462,15 @@ export class PanshalachChaser {
       usageSamples++;
     };
 
-    // search 意图用受限只读循环（≤3 步，写/bash 被拒）；execution 用完整循环。
+    // search 意图用受限只读循环（≤30 步，写/bash 被拒）；execution 用完整循环。
     const isSearchIntent = intent === 'search';
     const dynamicOptions: VerifyCritiqueLoopOptions = {
       strictStructured: isHighRigor && !isSearchIntent,
       // 2026-09-16 取消步数限制：0 = 不限步数（预算闸兜底）。search 意图保留
-      // 3 步窄检索上限（受限路径语义不变）。
+      // 只读窄检索上限（控制人裁决：全档位步数 ×10——3→30，"读文件数标题"
+      // 类多文件问答 3 步经常不够用，真机 REPL 实测第 3 步截断无回答）。
       maxSteps: isSearchIntent
-        ? (maxStepsPerRollout > 0 ? Math.min(3, maxStepsPerRollout) : 3)
+        ? (maxStepsPerRollout > 0 ? Math.min(30, maxStepsPerRollout) : 30)
         : maxStepsPerRollout,
       maxConsecutiveFailures: tierConfig.maxConsecutiveFailures,
       verifyFirstBias: tierConfig.verifyFirstBias,
