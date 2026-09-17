@@ -36,7 +36,7 @@ export interface TierConfig {
   tier: Tier;
   /** 人类可读的典型场景 */
   typicalUseCase: string;
-  /** 默认 maxStepsPerRollout */
+  /** 默认 maxStepsPerRollout（0 = 不限步数，预算闸兜底；2026-09-16 取消步数限制） */
   maxStepsPerRollout: number;
   /** 纪律规则注入强度（仅强档 isStrongMode=true 生效；非强档省略） */
   ironLawInjectionLevel?: IronLawInjectionLevel;
@@ -56,7 +56,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   quick: {
     tier: 'quick',
     typicalUseCase: '热修复、临时检查',
-    maxStepsPerRollout: 10,
+    maxStepsPerRollout: 0,
     maxConsecutiveFailures: 2,
     verifyFirstBias: false,
     memoryLoadLevel: 'light',
@@ -66,7 +66,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   standard: {
     tier: 'standard',
     typicalUseCase: '常规小修改',
-    maxStepsPerRollout: 15,
+    maxStepsPerRollout: 0,
     maxConsecutiveFailures: 3,
     verifyFirstBias: false,
     memoryLoadLevel: 'light',
@@ -76,7 +76,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   high: {
     tier: 'high',
     typicalUseCase: '日常主力（推荐）',
-    maxStepsPerRollout: 20,
+    maxStepsPerRollout: 0,
     maxConsecutiveFailures: 3,
     verifyFirstBias: false,
     memoryLoadLevel: 'medium',
@@ -86,7 +86,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   max: {
     tier: 'max',
     typicalUseCase: '重要/高风险任务',
-    maxStepsPerRollout: 25,
+    maxStepsPerRollout: 0,
     ironLawInjectionLevel: 'high',
     maxConsecutiveFailures: 4,
     verifyFirstBias: true,
@@ -97,7 +97,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   ex: {
     tier: 'ex',
     typicalUseCase: '极难任务、核心模块',
-    maxStepsPerRollout: 30,
+    maxStepsPerRollout: 0,
     ironLawInjectionLevel: 'highest',
     maxConsecutiveFailures: 5,
     verifyFirstBias: true,
@@ -108,7 +108,7 @@ const TIER_CONFIGS: Record<Tier, TierConfig> = {
   pangu: {
     tier: 'pangu',
     typicalUseCase: '极致追求（终极长程记忆模式）',
-    maxStepsPerRollout: 40,
+    maxStepsPerRollout: 0,
     ironLawInjectionLevel: 'highest',
     maxConsecutiveFailures: 6,
     verifyFirstBias: true,

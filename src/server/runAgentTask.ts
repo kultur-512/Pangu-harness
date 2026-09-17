@@ -235,7 +235,23 @@ export async function runAgentTask(
   // F3（0.8.1 第 2 轮）：chat 直答不发 explore 相位——真机实测 `── 侦察 ──`
   // 相位线是 rollout 语义噪声，chat 直答应只见正文流 + 终态行。intent 在入口
   // 已对原始输入分类（与传入 chaser 的 intent 同源），此处直接按其门控。
-  if (intent !== 'chat') ctx.onEvent({ type: 'phase', phase: 'explore' });
+  if (intent !== 'chat') {
+    ctx.onEvent({ type: 'phase', phase: 'explore' });
+    // 侦察内容透出（2026-09-15 真机实证"侦察/执行相位线之间无任何内容"）：
+    // 侦察实际工作（记忆检索/意图分类/prompt 组装）在 explore 事件前已静默
+    // 完成，UI 只见两条相位线、记忆注入审计只进 HOME 账本不进 feed。现把
+    // 侦察结论作为 recon 事件发出——rich（mapSseToBridge）/ line
+    // （renderSseEvent）/ classic·headless（RunCommand）三端各渲染一行灰字。
+    ctx.onEvent({
+      type: 'recon',
+      intent,
+      tier: session.tier,
+      memoryCards: injectedCardIds.length,
+      memoryOverflow: pb.lastBuildMeta?.memoryOverflowCount ?? 0,
+      promptChars: enriched.length,
+      workspace: session.workspace,
+    });
+  }
 
   let success = false;
 
@@ -341,11 +357,24 @@ export async function runAgentTask(
 
     // R1（0.8.1）：answered 正文带出——chat 直答正文在轨迹末步 result 里，
     // 此前 RunResult 不携带 → TurnController/RunCommand 三端全部拿不到正文。
+    // 2026-09-16 放宽：不再限定 answered——execution 终局（completed/
+    // no-verification）模型常输出总结/结论，chat 追问的【最近对话】段
+    // （buildChatRecentTurnsBlock 读 result.answerText）依赖它；此前工具任务
+    // 后追问"这些文件是干嘛的"，模型因助手行为空而零上下文硬答（真机实证）。
     const lastStepResult = trajSteps.length > 0
       ? String(trajSteps[trajSteps.length - 1]?.result ?? '')
       : '';
-    const answerText = result.bestTrajectory?.stopReason === 'answered' && lastStepResult.trim()
-      ? lastStepResult
+    // 正文净化（2026-09-16）：末步正文为纯内部信号词（如历史渲染泄漏期的
+    // 学舌残留 "NO_TOOL_CALLS"）时不作为回复带出——展示/落盘/最近对话段
+    // 都不该把引擎信号词当模型回答。
+    const RAW_SIGNAL_ONLY_RE = /^\s*(?:NO_TOOL_CALLS|TOOL_ERROR:[^\n]*)\s*$/i;
+    // 2026-09-16：回复只取【面向用户的正文步】（空转 answered 的 step.result，
+    // userFacing 标记）——工具步的 result 是工具输出原文（READ_SUCCESS…），
+    // 不能当模型回复（真机：工具步终局时 answerText 泄漏工具原文）。
+    const userFacingSteps = trajSteps.filter((s) => (s as any)?.userFacing && String((s as any)?.result ?? '').trim());
+    const lastUserFacing = userFacingSteps.length > 0 ? String(userFacingSteps.at(-1)!.result) : '';
+    const answerText = lastUserFacing.trim() && !RAW_SIGNAL_ONLY_RE.test(lastUserFacing)
+      ? lastUserFacing.replace(/\n*\s*VERIFICATION:\s*PASS\s*$/i, '').trimEnd()
       : undefined;
 
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。

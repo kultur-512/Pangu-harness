@@ -177,7 +177,7 @@ export class PanshalachChaser {
       console.log(`Tier        : ${tierConfig.tier} (${tierConfig.typicalUseCase})`);
       console.log(`Task Style  : ${taskStyle ?? 'auto'}`);
       console.log(`Budget      : ${budgetTokens} tokens`);
-      console.log(`Max Steps   : ${maxStepsPerRollout}`);
+      console.log(`Max Steps   : ${maxStepsPerRollout > 0 ? maxStepsPerRollout : '∞（不限，预算闸兜底）'}`);
       console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel ?? 'N/A（实用模式）'}`);
       console.log(`Memory      : ${tierConfig.memoryLoadLevel}`);
       return { success: false, totalRollouts: 0, tierConfig };
@@ -413,6 +413,7 @@ export class PanshalachChaser {
           plan: '',
           action: [],
           result: chatText,
+          userFacing: true, // chat 直答正文即面向用户回复（answerText 带出的标记）
         }],
         success: true,
         stopReason: 'answered',
@@ -465,11 +466,16 @@ export class PanshalachChaser {
       usageSamples++;
     };
 
-    // search 意图用受限只读循环（≤3 步，写/bash 被拒）；execution 用完整循环。
+    // search 意图用受限只读循环（≤30 步，写/bash 被拒）；execution 用完整循环。
     const isSearchIntent = intent === 'search';
     const dynamicOptions: VerifyCritiqueLoopOptions = {
       strictStructured: isHighRigor && !isSearchIntent,
-      maxSteps: isSearchIntent ? Math.min(3, maxStepsPerRollout) : maxStepsPerRollout,
+      // 2026-09-16 取消步数限制：0 = 不限步数（预算闸兜底）。search 意图保留
+      // 只读窄检索上限（控制人裁决：全档位步数 ×10——3→30，"读文件数标题"
+      // 类多文件问答 3 步经常不够用，真机 REPL 实测第 3 步截断无回答）。
+      maxSteps: isSearchIntent
+        ? (maxStepsPerRollout > 0 ? Math.min(30, maxStepsPerRollout) : 30)
+        : maxStepsPerRollout,
       maxConsecutiveFailures: tierConfig.maxConsecutiveFailures,
       verifyFirstBias: tierConfig.verifyFirstBias,
       practicalMode: !isHighRigor || isSearchIntent,
@@ -702,7 +708,11 @@ export class PanshalachChaser {
           thought: s.reasoning.thinking,
           plan: s.reasoning.plan,
           action: s.toolCalls,
-          result: s.verificationResult,
+          // 2026-09-16：verificationResult（工具结果）为空时回退 step.result
+          // （空转 answered 步的用户正文）——此前空转正文在此处被空串覆盖，
+          // answerText 带出链路断在最后一环（"已回复"但无内容）。
+          result: s.verificationResult || (s as any).result || '',
+          ...(s.userFacing ? { userFacing: true } : {}),
           detectedFormat: s.detectedFormat,
           didRealVerification: s.didRealVerification,
           readBeforeWriteViolation: s.readBeforeWriteViolation,

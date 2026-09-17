@@ -11,13 +11,14 @@ import { buildHelpView } from '../commands/HelpCommand.js';
 import { createCliApprovalBridge } from '../../../tools/approval.js';
 import type { TurnContext } from './TurnContext.js';
 import { getLastOutput, isRunning, resolveCtxWindowTokens, emitFeed, runSyncCompact } from './TurnContext.js';
-import { buildEffortSliderBlock, localizeRolloutStatus, modeBadgeVisual, modeSwitchReceipt, redrawEffortSliderLines } from './TurnRenderer.js';
+import { buildEffortSliderBlock, localizeRolloutStatus, mapSseToBridge, modeBadgeVisual, modeSwitchReceipt, redrawEffortSliderLines, renderSseEvent } from './TurnRenderer.js';
 
 /** line 模式实际支持的命令（Tab 补全 + 未知命令建议的数据源；顺序 = 常用度）。 */
 export const LINE_COMMANDS: ReadonlyArray<{ name: string; aliases?: string[] }> = [
   { name: 'help', aliases: ['?', 'h'] },
   { name: 'mode' },
   { name: 'model' },
+  { name: 'workspace', aliases: ['ws'] },
   { name: 'memory' },
   { name: 'usage' },
   { name: 'undo' },
@@ -263,6 +264,40 @@ export async function handleEditPrefill(ctx: TurnContext, useRich: boolean, brid
 }
 
 /**
+ * 注册表命令的最小 CommandContext（/resume /workspace 等经共享注册表执行的
+ * 命令共用）：rich 的 renderer 走 emit 进 feed、line 走真 renderer；审批桥与
+ * abort signal 与主任务路径同源（sseInteractive 的 CommandContext 注册点）。
+ */
+function buildRegistryCommandCtx(
+  ctx: TurnContext,
+  useRich: boolean,
+  emit: (text: string, level?: 'info' | 'warn' | 'error' | 'success') => void,
+  reg: any
+): any {
+  return {
+    session: ctx.session,
+    registry: reg,
+    renderer: useRich
+      ? {
+          writeLine: (t: string) => emit(t, 'info'),
+          color: (t: string) => t,
+          warn: (t: string) => emit(t, 'warn'),
+          error: (t: string) => emit(t, 'error'),
+          success: (t: string) => emit(t, 'success'),
+          info: (t: string) => emit(t, 'info'),
+        }
+      : ctx.renderer,
+    input: null,
+    repl: null,
+    provider: (ctx.session as any).provider,
+    approvalBridge: useRich
+      ? (req: { tool: string; description: string; danger: boolean }) => (ctx.bridgeRef.current.setConfirm(req) as Promise<string>)
+      : createCliApprovalBridge(),
+    signal: ctx.currentAbort?.signal,
+  };
+}
+
+/**
  * runTaskViaSse 内的斜杠命令注册派发（原函数体的整段 if (trimmed.startsWith('/'))
  * 逐字节搬家；返回值 true = 已本地处理、调用方必须 return，斜杠行永不提交引擎）。
  */
@@ -277,6 +312,74 @@ export async function handleSlashCommand(
   }
 ): Promise<boolean> {
   const { cmd, arg, emit, useRich, bridge } = d;
+
+  // 缺陷 #1（真机实测：rich UI 输入 /exit 落"未知命令"）：/exit(/quit /q)
+  // 必须在统一派发器本地处理——line 模式的 handleLocalCommand 挡在前面
+  // （lineRl.close()），rich 模式（无 readline）只能在这里干净退出：
+  // 落会话元数据 → 卸载 ink（还原终端）→ exit 0。测试可用 ctx.requestExit
+  // 注入替身，默认 process.exit(0)。
+  // REVIEW M7：任务运行中（含 line 模式——运行态输入经 handleUserLine 的
+  // classifyRunningInput 也会路由到这里）不得直接杀进程，先中断任务再退出。
+  if (cmd === '/exit' || cmd === '/quit' || cmd === '/q') {
+    if (isRunning(ctx)) {
+      emit('任务运行中，请先按 Ctrl+C 中断任务，再输入 /exit 退出。', 'warn');
+      return true;
+    }
+    try { rollout.appendMeta(ctx.session); } catch {}
+    try {
+      const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
+      if (inst && typeof inst.unmount === 'function') inst.unmount();
+    } catch {}
+    try { ctx.requestExit(); } catch { process.exit(0); }
+    return true;
+  }
+
+  // 缺陷 #7（真机实测：rich UI 输入 /serve 落"未知命令"）：与 /exit 同根——
+  // rich 派发器缺分支。/serve 在 REPL 进程内启动 SSE agent server（POST /api/run），
+  // 前端/脚本即可经 HTTP 驱动本 REPL。server 常驻进程、不阻塞输入；重复启动由
+  // listen() 的 EADDRINUSE 兜底提示。
+  if (cmd === '/serve') {
+    const sArgs = arg.split(/\s+/).filter(Boolean);
+    let port = 3456;
+    let host = '127.0.0.1';
+    let serveToken: string | undefined;
+    for (let i = 0; i < sArgs.length; i++) {
+      if (sArgs[i] === '--port' || sArgs[i] === '-p') { port = parseInt(sArgs[i + 1] || '3456', 10) || 3456; i++; }
+      else if (sArgs[i] === '--host' || sArgs[i] === '-h') { host = sArgs[i + 1] || '127.0.0.1'; i++; }
+      else if (sArgs[i] === '--serve-token' || sArgs[i] === '-t') { serveToken = sArgs[i + 1] || ''; i++; }
+    }
+    if (!serveToken && process.env.PANSHA_SERVE_TOKEN) serveToken = process.env.PANSHA_SERVE_TOKEN;
+    try {
+      const { createAgentServer } = await import('../../../server/agentServer.js');
+      // 本地镜像器：/api/run 的每个事件同步渲染到本 REPL 终端（模型实时输出
+      // ——真机要求"做题时终端出现模型输出"，此前 /serve 通道完全静默）。
+      const mirrorEvent = (ev: any) => {
+        try {
+          if (useRich && typeof bridge.pushFeed === 'function') {
+            mapSseToBridge(ev.type || 'event', ev, bridge, ctx);
+          } else {
+            renderSseEvent(ctx, ev.type || 'event', ev, ctx.renderer);
+          }
+        } catch {}
+      };
+      const server = createAgentServer({
+        port,
+        host,
+        // /api/run 的 fresh session 无 model 配置——不接 provider 时每次 run 都会
+        // 抛"未配置可用模型"（真机实测）。接入本 REPL 会话的 provider。
+        provider: ctx.provider,
+        defaultTier: ctx.session.tier,
+        defaultWorkspace: ctx.session.workspace,
+        serveToken,
+        onEventLocal: mirrorEvent,
+      });
+      await server.listen();
+      emit(`✓ SSE agent server 已启动：http://${host}:${port}（POST /api/run {task, tier?, workspace?} → SSE 流）。服务随 REPL 进程常驻。`, 'success');
+    } catch (e: any) {
+      emit(`✗ /serve 启动失败：${e?.message || e}`, 'error');
+    }
+    return true;
+  }
 
   // local commands shared by rich + line paths
   // (/undo now; /approvals + /usage + /compact land with their batches)
@@ -428,6 +531,10 @@ export async function handleSlashCommand(
     // ctxUsedChars 清零 + 窗口立即重取（下次任务边界也会再取一次兜底）。
     ctx.ctxUsedChars = 0;
     ctx.ctxWindowTokens = resolveCtxWindowTokens(ctx);
+    // TopBar 同步（真机实测：切换后 TopBar 仍显示旧模型——只有 /tier 有 setTop）
+    if (useRich && typeof bridge.setTop === 'function') {
+      try { bridge.setTop({ model: sub }); } catch {}
+    }
     emit(`模型已切换: ${sub}（下次任务生效）`, 'success');
     return true;
   }
@@ -459,22 +566,18 @@ export async function handleSlashCommand(
   if (cmd === '/resume') {
     // 委托注册表里的 ResumeCommand（只依赖 renderer）
     const reg = await getSharedRegistry(ctx);
-    const rctx: any = {
-      session: ctx.session,
-      registry: reg,
-      renderer: useRich ? { writeLine: (t: string) => emit(t, 'info'), color: (t: string) => t, warn: (t: string) => emit(t, 'warn'), error: (t: string) => emit(t, 'error'), success: (t: string) => emit(t, 'success'), info: (t: string) => emit(t, 'info') } : ctx.renderer,
-      input: null,
-      repl: null,
-      provider: (ctx.session as any).provider,
-      // sseInteractive 的 CommandContext 注册点——
-      // 注入与当前路径一致的现成审批桥 + 在途任务的 abort signal，使经此
-      // 派发的 registry 命令与主任务路径共享审批/中断语义。
-      approvalBridge: useRich
-        ? (req: { tool: string; description: string; danger: boolean }) => (ctx.bridgeRef.current.setConfirm(req) as Promise<string>)
-        : createCliApprovalBridge(),
-      signal: ctx.currentAbort?.signal,
-    };
+    const rctx = buildRegistryCommandCtx(ctx, useRich, emit, reg);
     const res = await reg.execute(rctx, 'resume', arg ? arg.split(/\s+/) : []);
+    if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
+    return true;
+  }
+  // D2（2026-09-15 真机实测：rich UI 输入 /workspace 落"未知命令"）——
+  // WorkspaceCommand 只在 classic 路径消费，统一派发器无此分支。委托共享
+  // 注册表（与 /resume 同款 rctx），/ws 别名一并收口。
+  if (cmd === '/workspace' || cmd === '/ws') {
+    const reg = await getSharedRegistry(ctx);
+    const rctx = buildRegistryCommandCtx(ctx, useRich, emit, reg);
+    const res = await reg.execute(rctx, 'workspace', arg ? arg.split(/\s+/) : []);
     if (res?.message && res.message !== 'ok' && res.message !== 'none') emit(res.message, 'info');
     return true;
   }
@@ -484,10 +587,14 @@ export async function handleSlashCommand(
     return true;
   }
   if (cmd === '/tier' || cmd === '/t') {
-    // CC 式思考强度滑杆（2026-09-12 对标 /effort）。无参 → 打印滑杆块并进入
-    // 交互选择态（←/→ 调节 · Enter 确认 · Esc 取消，按键消费在 sseInteractive
-    // 的 _ttyWrite 层，与 SlashMenu 互斥；仅 line 模式激活——rich 桥无人消费
-    // 按键，激活会永久挂起）。带参（名称或编号）→ 即时切换，编号与刻度同序。
+    // CC 式思考强度滑杆（2026-09-12 对标 /effort）。无参 → 交互选择态
+    // （←/→ 调节 · Enter 确认 · Esc 取消）：
+    //   rich → bridge.openTierPicker（真 ink 组件，确认/取消即卸载，无静态残迹；
+    //          缺陷 #3/#4：旧实现把 8 行滑杆推进 feed 且无人消费按键——永久残留
+    //          且完全不可交互）；rich UI 未挂载（启动窗口/降级）→ 单行静态说明，
+    //          绝不打印多行残迹块。
+    //   line → 打印着色滑杆块并激活 effortSel（按键消费在 _ttyWrite 层）。
+    // 带参（名称或编号）→ 即时切换，编号与刻度同序。
     const { TierRegistry } = await import('../../../tiers/TierConfig.js');
     const configs = TierRegistry.getAll();
     const TIERS = configs.map((c) => c.tier as string);
@@ -495,7 +602,33 @@ export async function handleSlashCommand(
     const t = arg.trim().toLowerCase();
     if (!t) {
       const index = Math.max(0, TIERS.indexOf(String(ctx.session.tier || '')));
-      // line 模式着色版；rich 桥 feed 不吃 ANSI → 纯文本。
+      if (useRich && typeof (bridge as any).openTierPicker === 'function') {
+        const picked = await (bridge as any).openTierPicker({ tiers: TIERS, sublabels: SUBS, index });
+        if (picked === null || picked === undefined) {
+          // rich UI 未就绪（dispatch 未注册）——单行说明兜底，无残迹
+          emit(`思考强度: ${TIERS[index] || String(ctx.session.tier || '')}${SUBS[index] ? ' · ' + SUBS[index] : ''}（用 /tier <${TIERS.join('|')}> 切换）`, 'info');
+          return true;
+        }
+        if (picked >= 0) {
+          const target = TIERS[picked] || '';
+          if (target && TierRegistry.isTier(target)) {
+            // REVIEW M4：统一走 updateTier（刷新 updatedAt），与 line 模式滑杆
+            // 确认分支一致；裸赋值会让会话元数据的更新时间失真。
+            ctx.session.updateTier(target as any);
+            const sub = SUBS[picked] || '';
+            if (typeof (bridge as any).setTop === 'function') {
+              try { (bridge as any).setTop({ tier: target }); } catch {}
+            }
+            emit(`✓ 思考强度已切换: ${target}${sub ? ' · ' + sub : ''}（下次任务生效）`, 'success');
+          } else {
+            emit(`无效档位: ${target}（可用: ${TIERS.join(' | ')}）`, 'warn');
+          }
+        } else {
+          emit(`（已保留 ${TIERS[index] || String(ctx.session.tier || '')}）`, 'info');
+        }
+        return true;
+      }
+      // line 模式着色版；rich 桥 feed 不吃 ANSI → 纯文本（仅 line 走到这里）。
       for (const l of buildEffortSliderBlock({ tiers: TIERS, sublabels: SUBS, index, useColor: !useRich })) emit(l, 'info');
       if (!useRich) ctx.effortSel = { active: true, tiers: TIERS, sublabels: SUBS, index };
       return true;
@@ -513,7 +646,8 @@ export async function handleSlashCommand(
       emit(`无效档位: ${arg.trim()}（可用: ${TIERS.join(' | ')}）`, 'warn');
       return true;
     }
-    ctx.session.tier = target as any;
+    // REVIEW M4：与滑杆确认分支一致，走 updateTier（刷新 updatedAt）
+    ctx.session.updateTier(target as any);
     const sub = SUBS[TIERS.indexOf(target)] || '';
     emit(`✓ 思考强度已切换: ${target}${sub ? ' · ' + sub : ''}（下次任务生效）`, 'success');
     return true;

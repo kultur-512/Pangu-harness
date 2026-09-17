@@ -63,3 +63,34 @@ describe('recordChatFact', () => {
     }
   });
 });
+
+describe('recordChatFact 拒绝性回答过滤（2026-09-16 NO_TOOL_CALLS 学舌循环修复）', () => {
+  let ws: string;
+  beforeEach(() => { ws = tmpWs(); });
+
+  it('自我指涉拒绝回答 → 整轮不入卡（斩断学舌源）', async () => {
+    const r = await recordChatFact(ws, '这些文件都是用来做什么的',
+      '抱歉，我这边其实并没有看到任何文件内容——上一轮只是输出了 NO_TOOL_CALLS，并没有真正列出工作区里的文件列表。');
+    assert.equal(r.recorded, false);
+    assert.equal(r.reason, 'refusal');
+    assert.equal(fs.existsSync(path.join(ws, '.panshalach-memory.json')), false, '拒绝轮不产任何卡（不写盘）');
+  });
+
+  it('拒绝 + 引导列表编号（1. 贴给我 / 2. 告诉我）仍判定拒绝', async () => {
+    const r = await recordChatFact(ws, '看看工作区',
+      '抱歉，我这边看不到你的目录。你可以： 1. 直接把文件内容贴给我； 2. 告诉我文件名列表。');
+    assert.equal(r.recorded, false);
+    assert.equal(r.reason, 'refusal', '列表编号不得击穿无数字豁免判据');
+  });
+
+  it('带实质日期/数字的"抱歉"类回答放行（误伤防护）', async () => {
+    const r = await recordChatFact(ws, '会议是几点',
+      '抱歉我无法参加现场会议，但线上会议定在 2026 年 9 月 20 日 14:00。');
+    assert.equal(r.recorded, true, '含事实数字的道歉回答仍是有效事实');
+  });
+
+  it('普通能力说明（非自我拒绝）照常入卡', async () => {
+    const r = await recordChatFact(ws, '你能做什么', '我可以读写文件、执行命令、回答知识问答。');
+    assert.equal(r.recorded, true);
+  });
+});

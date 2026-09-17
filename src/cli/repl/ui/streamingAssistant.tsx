@@ -16,6 +16,13 @@ import { MarkdownBlock } from './Markdown.js';
 
 const BOUND_CHARS = 4000;
 
+// Settled blocks are immutable strings — memoize the block renderer so a
+// stream delta only re-renders the live tail (anti-flicker: fewer re-renders
+// per frame at ink's full-screen redraw). Module-level: memo() once.
+const REACT_ANY: any = (globalThis as any).__PANSHA_INK_REACT__ || {};
+const MemoMarkdownBlock: any =
+  typeof REACT_ANY.memo === 'function' ? REACT_ANY.memo(MarkdownBlock as any) : MarkdownBlock;
+
 function boundTail(text: string): string {
   if (!text) return '';
   const t = text.replace(/\n{3,}/g, '\n\n');
@@ -64,7 +71,7 @@ export function StreamingAssistant(props: {
   }
 
   if (hasMessage && Box) {
-    const MB: any = MarkdownBlock;
+    const MB: any = MemoMarkdownBlock;
     const msgChildren: any[] = [];
 
     // Settled blocks — parsed once each (content strings are immutable here)

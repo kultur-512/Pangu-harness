@@ -356,17 +356,12 @@ describe('0.8 P2 chaser 接线（messages 通道）', () => {
         intent: 'execution',
       });
       assert.equal(chatCalls, 0, 'off 模式零 messages 调用');
-      // 0.8.2 防呆 nudge + T4 三级阶梯：execution 意图首步"只说话不动手"注入
-      // 教学全文重试（prompts[1]）→ 第二次仍不动手注入具体实例短命令（prompts[2]）
-      // → 第三次仍无动作 no-verification 终局（假完成不计 answered 成功）。
-      assert.equal(prompts.length, 3, 'execution 意图文本空转 → 两级引导后终局');
+      // 2026-09-16 success 语义摘除：execution 意图文本空转有正文 → 一步
+      // answered 终局（nudge 阶梯已摘除，不再两级引导）。
+      assert.equal(prompts.length, 2, '首次空谈注入纠偏重试，二次空谈终局');
       assert.ok(prompts[0].includes('修复 login 页面'), 'off 模式任务文本走 issueDescription');
-      assert.ok(prompts[1].includes('修复 login 页面'), 'nudge 步仍携带任务文本');
-      assert.ok(prompts[1].includes('工具调用格式（必须遵守）'), '第 1 次引导 = 格式教学全文');
-      assert.ok(prompts[2].includes('上一步没有工具调用'), '第 2 次引导 = 具体实例短命令');
-      assert.ok(prompts[2].includes('<read_file>'), '第 2 次引导用具体工具名实例化');
       assert.ok(!prompts[0].includes('STABLE-SEG'), 'off 模式 segments 不进入 prompt');
-      assert.equal(res.bestTrajectory?.stopReason, 'no-verification');
+      assert.equal(res.bestTrajectory?.stopReason, 'answered');
     } finally {
       restoreEnv();
     }

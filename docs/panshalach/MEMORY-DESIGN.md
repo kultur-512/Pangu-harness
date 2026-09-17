@@ -1,13 +1,13 @@
 # Panshalach 记忆模块设计
 
 > 面向"长程上下文管理"的记忆增强层深挖。本文档描述记忆的数据模型、写入源、读取注入、维护策略，以及**已知差距 → 补齐路线**。
-> 状态基线 **v0.8.0-rc**：0.8.1 对抗性审计修复三大 S 级缺陷（产卡零信息 / markVerified 断链 / 通用卡永生）后，"证据门槛写入 → 二态使用语义 → 注入审计"链路完整闭环。
+> 状态基线 **v0.8.8**：0.8.1 对抗性审计修复三大 S 级缺陷（产卡零信息 / markVerified 断链 / 通用卡永生）后，"证据门槛写入 → 二态使用语义 → 注入审计"链路完整闭环。
 
 ## 1. 设计总则
 
 1. **外置优于内记**：关键事实外置到 prompt 预算（注入），不依赖模型记住 N 轮前的 token。
 2. **事实与经验分离**：会话资产(回合/事件)记"发生了什么"，记忆卡记"该怎么做"(教训/经验/偏好)。
-3. **注入是稀缺资源**：任何记忆都先过"档位可见性 + 参照文件交集 + 关键词相关性 + 预算"闸门再进 prompt。
+3. **注入是稀缺资源**：任何记忆都先过"卡级档位适用（`applicableTiers`，空=全档） + 参照文件交集 + 关键词相关性 + 预算"闸门再进 prompt。
 4. **确定性维护**：衰减/合并/去重/容量/缓存全部确定性规则 → 可离线测试、可复现、不烧 token。
 5. **写入闭环**：真实任务结束即提炼沉淀（含压缩补漏），记忆随使用生长。
 
@@ -25,8 +25,8 @@
 ## 3. 数据模型
 
 ### 3.1 RefinedMemoryCard（src/memory/RefinedMemoryCard.ts）
-见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(档位可见性+分类半衰期) / summary(建设性一句话；对话对卡为 'Q: …
-A: …' 双行) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers / referencedFiles / pinned / status·mergedFrom / source（0.8.4：'dialogue-pair'=对话对卡） / confidence（0.8.4：写侧分类器定价，软惩罚只进排序） / factDate·factDateText（0.8.4 时间锚定：事实发生时间，区别于记录时间 lastSeen）。容量按 kind（failure 40·类内每 category 10 / success 10 / preference 80——chat-fact 同桶；pinned 免淘汰）·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
+见 [ARCHITECTURE.md §2.1](ARCHITECTURE.md)。要点：kind / category / memoryCategory(分类半衰期) / summary(建设性一句话；对话对卡为 'Q: …
+A: …' 双行) / weight·count / lastSeen·firstSeen·lastUsedAt / applicableTiers(卡级档位适用，空=全档) / referencedFiles / pinned / status·mergedFrom / source（0.8.4：'dialogue-pair'=对话对卡） / confidence（0.8.4：写侧分类器定价，软惩罚只进排序） / factDate·factDateText（0.8.4 时间锚定：事实发生时间，区别于记录时间 lastSeen）。容量按 kind（failure 40·类内每 category 10 / success 10 / preference 80——chat-fact 同桶；pinned 免淘汰）·总200；半衰期 30d；`LESSON_TEMPLATES` 提供失败→建设性教训模板（"重要教训：… / 建议重点避免：…"）。
 
 ### 3.2 事件记忆（已落地 · R4，`memory/events.ts`；下为立项时规划 schema）
 ```ts

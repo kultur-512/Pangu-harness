@@ -11,23 +11,16 @@ import { createDefaultModelProvider, setSharedModelProvider } from './repl/Model
 import { Session } from './repl/Session.js';
 import { Repl } from './repl/Repl.js';
 
+// applyEnvModel 已下沉到 modelSeed.ts（与 applyConfigModel/envApprovalMode 同居，
+// 供 sseInteractive/classicRepl 无环导入）；此处再导出保持既有 import 路径
+//（tests/repl/ModelProvider.test.ts 从本模块导入）不变。
+export { applyEnvModel } from './repl/modelSeed.js';
+
 export interface StartReplOptions {
   /** 'last' | specific rollout/session id */
   resume?: string;
   /** fork the resume target into `<id>--branch-<name>` before starting */
   branch?: string;
-}
-
-/**
- * PANSHA_MODEL env seeds a session's model (headless one-shot
- * multi-provider, e.g. PANSHA_MODEL="a6:openPangu-7B"). Testable unit.
- */
-export function applyEnvModel(session: Session): Session {
-  const envModel = process.env.PANSHA_MODEL;
-  if (envModel && typeof envModel === 'string' && envModel.trim()) {
-    session.model = envModel.trim();
-  }
-  return session;
 }
 
 export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
@@ -104,12 +97,12 @@ export async function startRepl(opts: StartReplOptions = {}): Promise<void> {
   }
 
   // === 降级路径：经典行模式（原有行为） ===
-  const { applyConfigModel } = await import('./repl/modelSeed.js');
+  const { applyConfigModel, applyEnvModel } = await import('./repl/modelSeed.js');
   const repl = new Repl({
     provider,
     ...(session
-      ? { session }
-      : { session: applyConfigModel(new Session()) as Session }),
+      ? { session: applyConfigModel(applyEnvModel(session), session.workspace) as Session }
+      : { session: applyConfigModel(applyEnvModel(new Session())) as Session }),
   });
   await repl.start();
 }
@@ -120,7 +113,7 @@ export async function runOneShot(args: string[], resumeArg?: string): Promise<vo
   try { setSharedModelProvider(provider as any); } catch {}
   // env 优先（applyEnvModel），配置文件 model 字段兜底（applyConfigModel）；
   // PANSHA_APPROVAL / --approval 决定 headless 审批档位（默认 readonly 会拦截写文件）。
-  const { applyConfigModel, envApprovalMode, envTier } = await import('./repl/modelSeed.js');
+  const { applyConfigModel, applyEnvModel, envApprovalMode, envTier } = await import('./repl/modelSeed.js');
   const approval = envApprovalMode();
   const tier = envTier();
   const session = applyConfigModel(

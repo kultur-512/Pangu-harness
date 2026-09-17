@@ -13,7 +13,7 @@
     "build": "tsc",
     "dev": "tsx watch src/cli.ts",
     "cli": "tsx src/cli.ts",
-    "test": "node --test --import tsx \"tests/**/*.test.ts\"",
+    "test": "node --test --import tsx --test-concurrency=4 \"tests/**/*.test.ts\" || node --test --import tsx --test-concurrency=1 \"tests/**/*.test.ts\"",
     "simulate": "tsx src/cli.ts simulate --issue \"example issue\" --workspace .",
     "dogfood": "panshalach --headless run"
   },

@@ -108,6 +108,11 @@ export interface TurnContext {
   effortSel: { active: boolean; tiers: string[]; sublabels: string[]; index: number } | null;
   /** line 模式 readline 原位重画（_refreshLine 包装；rich 路径恒空操作）。 */
   lineRefreshLine: () => void;
+  /**
+   * /exit 的干净退出缝（缺陷 #1）：默认 process.exit(0)；测试注入替身防
+   * 误杀测试进程。卸载 ink / 落盘由派发器分支先行完成。
+   */
+  requestExit: () => void;
 }
 
 export function createTurnContext(init: {
@@ -142,6 +147,7 @@ export function createTurnContext(init: {
     mcpInitDone: false,
     effortSel: null,
     lineRefreshLine: () => {},
+    requestExit: () => { process.exit(0); },
     sharedRegistry: null,
   };
 }

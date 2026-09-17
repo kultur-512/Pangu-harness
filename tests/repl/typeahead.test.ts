@@ -55,9 +55,9 @@ describe('generateSuggestions', () => {
     assert.ok(s.every((x) => x.id.startsWith('file:')));
   });
 
-  it('plain text → history suggestions', () => {
+  it('plain text → 无建议（历史走 ↑/↓ 翻页，不直显建议条）', () => {
     const s = generateSuggestions('fix', 3, { providers: [], history: ['fix the bug', 'fix the typo', 'unrelated'] });
-    assert.deepEqual(s.map((x) => x.displayText), ['fix the bug', 'fix the typo']);
+    assert.deepEqual(s, []);
   });
 });
 

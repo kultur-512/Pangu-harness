@@ -217,3 +217,23 @@ token 口径收口（`9fe0cf9`）后复验，同 runner 同播种：
 | → zl-m3-90（系数 1.0） | 47/90 | +1 = token fix 系数改动 |
 
 token fix 是正确性收口、非提分杠杆（1B 0 / M3 +1，均噪声内）；M3 47/90 新纪录主要来自记忆/检索迭代。详见 `COMPARE-90.md` 附录与 `CHANGELOG.md` 0.8.7。
+
+---
+
+## 9. T1-T5 自建消融（2026-09-16 已跑）
+
+LME-90（长程记忆召回）之外的另一条评测线：T1-T5 任务族 × A/B/C/C4 消融，量**执行纪律与溢出治理**（约束遵循/跨文件重构/长文档检索/中断续接/压缩后保持）。
+
+```bash
+# 全量 20 runs（每任务 × 4 档），结果按 taskId+ablation 增量合并写盘
+node scripts/eval/run-eval.mjs --model openpangu:openpangu-embedded-1b-i1
+# 分批跑（长跑被杀不丢已完成批）：
+node scripts/eval/run-eval.mjs --task T3 --tier A --model openpangu:openpangu-embedded-1b-i1
+# 回填 EVALUATION.md §4：
+node scripts/eval/fill-evaluation.mjs scripts/eval/results/<date>-real-openpangu.json
+```
+
+- 消融口径：A=`PANSHA_NO_MEMORY=1` 零注入（T3/T5 档要求真溢出，判定唯一正源 = stdout 的 `[ctx] contextOverflowCompacted=1` 行）；B=seed 记忆卡；C=全能力；C4=语义检索。
+- 防线判定：B/C/C4 档注入 0 张 = `line-defense-failed`（invalid，不计有效样本）；A 档 0 注入是预期。
+- 已跑数据与质量注记（含 T4/T5 解析缺陷修复、1B 端点 A 档溢出证据链现状）见 [EVALUATION.md §4](EVALUATION.md)。
+- fixture 与 runner 缺陷修复（T4/T5 prompt 解析、T3 文档拼接、溢出判定正源、增量合并）见 `CHANGELOG.md` 0.8.8 后段。

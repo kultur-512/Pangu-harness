@@ -21,6 +21,8 @@ export interface TrajectoryStep {
   readBeforeWriteViolation?: boolean;
   terminalNoCheck?: boolean;
   automationNoEffectCheck?: boolean;
+  /** 面向用户的正文步（空转 answered / chat 直答）——answerText 带出依据 */
+  userFacing?: boolean;
 }
 
 export interface Trajectory {

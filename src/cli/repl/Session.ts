@@ -4,6 +4,7 @@
 import { TierRegistry } from '../../tiers/TierConfig.js';
 import type { Tier } from '../../tiers/TierConfig.js';
 import type { SessionFile, Turn, SessionSummary, ModelProvider } from './types.js';
+import type { EnvSnapshot } from './EnvContext.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,13 +49,6 @@ export class Session {
   public model: string;
   public currentTaskId?: string;
   public provider?: ModelProvider; // injected provider for model resolution
-  /**
-   * B2-4：环境快照基线（供 PromptBuilder 的 env-delta 增量注入用）。
-   * 挂 session 而非 PromptBuilder 实例——后者每次任务入口都被重建，
-   * 实例字段恒空、增量机制实际从未生效。**有意不落盘**（易变现场，跨进程
-   * 回放陈旧基线会造假 delta），故不进 toFile()。
-   */
-  public prevEnvSnapshot?: { cwd: string; branch?: string; fs?: string[] };
   // approval state (readonly is the safe default, day one)
   public approvalMode: SessionApprovalMode;
   public sessionApprovalAllowlist: Set<string>;
@@ -62,6 +56,15 @@ export class Session {
   public planMode: boolean = false;
   public turns: Turn[] = [];
   public stats = { totalTurns: 0, totalTokens: 0, totalDurationMs: 0 };
+  /**
+   * B2：env 增量注入的上一轮环境快照（EnvContext.snapshotEnv 产物）。
+   * 挂在长命 Session 上使快照跨任务/跨 PromptBuilder 实例存活（调用方每任务
+   * new PromptBuilder——快照若存在 builder 上会被每任务重置为 null → 恒全量
+   * delta）。进程内 live-only 缓存，不持久化：SessionStore 走 toFile() 白名单，
+   * 本字段不进会话文件 schema（fromFile 恢复的会话回到 null → 下一次 build
+   * 重新注入 cwd 基线，无害）。
+   */
+  public envSnapshot: EnvSnapshot | null = null;
 
   constructor(init?: Partial<SessionFile> & { provider?: ModelProvider }) {
     this.id = init?.id ?? randomUUID();

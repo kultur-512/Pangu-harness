@@ -963,3 +963,82 @@ describe('LME-C1b+L1：规则行补"新旧值取最新"与答案语言镜像', (
   });
 });
 
+// ==================== B2：env 快照跨任务存活（挂在 Session 上） ====================
+// 旧实现把 prevEnvSnapshot 存 PromptBuilder 实例字段上，而三个调用方
+// （Repl.getPromptBuilder / runAgentTask / SimulateCommand）每任务 new 实例 →
+// 快照每任务重置为 null，env 增量比对恒从 null 基线起（每次全量 cwd delta）。
+// 修复后快照挂在 Session 上：同一 session 内第二次 buildForTask 且 env 无变化
+// → delta 段为空；env 有增量 → delta 只含增量。每 build 都 new 独立 builder
+// （镜像真实调用方），旧实现下本组断言必红。
+describe('B2 env 快照跨任务存活（Session 承载）', () => {
+  it('同一 session 连续两次 buildForTask：第二次 env delta 段为空', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-env-session-'));
+    try {
+      execFileSync('git', ['init', '-q', wsRoot], { stdio: 'ignore' });
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const cfg = TierRegistry.get('high');
+
+      // 第一次 build（新 builder）：session 无快照 → cwd 基线注入（语义不变）
+      const p1 = await new PromptBuilder(sess, cfg).buildForTask('任务一');
+      assert.ok(p1.includes('【环境变更】'), '首 build 注入 env 基线段');
+      assert.ok(p1.includes('【环境变更】\ncwd:'), '首 build 基线只报 cwd');
+      assert.ok(!p1.includes('changed:'), '首 build 不 flood fs');
+
+      // 第二次 build（换新 builder，同一 session）：env 无变化 → delta 为空
+      const p2 = await new PromptBuilder(sess, cfg).buildForTask('任务二');
+      assert.ok(!p2.includes('【环境变更】'), 'env 无变化 → 第二次 delta 段为空（旧实现每任务 new builder 必全量重注）');
+
+      // 快照已落在 session 上
+      assert.ok(sess.envSnapshot, '快照挂在 Session 上');
+      assert.equal(sess.envSnapshot!.cwd, wsRoot, '快照记录 workspace');
+    } finally {
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('session 内新增文件后第三次 build：delta 只含该项（不重注 cwd/branch）', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-env-session2-'));
+    try {
+      execFileSync('git', ['init', '-q', wsRoot], { stdio: 'ignore' });
+      const sess = new Session({ tier: 'high', workspace: wsRoot });
+      const cfg = TierRegistry.get('high');
+
+      await new PromptBuilder(sess, cfg).buildForTask('任务一'); // 基线
+      const p2 = await new PromptBuilder(sess, cfg).buildForTask('任务二'); // 无变化
+      assert.ok(!p2.includes('【环境变更】'), '前置：第二次 delta 为空');
+
+      // env 变化：工作区新增文件（git status --porcelain 可见）
+      fs.writeFileSync(path.join(wsRoot, 'newfile.txt'), 'hello');
+
+      const p3 = await new PromptBuilder(sess, cfg).buildForTask('任务三');
+      assert.ok(p3.includes('【环境变更】'), 'env 有变化 → delta 段出现');
+      assert.ok(p3.includes('【环境变更】\nchanged: newfile.txt'), 'delta 只含新增的文件');
+      assert.ok(!p3.includes('【环境变更】\ncwd:'), 'cwd 未变 → 不重注');
+      assert.ok(!p3.includes('【环境变更】\nbranch:'), 'branch 未变 → 不重注');
+    } finally {
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('快照按 session 隔离：另一 session 首 build 仍从 cwd 基线起（非全局/静态缓存）', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-env-session3-'));
+    try {
+      execFileSync('git', ['init', '-q', wsRoot], { stdio: 'ignore' });
+      const cfg = TierRegistry.get('high');
+
+      const sess1 = new Session({ tier: 'high', workspace: wsRoot });
+      await new PromptBuilder(sess1, cfg).buildForTask('任务一');
+
+      const sess2 = new Session({ tier: 'high', workspace: wsRoot });
+      const p = await new PromptBuilder(sess2, cfg).buildForTask('任务一');
+      assert.ok(p.includes('【环境变更】\ncwd:'), '新 session 无快照 → 首 build 仍注入 cwd 基线');
+      assert.ok(!p.includes('changed:'), '基线只报 cwd');
+    } finally {
+      fs.rmSync(wsRoot, { recursive: true, force: true });
+    }
+  });
+});
+

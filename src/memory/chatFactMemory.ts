@@ -219,9 +219,26 @@ export function smartSlice(text: string, budget: number): string {
 /** 问候/纯噪音/元命令——不入卡（防"1"/"你好"刷屏容量）。 */
 const NOISE_RE = /^(你好|您好|嗨|hi|hello|hey|在吗|谢谢|thanks?|再见|拜拜|好的?|ok|嗯+)[\s!！。.,，]*$|^\d+$/i;
 
+/**
+ * 拒绝性/自我指涉回答判定（2026-09-16 真机缺陷修复）：
+ * 1B 在 chat 直答里输出"抱歉，我这边其实并没有看到任何文件内容——上一轮只是
+ * 输出了 NO_TOOL_CALLS……"这类自我能力否定回答，被 recordChatFact 无差别记成
+ * 事实卡后每轮注入——模型照抄自己的旧拒绝，越说越坚信"我不该用工具"
+ * （NO_TOOL_CALLS 学舌循环，真机 18 张卡全污染）。此类回答不是事实，不入卡。
+ * 判据：自我指涉拒绝短语 + 回答无实质内容信号。数字豁免先剥离列表编号形态
+ * （`1. ` / `2) `）——拒绝回答常带"1. 贴给我 2. 告诉我"引导列表，裸数字
+ * 判据会被编号击穿；剥离后仍含数字/日期=实质内容，放行防误伤。
+ */
+const REFUSAL_SELF_REF_RE = /(?:NO_TOOL_CALLS|抱歉|对不起).{0,24}(?:我|这边|目前).{0,24}(?:没有|不会|无法|不能|看不到|不涉及)|根据当前(?:的)?交互规则|我不会主动(?:读取|扫描|执行)/i;
+export function isRefusalSelfRefAnswer(reply: string): boolean {
+  const t = String(reply ?? '');
+  if (!REFUSAL_SELF_REF_RE.test(t)) return false;
+  return !/\d/.test(t.slice(0, 200).replace(/\d+[.)]\s/g, ''));
+}
+
 export interface ChatFactResult {
   recorded: boolean;
-  reason?: 'disabled' | 'too-short' | 'noise' | 'duplicate';
+  reason?: 'disabled' | 'too-short' | 'noise' | 'duplicate' | 'refusal';
   cardId?: string;
 }
 
@@ -285,7 +302,7 @@ export async function recordFactLines(
 
 export interface ConversationTurnResult {
   recorded: number;
-  reason?: 'disabled' | 'too-short' | 'noise' | 'duplicate';
+  reason?: 'disabled' | 'too-short' | 'noise' | 'duplicate' | 'refusal';
   cardIds?: string[];
 }
 
@@ -370,6 +387,10 @@ export async function recordConversationTurn(
 
     // A4：user 侧硬门（too-short/noise）只跳过 user 侧句级补充，assistant 不受牵连
     const userGated = input.length < MIN_INPUT_CHARS || NOISE_RE.test(input);
+    // 2026-09-16：拒绝性回答整轮不入卡（对卡 + 助手侧句级补充全跳过；
+    // 用户侧照常——用户的话本身是事实）。理由见 isRefusalSelfRefAnswer。
+    const refusalGated = isRefusalSelfRefAnswer(reply);
+    if (refusalGated) return { recorded: 0, reason: 'refusal' };
 
     // 候选卡：对卡 1 张（无条件）+ 句级补充（置信 ≥0.7，每侧 ≤2，整轮 ≤8）
     const candidates: Array<{ summary: string; confidence?: number; source?: string; sourceContext: string }> = [];

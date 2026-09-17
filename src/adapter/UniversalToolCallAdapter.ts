@@ -60,10 +60,65 @@ export class UniversalToolCallAdapter {
   private static readonly ROOT_OPEN = '<>';
   private static readonly ROOT_CLOSE = '</>';
 
+  /** 路径类参数名——值会被做闭合残片清洗 */
+  private static readonly PATH_PARAM_KEYS = new Set(['file_path', 'path', 'file', 'target']);
+
   /**
-   * Primary parse entry point.
+   * 2026-09-16 真机（M3）：路径参数值偶带闭合标签残片（".panshalach.json]<]minimax[>"、
+   * "todo.js]"）——写文件写错名、跑脚本跑错路径，6/21 对比任务因此失败。
+   * 清洗：从第一个 `]` 截断（残片起点），剥首尾引号。合法路径含 `]` 极罕见，可接受。
    */
+  private static sanitizePathValue(v: string): string {
+    let s = String(v ?? '').trim();
+    const cut = s.search(/\]/);
+    if (cut > 0) s = s.slice(0, cut);
+    return s.replace(/^["'`]+|["'`]+$/g, '').trim();
+  }
+
+  /**
+   * glob pattern 类参数——不能用路径的激进规则（合法 glob 字符类含 `]`，
+   * 如 `*.[cm][jt]s`）。只在明确的残片特征时截断：值含 `][` 且以 `>` 结尾
+   * （REPL 真机样例：glob 通配模式后跟 `][minimax[>` 残片）；合法连续
+   * 字符类虽含 `][` 但不以 `>` 结尾，不命中。
+   */
+  private static readonly FRAGMENT_PARAM_KEYS = new Set(['pattern']);
+
+  private static sanitizeFragmentValue(v: string): string {
+    let s = String(v ?? '').trim();
+    // 残片特征：`][`（标签体残片）或 `]<`（闭合标签残片），且值带 `>`/`<` 噪声
+    if ((s.includes('][') || s.includes(']<')) && (s.endsWith('>') || s.includes('<'))) {
+      const cutArr = s.search(/\]\[/);
+      const cut = cutArr > 0 ? cutArr : s.indexOf(']');
+      if (cut > 0) s = s.slice(0, cut);
+    }
+    return s.replace(/^["'`]+|["'`]+$/g, '').trim();
+  }
+
+  private static sanitizeToolCalls(calls: ToolCall[]): ToolCall[] {
+    return calls.map(c => {
+      if (!c.params || c.params.length === 0) return c;
+      const params = c.params.map(p => {
+        const name = String(p.name || '').toLowerCase();
+        if (UniversalToolCallAdapter.PATH_PARAM_KEYS.has(name)) {
+          return { ...p, value: UniversalToolCallAdapter.sanitizePathValue(p.value) };
+        }
+        if (UniversalToolCallAdapter.FRAGMENT_PARAM_KEYS.has(name)) {
+          return { ...p, value: UniversalToolCallAdapter.sanitizeFragmentValue(p.value) };
+        }
+        return p;
+      });
+      return { ...c, params };
+    });
+  }
+
+  /** Primary parse entry point. */
   parse(content: string, options: UniversalParseOptions = {}): UniversalParseResult {
+    const r = this.parseInner(content, options);
+    if (r.toolCalls.length > 0) r.toolCalls = UniversalToolCallAdapter.sanitizeToolCalls(r.toolCalls);
+    return r;
+  }
+
+  private parseInner(content: string, options: UniversalParseOptions = {}): UniversalParseResult {
     const warnings: string[] = [];
     const attempts: string[] = [];
     let detectedFormat: ToolCallFormat = 'unknown';

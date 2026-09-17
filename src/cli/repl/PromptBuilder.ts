@@ -287,10 +287,9 @@ export class PromptBuilder {
   // per-build dedup set (reset every buildForTask)
   private injectedKeys = new Set<string>();
   private duplicatesSkipped = 0;
-  // B2-4：环境快照基线**挂在 Session 上**（此前为本类私有字段——本类在每次
-  // 任务入口都被重新实例化：runAgentTask 每调用一次 new 一个、Repl.getPromptBuilder()
-  // 每次执行任务也 new 一个，故 prevEnvSnapshot 恒为 null → buildEnvDelta 永远走
-  // "首次快照"分支只报 cwd，增量机制实际从未生效）。挂 Session 后跨任务真正增量。
+  // B2：环境快照挂在 Session 上（session.envSnapshot）——PromptBuilder 被每任务
+  // new 实例，快照若留在实例上会被每任务重置为 null，env 增量比对恒从 null 起
+  // → 每次全量 delta。跨任务/跨调用方的增量语义由长命 Session 承载。
   // 有意**不落盘**（SessionFile 无此字段）：git status 是易变现场，跨进程回放陈旧
   // 基线会产生假 delta；会话内跨任务复用已足够。
   // 0.8 P2（M1-PROTOCOL）：三段拆分的共享行缓冲（buildForTask = summary 块 + stable + volatile 拼接）
@@ -393,7 +392,7 @@ export class PromptBuilder {
     // 时间锚定（0.8.3）：身份行带"今天是 …"——QA prompt 此前没有今天是几号，
     // "多久之前/多少周"类问题无从计算（temporal-reasoning 0/15 主因之二）。
     // 放 stable 段：resolveToday() 天内不变 → 天内字节稳定（前缀缓存友好）。
-    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。今天是 ${resolveToday()}。`;
+    const systemLine = `你是烛龙（Zhulong），基于 openPangu 构建的通用智能体（内部代号 Panshalach / 盘沙拉克）：软件工程（读写代码、执行命令、验证变更）与日常对话、知识问答、写作创作皆为所长。工程任务按当前档位契约执行；普通问题直接给出答案本身，不以工程助手自居设限。当前档位: ${this.session.tier}（${this.tierConfig.typicalUseCase}）——它只调节工程任务的执行预算与验证密度，与普通对话无关。当前工作区: ${this.session.workspace || process.cwd()}（工具的相对路径均以此为基准目录）。今天是 ${resolveToday()}。`;
     this.buildLines.push(systemLine);
 
     // === L0 硬约束（≤3 条精选，非整段注入） ===
@@ -569,8 +568,10 @@ export class PromptBuilder {
     try {
       const { snapshotEnv, buildEnvDelta, renderEnvDelta } = await import('./EnvContext.js');
       const now = snapshotEnv(this.session.workspace);
-      const delta = buildEnvDelta(this.session.prevEnvSnapshot ?? null, now);
-      this.session.prevEnvSnapshot = now;
+      // B2：上一快照取自 Session（跨任务存活）；?? null 防御非 Session 构造的
+      // mock（无该字段）——与旧"首 build 从 null 基线起"行为一致。
+      const delta = buildEnvDelta(this.session.envSnapshot ?? null, now);
+      this.session.envSnapshot = now;
       const block = renderEnvDelta(delta);
       if (block) {
         this.tryInject('env-delta', block, lines);

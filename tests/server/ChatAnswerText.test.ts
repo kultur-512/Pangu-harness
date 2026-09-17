@@ -72,6 +72,7 @@ describe('R1（0.8.1）：answered 正文经 RunResult.answerText 带出', () =>
           reasoning: { thinking: '', plan: '', raw: '' },
           toolCalls: [],
           verificationResult: '循环路径的自然停正文XYZ',
+          userFacing: true, // 2026-09-16 新语义：空转 answered 步带 userFacing 标记
         }],
       };
     };

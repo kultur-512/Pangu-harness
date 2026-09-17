@@ -8,7 +8,7 @@
 //    执行词）→ 恒判 execution → 格式教学块必然出现 → 本文件红灯。
 //
 // 2. "整理 src/foo.ts 的导出" → search：intent='search'，受限只读循环
-//    （maxSteps=3）+ approvalMode 强制 readonly。
+//    （maxSteps=30，2026-09-16 全档位 ×10）+ approvalMode 强制 readonly。
 //
 // 3. completed → finalizeTaskMemory：stopReason==='completed' 的任务自动
 //    refine→save 产出 success 卡；注入卡（lastBuildMeta.injectedCardIds）与
@@ -132,7 +132,7 @@ describe('0.7.2 意图前移接线 + 记忆落定（集成）', () => {
     );
     const loop: any = loopInstances.at(-1);
     assert.ok(loop, 'search 意图进入受限 agent 循环');
-    assert.equal(loop.maxSteps, 3, `search 循环必须 ≤3 步，实际 ${loop?.maxSteps}`);
+    assert.equal(loop.maxSteps, 30, `search 循环必须 ≤30 步（×10 放宽），实际 ${loop?.maxSteps}`);
     assert.equal(
       loop.verificationEngine?.ctx?.approvalMode, 'readonly',
       'search 强制 readonly（覆盖调用方的 default）'
