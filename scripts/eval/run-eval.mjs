@@ -132,11 +132,14 @@ async function loadTaskFixtures({ taskId } = {}) {
       try { issueContent = await readFile(issuePath, 'utf8'); } catch { /* 无 issue.md → 回退 */ }
 
       if (issueContent) {
-        fixture = parseIssueMarkdown(issueContent, entry.name);
+        // CRLF→LF 归一（T4/T5 fixture.md 是 CRLF：\r 残留在行尾会让空行
+        // 判定与段标题精确匹配全部失效，2026-09-16 真机 T4/T5 prompt 只解析出
+        // 78 字符说明文字）
+        fixture = parseIssueMarkdown(issueContent.replace(/\r\n/g, '\n'), entry.name);
         promptSource = 'issue.md';
       } else {
         const content = await readFile(fixturePath, 'utf8');
-        fixture = parseFixtureMarkdown(content, entry.name);
+        fixture = parseFixtureMarkdown(content.replace(/\r\n/g, '\n'), entry.name);
         promptSource = 'fixture.md';
       }
       if (!fixture) continue;
@@ -149,6 +152,19 @@ async function loadTaskFixtures({ taskId } = {}) {
       // 过滤：仅按 task 过滤（U5 重构：fixture.tier 是任务族元数据，不再决定消融配对；
       // 消融维度由 --tier 在 main() 里过滤）
       if (taskId && fixture.id !== taskId) continue;
+
+      // T3 长文档溢出校准（R6 前置，2026-09-16）：document.md 全文拼入 prompt。
+      // 真机 1B 实测不会主动 read_file 长文档（smoke 0 次工具调用）→ A 档
+      // 溢出场景永不成立（ROADMAP A1 前置："T3 fixture 按窗口校准溢出规模，
+      // 否则 A 档整档无效"）。文档 ~26K tokens > A 档窗口线 8000 → A 档必然
+      // 触发溢出防护（[ctx] contextOverflowCompacted=1 或网关报错模式）；
+      // B/C/C4 档在同等压力下由记忆预算/压缩管理上下文，档间对照保留。
+      if (fixture.id === 'T3') {
+        try {
+          const doc = await readFile(join(taskDir, 'document.md'), 'utf8');
+          fixture.prompt = `${fixture.prompt}\n\n## document.md 全文（本任务的工作输入）\n\n${doc}`;
+        } catch { /* document.md 缺失时保持原 prompt（校准失败安全） */ }
+      }
 
       fixture.promptSource = promptSource;
       fixtures.push(fixture);
@@ -227,15 +243,27 @@ function parseFixtureMarkdown(content, dirName) {
   let inPrompt = false;
   for (; i < lines.length; i++) {
     const line = lines[i];
-    if (line.startsWith('## ') && !line.startsWith('## Prompt')) {
+    // 2026-09-16 修：段标题精确匹配——T4/T5 fixture.md 的 "## Prompt 加载
+    // （runner 契约）" 说明节以 "## Prompt " 开头，旧 startsWith 匹配把它误当
+    // 成 Prompt 段起点，prompt 只收集到 78 字符的说明文字（真机 T4/T5 全档
+    // 拿到无效任务）。精确 `=== '## Prompt'` 后，说明节正常被当普通段跳过。
+    const isPromptHeading = line.trim() === '## Prompt';
+    if (line.startsWith('## ') && !isPromptHeading) {
       if (inPrompt) break;
     }
-    if (line.startsWith('## Prompt')) { inPrompt = true; continue; }
+    if (isPromptHeading) { inPrompt = true; continue; }
     if (line.startsWith('## 期望')) break;
     if (inPrompt) {
       const trimmed = line.replace(/^>\s?/, '');
-      if (trimmed.startsWith('```') && prompt.length > 0) break;
-      if (!trimmed.startsWith('```')) prompt += (prompt ? '\n' : '') + trimmed;
+      // 2026-09-16 修：空行不入 prompt（CRLF 行尾 + 段内空行曾把 prompt 填成
+      // '\n'，导致开块 ``` 行就 break——配合上面精确段标题修复一起生效）；
+      // 开块 ``` 跳过（prompt 为空时），闭块 ``` 在已有内容时结束。
+      if (!trimmed) continue;
+      if (trimmed.startsWith('```')) {
+        if (prompt) break;
+        continue;
+      }
+      prompt += (prompt ? '\n' : '') + trimmed;
     }
   }
 
@@ -787,15 +815,15 @@ async function runOne(fixture, ablation, opts) {
         result.stopReason = 'no-verification';
         result.failureTaxonomy = { primary: 'memory-not-cited' };
       } else if (overflowRequired && ablation.overflowWindow
-                 // 溢出证据两级来源（同源纪律）：
+                 // 溢出证据唯一正源（2026-09-16 收紧）：
                  // ① [ctx] contextOverflowCompacted=1 —— loop 触发过溢出重试的
-                 //    机器可读标记（权威，RunCommand 证据行）；
-                 // ② 网关报错正文模式 —— 与 src/model/errorClassify.ts 的
-                 //    OVERFLOW_PATTERNS 同步（context length/too many tokens/
-                 //    token limit/prompt too long）。旧正则 (overflow|truncat|…)
-                 //    与真实报错文案不匹配 → 真溢出被误翻 overflow-skipped。
-                 && !/\[ctx\] contextOverflowCompacted=1/i.test(stdout)
-                 && !/(context length|maximum context|too many tokens|token limit|prompt (?:is )?too long|input (?:is )?too long|overflow|truncat|窗口|截断|超出.{0,8}(?:上下文|长度|令牌)|上下文.{0,8}(?:超|过长|上限|溢出))/i.test(stdout)) {
+                 //    机器可读标记（权威，RunCommand 证据行）。
+                 // ② 网关报错正文模式 —— 已删除。实证：1B 端点（LM Studio）对
+                 //    超窗请求返回 200 静默截断（无 context length 报错），且
+                 //    长文档 prompt 原文本身包含"被截断/窗口"等任意检索词——
+                 //    任何基于 stdout 子串匹配的溢出判定都必然假阳性
+                 //    （09-14 数据即被裸"窗口|截断"词污染）。
+                 && !/\[ctx\] contextOverflowCompacted=1/i.test(stdout + '\n' + stderr)) {
         result.tags.push('overflow-skipped');
         result.verdict = 'not_applicable';    // EVAL_VERDICTS：A 档未溢出
         result.stopReason = 'no-verification';
@@ -1104,6 +1132,22 @@ async function main() {
 
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const outPath = join(outDir, `${dateStr}-${opts.source}.json`);
+
+  // 增量合并（2026-09-16）：读当日已有结果文件，与本次 results 按
+  // taskId+ablation 合并（新覆盖旧）——支持按 --task/--tier 分批跑、
+  // 中途被杀不丢已完成数据（此前写盘只在末尾发生，长跑被中断 = 全丢）。
+  let existing = [];
+  try {
+    const prev = JSON.parse(await readFile(outPath, 'utf8'));
+    if (Array.isArray(prev?.results)) existing = prev.results;
+    console.log(`[eval] 合并已有 ${existing.length} 条当日结果（taskId+ablation 去重，新覆盖旧）`);
+  } catch { /* 无当日文件 → 全量新写 */ }
+
+  const merged = new Map();
+  for (const r of [...existing, ...results]) merged.set(`${r.taskId}:${r.ablation}`, r);
+  const mergedResults = [...merged.values()];
+  const mergedSummary = generateSummary(mergedResults, opts.source);
+
   const output = {
     meta: {
       generatedAt: new Date().toISOString(),
@@ -1111,8 +1155,8 @@ async function main() {
       model: opts.model,
       runnerVersion: '0.2.0',
     },
-    summary,
-    results,
+    summary: mergedSummary,
+    results: mergedResults,
   };
 
   // schema 有违规时不写真实结果表（mock 模式允许写，方便调试）
@@ -1124,7 +1168,7 @@ async function main() {
   await writeFile(outPath, JSON.stringify(output, null, 2), 'utf8');
   console.log(`[eval] 结果已写入: ${relative(ROOT, outPath)}`);
 
-  const hasFailures = summary.failed > 0 || schemaErrors > 0;
+  const hasFailures = mergedSummary.failed > 0 || schemaErrors > 0;
   process.exit(hasFailures ? 1 : 0);
 }
 

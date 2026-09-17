@@ -53,6 +53,13 @@ export interface AgentServerOptions {
    * explicitly to allow any (not recommended without a token).
    */
   corsOrigins?: string | string[];
+  /**
+   * 本地事件镜像（缺陷：/api/run 的事件此前只走 SSE 给 HTTP 客户端，REPL 终端
+   * 对运行中的任务完全静默——真机要求"做题时 REPL 终端出现模型实时输出"）。
+   * /serve 分支注入：把 run 事件桥接到 REPL 本地渲染（rich=mapSseToBridge /
+   * line=renderSseEvent）。抛错被吞（不影响 SSE 主通道）。
+   */
+  onEventLocal?: (event: any) => void;
 }
 
 type ActiveRun = {
@@ -175,9 +182,13 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
 
         const abortController = new AbortController();
 
-        // Wire abort if client disconnects
-        req.on('close', () => {
-          abortController.abort();
+        // Wire abort if client disconnects.
+        // 缺陷 #8（真机实测）：Node ≥16 的 IncomingMessage 'close' 在**请求体
+        // 读完后**即触发（非连接断开）——旧代码 abort 在任务启动后 ~100ms 内
+        // 触发，所有 /api/run 任务被立即 abort（stopReason='aborted'）。改为监听
+        // 响应流关闭且仅在客户端真正断开（响应未正常写完）时中止。
+        res.on('close', () => {
+          if (!res.writableEnded) abortController.abort();
         });
 
         try {
@@ -186,6 +197,8 @@ export function createAgentServer(opts: AgentServerOptions = {}) {
             onEvent: (event) => {
               // Forward every internal event as SSE
               sse.send(event.type || 'event', event);
+              // 本地镜像：同一事件渲染到 REPL 终端（桥接失败不影响 SSE 通道）
+              try { opts.onEventLocal?.(event); } catch {}
             },
             signal: abortController.signal,
           });

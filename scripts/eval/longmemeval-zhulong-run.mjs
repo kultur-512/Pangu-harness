@@ -2,6 +2,12 @@
 // scripts/eval/longmemeval-zhulong-run.mjs
 // 烛龙 × LME oracle 12 题子集（与 Pi/CC 对照同题集、同 memory 内容、同判分口径）。
 //
+// ── 口径冻结声明（2026-09-13）────────────────────────────────────────
+// 本 runner 的评测口径冻结于 2026-09-13，仅用于复现已入库基线成绩，不再扩展：
+// 播种经 recordFactLines 且不传 sessionDate → 卡缺事实时间锚（无
+// factDate/factDateText，"多久之前"类问题无从计算）。
+// 【新评测一律走 longmemeval-90/run-product.mjs】。
+//
 // 与 Pi runner 的对应关系（2026-09-13 控制人协议）：
 //   Pi   : @lme-<qid>.md 内联进上下文 + 一句话 system + 问题
 //   烛龙 : lme-<qid>.md 逐行经 recordChatFact 落卡（烛龙记忆链路）→
@@ -110,7 +116,7 @@ async function seedFromMemoryFile(mdPath, wsDir) {
   const body = raw.replace(/^---[\s\S]*?---\n/, '');           // 去 frontmatter
   const lines = body.split('\n').map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#') && !l.startsWith('---') && !/^[-*\d]+[.\s)]*$/.test(l) && l.length >= 6);
-  const r = await recordFactLines(wsDir, lines);
+  const r = await recordFactLines(wsDir, lines); // 口径冻结 2026-09-13：未传 sessionDate → 卡缺事实时间锚（无 factDate）；仅复现基线用，新评测走 longmemeval-90/run-product.mjs
   if (prev === undefined) delete process.env.PANSHA_MEMORY_FILE;
   else process.env.PANSHA_MEMORY_FILE = prev;
   return { lines: lines.length, facts: r.recorded };

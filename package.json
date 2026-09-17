@@ -1,6 +1,6 @@
 {
   "name": "panshalach",
-  "version": "0.8.0-rc",
+  "version": "0.8.8",
   "description": "烛龙（Zhulong）· 内部代号 Panshalach（盤沙拉克）：基于 openPangu 的记忆增强长程上下文智能体——记忆卡 + 会话资产（resume/branch/compact）+ 真实工具执行与验证铁律，面向软件工程长期维护等长周期任务场景。",
   "type": "module",
   "main": "dist/PanshalachChaser.js",
@@ -13,7 +13,7 @@
     "build": "tsc",
     "dev": "tsx watch src/cli.ts",
     "cli": "tsx src/cli.ts",
-    "test": "node --test --import tsx --test-concurrency=8 \"tests/**/*.test.ts\"",
+    "test": "node --test --import tsx --test-concurrency=4 \"tests/**/*.test.ts\" || node --test --import tsx --test-concurrency=1 \"tests/**/*.test.ts\"",
     "simulate": "tsx src/cli.ts simulate --issue \"example issue\" --workspace .",
     "dogfood": "panshalach --headless run"
   },

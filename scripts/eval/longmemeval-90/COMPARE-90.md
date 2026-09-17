@@ -1,0 +1,200 @@
+# LME 90 题交叉对比报告（COMPARE-90）
+
+> **交付口径（2026-09-15 确认）**：
+> - **ZL 旗舰配置 = ZL×M3：strict 47/90（新纪录，超 CC×M3 41/90 达 6 分）**（grader v2.1）——此前 41/90 曾与 CC×M3 完全追平；
+> - **1B 交付基线 = 23/90**（gapfix 轮，方差 ±3）：管道优化（预算/排序/渲染/教学）已进入 1B 方差噪声区，剩余差距为 1B 与 M3 的模型能力差（英文生成/日历算术/指令跟随）；
+> - 模型升级路线（ZL×7B）验证轮见附录；
+> - preference 15 题为全模型判分盲区（M3/CC 同样 ≤1），不作为能力差异依据。
+
+
+> 生成：2026-09-13 · 修复后代码（zhaiyuanhao1 b4c2067+）· 判分：grade.mjs（strict 主口径；lenient=数字回退）· 题集：oracle 500 题确定性抽样 15/型×6（48 题集的超集）
+> 记忆卡：lme-<qid>.md 90/90（48 复用 + 42 张 claude×M3 蒸馏）· 端点：本地 LM Studio openpangu-embedded-1b-i1 / MiniMax-M3 API
+>
+> **2026-09-14 grader v2 口径变更**（本文件全部分数已用 v2 重算；旧口径 v1 分数保留在 git 历史，逐格对照见下方"grader v1 → v2"节）：
+> - (a) 句子子候选切分：gold 候选拆分后按句末标点（`[.!?;]`+空白）再拆子候选——"30 days. 31 days (including the last day) is also acceptable." 旧口径整段一个候选，永不命中 "30 days had passed"；v2 拆出 "30 days"/"31 days" 独立匹配。
+> - (b) 短数字 gold 的数字 token 匹配：gold 归一化后为纯数字（"3"/"15"）时改从响应抽取全部数字 token 做相等判断——旧 `\b` 词界对英文连写（"3 months ago"→归一化"3months"）永不命中，而中文答案数字两侧是 CJK 反而命中（系统性偏袒数字+CJK 书写风格）。
+> - **grader v2.1 返工（REVIEW 驱动）**：or 拆分改词界（旧 `/or|或/i` 把词内 or 切开产出 `mation/tation/ytelling` 词碎片候选，任意答案含同串即记 1 分——CC 4 个翻转虚高已清除，45→41）；短数字 token 匹配排除列表项编号形态（`\d+[.)]\s`，1a8a66a6 答"5 份订阅"不再被 "2." 编号误记 1 分）。
+> - 未做 CN-EN 等价表（登记为已知局限，靠语言跟随指令在源头减少语言失配）。
+
+## 总表（strict / lenient，90 题，grader v2）
+
+| 格 | harness × model | 记忆形态 | strict | lenient | 平均耗时 | timeout |
+|---|---|---|---|---|---|---|
+| baseline | 烛龙产品管线 × 1B（修复前 6395bae） | recordChatFact 播种+产品注入 | **11/90 (12.2%)** | 16/90 | 6.4s | 0 |
+| repaired | 烛龙产品管线 × 1B（修复后） | 同上 | **15/90 (16.7%)** | 18/90 | 6.4s | 0 |
+| ZL-direct-90 | 烛龙 CLI × 1B | 记忆卡内联 recall（E1 范式） | **29/90 (32.2%)** | 29/90 | 7.0s | 0 |
+| ZL-pipeline-90 | 烛龙 CLI × 1B | haystack 原文内联（H1 范式） | **23/90 (25.6%)** | 27/90 | 12.4s | 0 |
+| ZL-compact-90 | 烛龙 CLI × 1B | recordFactLines 无门控播种 + LIMIT=40 检索（J1 范式） | **32/90 (35.6%)** | 32/90 | 7.7s | 0 |
+| CC-90 | Claude Code × MiniMax-M3 | 记忆卡 recall（A1 范式） | **45/90 (50.0%)** | 38/90 | 7.1s | 0 |
+| Pi-90 | Pi × 1B | 记忆卡 recall（C1 范式） | **33/90 (36.7%)** | 27/90 | 2.9s | 0 |
+
+分题型 strict 透视（grader v2，全部 11 格）见 GRADE.md；逐题分数见 graded.jsonl。
+
+## grader v1 → v2 strict 对照（同 runner 同答案文件，仅判分口径变化）
+
+| 格 | v1 strict | v2 strict | Δ | 主要增量题型（v1→v2） |
+|---|---|---|---|---|
+| baseline | 9/90 | 11/90 | +2 | single-session-user +1、temporal +1 |
+| repaired | 13/90 | 15/90 | +2 | multi-session +1、temporal +1 |
+| optimized | 15/90 | 17/90 | +2 | single-session-user +1、preference +1 |
+| optimized2 | 16/90 | 20/90 | +4 | single-session-user +2、preference +1、temporal +1 |
+| final | 16/90 | 17/90 | +1 | single-session-user +1 |
+| m3 | 25/90 | 31/90 | +6 | temporal +5、multi-session +1 |
+| CC-90 | 31/90 | 45/90 | +14 | multi-session +5、temporal +5、user +2、preference +2 |
+| Pi-90 | 20/90 | 33/90 | +13 | multi-session +5、preference +3、user +2、temporal +2 |
+| ZL-compact-90 | 26/90 | 32/90 | +6 | multi-session +2、user +2、preference +1、temporal +1 |
+| ZL-direct-90 | 20/90 | 29/90 | +9 | knowledge-update +1、multi +2、preference +2、user +2、temporal +2 |
+| ZL-pipeline-90 | 14/90 | 23/90 | +9 | single-session-user +4、knowledge-update +2、multi +1、preference +1、temporal +1 |
+
+lenient 口径未变（数字回退逻辑不动，各格 lenient 分数与 v1 完全一致）。
+
+## 结论
+
+1. **修复 A/B（同 runner 同播种，唯一差异=src 代码版本）**：v2 strict 11→15（+4），增量在 single-session-user（2→5）+ multi-session（2→3）；v1 口径 9→13（+4）。零回归题型、零 timeout。修复中起作用的：chat-fact 去重修复（跨分钟重复卡不再挤占）与容量语义（OTHER 10 张帽→preference 80），平均落卡 8.3→9.0。knowledge-update lenient 7→3 为数字回退口径噪声（strict 持平 4/15）。
+2. **1B 同侪对比（v2）**：修复后烛龙产品管线 15 仍落后 Pi recall（33）与自家 ZL-direct（29）。差距主因不是 harness 而是记忆形态——产品管线经 recordChatFact 噪音门过滤后落卡少（平均 9 张），而 ZL-direct 直接内联人工蒸馏的结构化记忆卡。
+3. **烛龙系 1B 最强配置是 ZL-compact（32/90，v2）**：无门控播种 + 检索注入，领先自家 ZL-direct（29）与 ZL-pipeline（23）。检索注入对"多会话聚合/时间推理"类题型在烛龙系内部相对最优。这印证审查结论：**产品召回瓶颈在写入门控质量，而非检索排序本身**；G4（语义检索接线）与写入门控升级是下一步杠杆。
+4. **模型规模差（v2）**：CC×M3 45/90 (50.0%) 领先全部 1B 格（15–33）。同模型对照：ZL 产品管线×M3 31 vs CC×M3 45，净差 14——比 v1 口径的 6 更大：两个判分修复 CC 受益（+14）远大于 ZL×M3（+6）。即"6 分净胜含 5 分判分伪影"的尸检归因在 v2 口径下不成立（伪影修复并未缩小差距，反而放大）；注入侧修复（渲染帽 240/预算随窗口/写侧扩容/语言跟随）的真实效果需以重跑评测为准（改判分口径只重算历史答案，不改答案）。M3 与 1B 的绝对分不可直接归因 harness。
+5. **结构性判分盲区（90 题重现）**：single-session-preference 全格 strict ≤3/15（v2 最高 CC/Pi 3/15）——gold 为自由文本偏好句，子串匹配天然失效；preference 的提升需 LLM-judge 或 rubric 实词覆盖率口径（judge-rubric 思路），不宜据此判 harness 优劣。
+6. **成本与速度**：Pi×1B 最快（2.9s/题）；ZL-pipeline 最慢且最弱（haystack 原文内联 12.4s/题，23/90）——"喂全文"在 1B 上不如"喂结构化事实"，与 48 题结论一致。
+
+## 与 48 题历史锚点的可比性
+
+90 题集包含 48 题集全部题目（前 8/型 ⊂ 前 15/型），但新增 42 题改变题型内分布，总分不可与 COMPARE-48 直接比。同范式对照（v2）：J1(48)=33% ↔ ZL-compact(90)=35.6%；A1(48)=42% ↔ CC(90)=50.0%；方向一致，稀释合理。
+
+## 复现
+
+```bash
+node --import tsx scripts/eval/longmemeval-90/run-product.mjs --label repaired   # 产品管线格
+node --import tsx scripts/eval/longmemeval-90/run-cells.mjs --cell ZL-compact-90 # 其余五格
+node scripts/eval/longmemeval-90/grade.mjs answers-baseline.jsonl answers-repaired.jsonl ...
+```
+
+---
+
+## 附录（2026-09-14）：0.8.4 记忆架构优化后的 optimized 轮（grader v2 口径）
+
+三路架构探索（写路径/检索/时间性）→ 实现 → 子代理 review（3 必须返工 + 5 建议全部处置）→ 全量 1200 例绿 → 同 runner 重跑：
+
+| 轮 | strict (v2) | lenient | 关键变化 |
+|---|---|---|---|
+| baseline | 11/90 | 16/90 | 修复前代码 |
+| repaired | 15/90 | 18/90 | 对抗审查修缮批次 |
+| **optimized** | **17/90 (18.9%)** | 18/90 | 时间锚定 + 宽进严排 + 混合检索 + 窗口感知注入 |
+
+分题型 strict（v2，optimized）：temporal-reasoning 1 · knowledge-update 5 · multi-session 2 · single-session-assistant 4 · single-session-preference 1 · single-session-user 4（产品管线 preference 首次得分——v1 口径 preference 恒 0）。
+
+优化内容（架构级，非测试集定向）：
+1. **时间锚定**：sessionDate 参数贯通播种链，卡带 factDateText；【】前缀只带日期（根除评测回放把记录时间冒充事实时间的污染）；stable 段与 chat directive 注入"今天是 X"；悬空 [S日期] 规则替换为事实时间差值规则。
+2. **宽进严排**：对卡（Q/A 对）成为主落卡单元（无条件），isFactSentence 从硬门改 confidence 分类器（句级补充卡 ≥0.7 才发）；80 帽硬拒绝删除（新进旧出交存储层）；配对牵连修复；分句器缩写保护（Dr./e.g. 不再切碎）；confidence 软惩罚只进排序不进淘汰门（review 返工）。
+3. **混合检索**：embed.ts 4096 维 n-gram 语义接入 loadFiltered（两步归一防量纲压制；keywords<2 / 异常自动回纯词面；投影 key 含查询防串槽）。
+4. **窗口感知注入**：固定卡数帽改窗口比例预算（8K≈10%、大窗 15%、1600 token 帽）+ 渲染后实测 token 贪心门（对卡实际 122-470 token/张，纯张数帽超发 3-11 倍——review FAIL 实测后返工）；PANSHA_MEMORY_LIMIT 显式时行为不变。
+
+**终验（2026-09-14，a99ab77 文档提交后代码复跑，grader v2 重算）**：strict **17/90** · lenient **22/90** · 0 超时 · 平均 3.1s/题。分题型 strict（v2）：knowledge-update 5 · multi-session 2 · assistant 3 · preference 1 · user 4 · temporal 2。完整轨迹（v1 → v2）：baseline 9→11 · repaired 13→15 · optimized 15→17 · optimized2 16→20 · **final 16→17**（lenient 16→18→18→20→22，v1/v2 相同）。注意：optimized2 与 final 是同代码双样本，v1 口径同为 16，v2 口径 20 vs 17——v2 判分每题 0/1 翻转、对单轮数字措辞波动更敏感，1B 单轮方差被放大，双样本解读需谨慎。
+
+**ZL vs CC 差距修复轮（2026-09-14，grader v2.1 口径，9acf202）**：逐题尸检（差距集 15 题四类归因：渲染/检索 40% + 判分伪影 33% + 写入覆盖 27%，模型推理 0）→ #1 句卡渲染帽 120→240（与写侧共享常量）· #2 注入预算随窗口放大（上限 max(1600, w/64)、张数帽 200，小窗不变）· #3 写侧扩容（补充帽 4、A 侧 800、列表项豁免、文件帽 512KiB）· #4 grader v2.1（句子子候选切分 + 短数字 token 相等 + 词界 or 拆分 + 列表编号排除）· #5 回答语言跟随提问。复验（同 runner 同播种，新代码）：
+
+| 配置 | strict | lenient | 说明 |
+|---|---|---|---|
+| ZL×M3（0.8.5 前） | 29/90 | 34 | v2.1 口径 |
+| **ZL×M3（差距修复后）** | **41/90** | **40** | 分题型 knowledge-update 6→9 · user 4→9 · assistant 7→9 · multi-session 4→7 · temporal 7（与 CC 持平） |
+| ZL×1B（差距修复后） | 23/90 | 24 | 较前轮 17 提升（渲染帽/写侧扩容对小模型同样生效） |
+| CC×M3 | 41/90 | 38 | v2.1 口径（v2 的 45 含 4 个词碎片误判，返工后回落） |
+
+**ZL×M3 与 CC×M3 在 strict 上完全追平（41 vs 41）**——同模型差距从 v1 的 6 分 / v2 的 14 分归零。判分器 v2.1 修正了 CC 的 4 个词碎片虚高（45→41），同时 ZL 侧真实增益（+12 strict，含渲染帽 5 题 + 写侧 3 题 + 预算放大）使净差距关闭。
+
+**模型升级验证轮（2026-09-15，ZL×openPangu-7B with-medusa，grader v2.1）**：strict **31/90 (34.4%)** · lenient **29/90** · 0 残留超时（10 题 180s 超时后经 300s 补跑全收）· 平均 46.2s/题。
+
+| 配置 | strict | 说明 |
+|---|---|---|
+| ZL×1B（gapfix） | 23/90 | 1B 交付基线 |
+| **ZL×7B** | **31/90** | **超过 ZL×M3（29）**；knowledge-update 9/15 全场最高（超越 CC 的 8） |
+| ZL×M3 | 29/90 | API 通道 |
+| CC×M3 | 41/90 | harness 对照 |
+
+**结论**：(1) 模型升级路线验证成立——1B→7B 同管道 +8（23→31），且 7B+ZL 记忆管道已超越 M3+ZL 记忆管道（31 vs 29），本地 7B 是性价比最优的交付配置；(2) 与 CC 的剩余差距（31 vs 41）主要是 harness 差距（CC 用逐题人工级蒸馏卡 100% 覆盖 vs ZL 在线播种 ~9 卡）与 CC 原生 agentic 检索能力，管道侧压缩/检索迭代（B8-B11 登记项）是下一步杠杆。
+
+**MiniMax-M3 通道（2026-09-14，grader v2 重算）**：改进后 ZL 产品管线 × M3（同 runner 同播种，`--model minimax:MiniMax-M3`）——strict **31/90 (34.4%)** · lenient **34/90** · 0 超时 · 平均 11.1s/题。对照：ZL×1B final 17/90（模型规模 +14）；CC×M3 45/90（同模型下 ZL 产品管线差 14——v1 口径差 6，判分伪影修复后差距反而放大，见结论 4）。分题型 strict（v2）：knowledge-update 6 · multi-session 7 · assistant 6 · preference 0（判分盲区） · user 4 · **temporal 8/15（反超 CC×M3 的 7/15）**——时间锚定在强模型上的收益随 v2 判分放大（v1 口径 temporal 3 vs CC 2 已反超，v2 8 vs 7 保持）。
+
+诚实备注：v2 口径下 strict 增益方向与机制证据一致（句子子候选切分/数字 token 匹配让"答对了但措辞连写"的题不再被误杀）；single-session-user 的跨轮波动属 1B 方差级。对卡写入使 A 侧保留了 smartSlice 数字句优先的裁剪（该轮为 400 字符；2026-09-14 迭代已升至 800 并同步渲染侧），注入 token 成本上升由预算门兜底。
+
+---
+
+## 附录（2026-09-14）：ZL-compact-90 时间锚定口径补全（B11）——成绩行隔离声明
+
+run-cells.mjs 的 ZL-compact-90 格完成"时间锚定口径补全"：(1) 播种由 facts 数组跨会话累积一次调用，改为**逐会话调用** recordFactLines（每会话传 sessionDate → 卡带 factDate/factDateText，渲染带 [事实时间:…]）；(2) QA spawn 补 **PANSHA_TODAY**（question_date 经 oracle 全量 json 富化，与 run-product.mjs 同模式）。这改变该格的记忆内容与 QA prompt——**成绩会移动**。
+
+**口径声明**：
+- 旧口径成绩：**strict 26/90**（v1 grader；v2 grader 重算 32/90）在旧口径（播种无 sessionDate + QA 无 PANSHA_TODAY）取得，保留于上方总表，**不再与新数字混排**；
+- 补全后重跑成绩一律以 **ZL-compact-v2 新行**登记（本表不回填、不覆写旧行）；
+- 澄清：7B 模型升级轮的 **31/90 对应格为 ZL-product 管线**（run-product.mjs，recordChatFact 播种 + 产品注入），并非 ZL-compact 格——不得与 ZL-compact-v2 混作对照。
+
+---
+
+## 附录（2026-09-15）：token 口径收口复验（CJK 系数 1.5→1.0 归因）
+
+token 估算器口径收口（`9fe0cf9`：文本路径裁剪统一 `estTokens` + CJK 系数 1.5→1.0 可配）后复验，同 runner 同播种，唯一差异 = src 代码版本 / env：
+
+| 配置 | strict | lenient | 对照 | 说明 |
+|---|---|---|---|---|
+| ZL×1B 90（9fe0cf9） | 19/90 | 25/90 | it3-1b 20/90 | 噪声内无回归（±3） |
+| ZL×M3 90（9fe0cf9） | **47/90** | 40/90 | gapfix-m3 41/90 | **+6，新纪录** |
+| ZL×M3 90（9fe0cf9 + `PANSHA_CJK_TOKENS=1.5`） | 46/90 | 39/90 | 上者 47/90 | 单变量隔离：系数贡献 +1 |
+
+**归因拆解**：gapfix-m3（41，`9acf202` 差距修复轮）→ zl-m3-90（47）的 +6 = **+5 记忆/检索迭代**（`a3c7582`/`23e9f54` 的 factDate 重排 + C4 数字句前置 + R2 预算 1229、`b9cff6b` 的 B9 relTime、`fc5c7c8` 的 MMR 默认关闭——这些此前从未单独在 M3 上验证）+ **+1 token fix 系数改动**（1.5→1.0）。
+
+**结论**：token fix 在基准上是中性的（1B 0、M3 +1，均方差噪声内），其价值是正确性收口（文本路径不再对中文低估 6 倍、系数不再高估 1.5-2.5 倍），不是 benchmark 提分杠杆；M3 47/90 新纪录主要来自记忆/检索迭代，已甩开追平 CC 的 41/90 基线 6 分。
+
+---
+
+## 附录（2026-09-15）：内置 tier 六档扫描 + 记忆形态四档复验
+
+### tier 六档扫描（ZL 产品管线 × 1B，90 题，grader v2.1）
+
+| tier | strict | lenient | 可见 memoryCategory | 强模式 |
+|---|---|---|---|---|
+| quick | 2/90 | 6 | 仅 failure | ✗ |
+| standard | 1/90 | 4 | failure+implementation | ✗ |
+| **high** | **24/90** | 25 | **+insight（chat-fact）** | ✗ |
+| max | 20/90 | 24 | 全部 | ✓ |
+| ex | 20/90 | 23 | 全部 | ✓ |
+| pangu | 18/90 | 22 | 全部 | ✓ |
+
+**机制**：chat-fact 卡 `memoryCategory='insight'`（chatFactMemory.ts），而 `isVisible` 规则 quick 只看 failure、standard 只看 failure+implementation、high 起才看 insight——所以低档记忆注入为空（quick 2 / standard 1），高分需 high+。强模式（max/ex/pangu）对 1B 是净损失（额外纪律注入/验证密度拖垮弱模型）。
+
+### 强模式方向在模型间相反
+
+| 模型 | high 档 | pangu 档 | Δ |
+|---|---|---|---|
+| 1B | 24/90 | 18/90 | −6（强模式伤弱模型） |
+| M3 | 47/90 | 48/90 | +1（强模式中性/微正） |
+
+默认 `high` 档在两模型上都是合理选择（1B 甜点 / M3 与 pangu 仅差 1 分）。
+
+### 记忆形态四档复验（当前代码 × 1B × 90 题，grader v2.1）
+
+| 档位 | strict | 记忆形态 |
+|---|---|---|
+| ZL-compact | 30/90 | 无门控播种 + LIMIT=40 检索 |
+| ZL-direct | 24/90 | 人工记忆卡内联 recall |
+| ZL-product | 19/90 | 产品管线（门控播种+检索） |
+| ZL-pipeline | 18/90 | haystack 原文整段内联 |
+
+旧 v2 口径（direct 29 / pipeline 23 / compact 32）经 v2.1 收紧后下移，排序不变。产品门控仍是 1B 最大瓶颈：compact 无门控 30 vs product 门控 19，差 11 分。
+
+---
+
+## 附录（2026-09-15）：ZL×7B 代码更新后复验
+
+代码更新后复验 ZL×7B 90 题（grader v2.1）：strict **27/90** · lenient 27/90 · 0 超时（平均 32.5s/题）。
+
+| 题型 | 新 zl-7b-90 | 旧 7b（31/90） |
+|---|---|---|
+| knowledge-update | 10/15 | 9/15 |
+| multi-session | 1/15 | 3/15 |
+| single-session-assistant | 5/15 | 8/15 |
+| single-session-preference | 1/15 | 1/15 |
+| single-session-user | 8/15 | 7/15 |
+| temporal-reasoning | 2/15 | 3/15 |
+| **TOTAL** | **27/90** | 31/90 |
+
+−4 主要来自 assistant(−3)/multi-session(−2)，无机制证据指向代码（同批改动在 M3 +6、1B 中性），落在 7B 采样方差带边缘（旧 7B 仅单样本）；3 个 300s 超时为偶发卡顿（重跑 8~98s 全过），非系统性慢。需 7B 双样本才能定「回归 vs 方差」。

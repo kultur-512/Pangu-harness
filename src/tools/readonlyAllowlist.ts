@@ -25,7 +25,10 @@ export const READONLY_DENY_MESSAGE =
 
 // T-28: 命令链/重定向穿透拒绝 — `; && || | > >> <` 任一出现即整体拒绝
 // （`ls; rm -rf .` / `echo x > file` / `git status && rm` 无法绕过白名单）。
-const CHAIN_OR_REDIRECT_RE = /[;&|<>]/;
+// T-28b: 追加换行/回车（多行命令注入）、反引号与 `$`（命令替换）——
+//   `ls\nrm -rf ~`、`git log $(touch x)`、`` git show `touch x` `` 同样整体拒绝。
+//   注意**不**收 `%`：`git log --format=%h` 之类的正常用法不能误伤。
+const CHAIN_OR_REDIRECT_RE = /[;&|<>\r\n`$]/;
 
 /**
  * Whether a command may run while the session is in readonly mode.

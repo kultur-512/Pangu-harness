@@ -1,0 +1,380 @@
+[
+  {
+    "id": "env-sample",
+    "size": "S",
+    "zl": {
+      "ms": 16671,
+      "exit": 0,
+      "ok": true,
+      "detail": "vars 4/4"
+    },
+    "cc": {
+      "ms": 15381,
+      "exit": 0,
+      "ok": true,
+      "detail": "vars 4/4"
+    },
+    "zlAnswerHead": "L=info、NODE_ENV=development 等常见变量，含注释说明）。\n侦察完成: 注入记忆 0 张 · 意图 execution · 档位 high · 提示 1481 字符\n[Step 6] \n[memory] injectedCardIds=[]\n✓ 完成 (16175ms) · ",
+    "ccAnswerHead": "已创建 `.env.example`，包含以下配置节：\n\n| 分类 | 变量 |\n|---|---|\n| **服务器** | `PORT`、`NODE_ENV` |\n| **数据库** | `DATABASE_URL` |\n| **安全** | `JWT_SECRET`、`JWT_EXPIRES_I"
+  },
+  {
+    "id": "todo-cli",
+    "size": "M",
+    "zl": {
+      "ms": 11454,
+      "exit": 0,
+      "ok": true,
+      "detail": "add works"
+    },
+    "cc": {
+      "ms": 19556,
+      "exit": 0,
+      "ok": true,
+      "detail": "add works"
+    },
+    "zlAnswerHead": "ne 1、node todo.js list，确认 done 的条目标记为已完成。\n侦察完成: 注入记忆 0 张 · 意图 execution · 档位 high · 提示 1689 字符\n[Step 4] \n[memory] injectedCardIds=[]\n✓ 完成 (10938ms) · ",
+    "ccAnswerHead": "全部执行成功！输出结果显示：\n\n- **ID 1 \"买牛奶\"** → `[x] 买牛奶 ✓` ✓ 已标记为已完成\n- **ID 2 \"写报告\"** → `[ ] 写报告` (未完成)\n\n`todo.js` 已实现零依赖（仅用 Node.js 内置的 `fs` 和 `path` 模块），数据存储在 `"
+  },
+  {
+    "id": "lru-cache",
+    "size": "M",
+    "zl": {
+      "ms": 35090,
+      "exit": 0,
+      "ok": true,
+      "detail": "lru behavior ok"
+    },
+    "cc": {
+      "ms": 22609,
+      "exit": 0,
+      "ok": true,
+      "detail": "lru behavior ok"
+    },
+    "zlAnswerHead": "、get(key)、set(key,value)），O(1) 复杂度；并写 tests/lru.test.js（node:test）覆盖：容量淘汰、get 刷新顺序、覆盖写。运行测试确认通过。\n侦察完成: 注入记忆 0 张 · 意图 execution · 档位 high · 提示 1633 字符\n",
+    "ccAnswerHead": "全部 6 个测试通过 ✓\n\n**实现说明**（`src/lru.js`）：\n- 使用 `Map` 的有序性实现 O(1) 插入/删除/访问\n- `get`：删除再插入使该键变为最新\n- `set`：覆盖时删除旧记录；容量满时淘汰 `Map.keys().next().value`（Map 按插入顺序"
+  },
+  {
+    "id": "env-parser",
+    "size": "M",
+    "zl": {
+      "ms": 28045,
+      "exit": 0,
+      "ok": true,
+      "detail": "parser ok"
+    },
+    "cc": {
+      "ms": 51807,
+      "exit": 0,
+      "ok": true,
+      "detail": "parser ok"
+    },
+    "zlAnswerHead": " tests/envparse.test.js 覆盖以上情况，运行测试确认通过。\n侦察完成: 注入记忆 0 张 · 意图 execution · 档位 high · 提示 1595 字符\n[Step 13] \n[memory] injectedCardIds=[]\n✓ 完成 (27542ms) · ",
+    "ccAnswerHead": "全部 13 个测试通过 ✅\n\n**已创建文件：**\n- `src/envparse.js` - 导出 `parseEnv(text)` 函数，支持：\n  - `KEY=value` 格式解析\n  - `#` 注释行跳过\n  - 引号值去引号（单/双引号）\n  - 空行跳过\n  - 行内 `#` 注释"
+  },
+  {
+    "id": "md-table-sort",
+    "size": "L",
+    "zl": {
+      "ms": 17876,
+      "exit": 0,
+      "ok": true,
+      "detail": "sorted: 45,30,12,7"
+    },
+    "cc": {
+      "ms": 18136,
+      "exit": 0,
+      "ok": true,
+      "detail": "sorted: 45,30,12,7"
+    },
+    "zlAnswerHead": "格，按\"数量\"列降序排序后重写整个表格回 data.md（保持格式），并运行脚本。\n侦察完成: 注入记忆 0 张 · 意图 execution · 档位 high · 提示 1423 字符\n[Step 8] \n[memory] injectedCardIds=[]\n✓ 完成 (17383ms) · ",
+    "ccAnswerHead": "脚本已创建并执行成功。`data.md` 表格已按\"数量\"列降序排序：\n\n| 名称 | 数量 | 单价 |\n|---|---|---|\n| 樱桃 | 45 | 12 |\n| 苹果 | 30 | 5.5 |\n| 香蕉 | 12 | 3.2 |\n| 榴莲 | 7 | 25 |\n"
+  },
+  {
+    "id": "task-queue",
+    "size": "L",
+    "zl": {
+      "ms": 35090,
+      "exit": 0,
+      "ok": false,
+      "detail": "tests failed"
+    },
+    "cc": {
+      "ms": 600016,
+      "exit": 124,
+      "ok": false,
+      "detail": "tests failed"
+    },
+    "zlAnswerHead": "上限、失败自动重试 retries 次、单任务超时 timeoutMs。写 tests/queue.test.js（node:test）覆盖并发上限、优先级顺序、重试、超时。运行测试确认通过。\n侦察完成: 注入记忆 0 张 · 意图 execution · 档位 high · 提示 1763 字符\n",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "regex-mail",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "regex self-test passed (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "regex self-test passed (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "camel-conv",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "conversion ok (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "conversion ok (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "json-repair",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "parsed (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "parsed (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "readme-gen",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "keywords 4/4, len=725 (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "keywords 4/4, len=1148 (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "fizzbuzz-file",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "fizzbuzz ok (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "fizzbuzz ok (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "csv-to-json",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "csv converted (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "csv converted (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "palindrome",
+    "size": "S",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "pal ok (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "pal ok (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "debounce-lib",
+    "size": "M",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "bugfix-pagination",
+    "size": "M",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "md-toc",
+    "size": "M",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "toc has headings (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "toc has headings (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "retry-lib",
+    "size": "M",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "ini-parser",
+    "size": "L",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": false,
+      "detail": "tests failed (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "log-analyzer",
+    "size": "L",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "total=500 err=33/33 (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "total=500 err=33/33 (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "fib-memo",
+    "size": "L",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "tests green (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": false,
+      "detail": "tests failed (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  },
+  {
+    "id": "rest-api",
+    "size": "L",
+    "zl": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "server.js exists (smoke manual) (reconstructed)"
+    },
+    "cc": {
+      "ms": null,
+      "exit": 0,
+      "ok": true,
+      "detail": "server.js exists (smoke manual) (reconstructed)"
+    },
+    "zlAnswerHead": "",
+    "ccAnswerHead": ""
+  }
+]

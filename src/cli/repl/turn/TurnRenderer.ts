@@ -44,6 +44,87 @@ export function collapseUnparsedCallBlock(text: string): string {
   return looksLikeUnparsedCallBlock(s) ? UNPARSED_CALL_NOTICE : s;
 }
 
+// ==================== 计划文本流式折叠（2026-09-15 真机 1B 实测驱动） ====================
+// 模型（尤其小模型）会在 message.delta 正文里流式输出大段"伪 XML 计划"
+//（<write_file>/<edit_file>/<read_file>/<verify_command> …），全量渲染刷屏严重。
+// 这里提供渲染层纯助手：只对**完整闭合**的这类块折叠为单行摘要；未闭合块
+// （可能被 delta 切开）在流式缓冲里扣留（holdback，与 <think> 状态机同型）。
+// 只改显示——事件流/落盘原文不受影响；stripThinkTags 的 <think> 语义不动。
+
+/** 计划叙述块标签白名单（开标签行首匹配）。 */
+export const PLAN_BLOCK_OPEN_RE = /^<(write_file|edit_file|read_file|verify_command)(?:\s[^>]*)?>/i;
+
+const PLAN_BLOCK_SCAN_RE = /<(write_file|edit_file|read_file|verify_command)(?:\s[^>]*)?>/gi;
+
+function planBlockCloseRe(tag: string): RegExp {
+  return new RegExp(`</${tag}\\s*>`, 'i');
+}
+
+/**
+ * 计划块单行摘要：`⎿ [计划] write_file → src/x.ts`。
+ * 目标提取顺序：开标签属性（file_path/path/file/filename/target）→
+ * 块内 <file_path>…</file_path> → 块内首个非空纯文本行（截 60 列）。
+ */
+export function planBlockSummary(block: string): string {
+  const s = String(block ?? '');
+  const om = s.match(PLAN_BLOCK_OPEN_RE);
+  const tag = om ? om[1].toLowerCase() : 'plan';
+  let target = '';
+  if (om) {
+    const am = om[0].match(/(?:file_path|path|file|filename|target)\s*=\s*["']([^"']+)["']/i);
+    if (am) target = am[1];
+  }
+  if (!target) {
+    const fm = s.match(/<file_path>([^<]+)<\/file_path>/i);
+    if (fm) target = fm[1];
+  }
+  if (!target) {
+    // 剥掉内嵌标签后取首个非空行（verify_command → 命令本体等）
+    const body = om ? s.slice(om[0].length) : s;
+    const plain = body.replace(/<\/?[a-z_][a-z0-9_-]*>/gi, '').split('\n').map((l) => l.replace(/\s+/g, ' ').trim());
+    const first = plain.find((l) => l.length > 0);
+    if (first) target = truncateByWidth(first, 60);
+  }
+  return `⎿ [计划] ${tag}${target ? ` → ${target.replace(/\s+/g, ' ').trim()}` : ''}`;
+}
+
+/** 渲染层折叠：文本中完整闭合的计划块 → 单行摘要（未闭合的原样保留）。 */
+export function foldClosedPlanBlocks(text: string): string {
+  const s = String(text ?? '');
+  if (!s) return s;
+  let out = '';
+  let idx = 0;
+  PLAN_BLOCK_SCAN_RE.lastIndex = 0;
+  for (let m = PLAN_BLOCK_SCAN_RE.exec(s); m; m = PLAN_BLOCK_SCAN_RE.exec(s)) {
+    const tag = m[1];
+    const closeRe = planBlockCloseRe(tag);
+    closeRe.lastIndex = 0;
+    const rest = s.slice(m.index + m[0].length);
+    const cm = rest.match(closeRe);
+    if (!cm || cm.index === undefined) continue; // 未闭合 → 不折叠，继续扫描后续开标签
+    const end = m.index + m[0].length + cm.index + cm[0].length;
+    out += s.slice(idx, m.index) + planBlockSummary(s.slice(m.index, end));
+    idx = end;
+  }
+  return idx === 0 ? s : out + s.slice(idx);
+}
+
+/**
+ * 流式 holdback 下标：文本里最后一个未闭合计划块的开标签下标；
+ * 其后的内容必须扣留到闭标签到达（-1 = 无需扣留）。
+ */
+export function planHoldbackIndex(text: string): number {
+  const s = String(text ?? '');
+  if (!s) return -1;
+  let last: RegExpExecArray | null = null;
+  PLAN_BLOCK_SCAN_RE.lastIndex = 0;
+  for (let m = PLAN_BLOCK_SCAN_RE.exec(s); m; m = PLAN_BLOCK_SCAN_RE.exec(s)) last = m;
+  if (!last) return -1;
+  const closeRe = planBlockCloseRe(last[1]);
+  closeRe.lastIndex = 0;
+  return closeRe.test(s.slice(last.index + last[0].length)) ? -1 : last.index;
+}
+
 const ANSI_BOLD_OFF = '\x1b[22m';
 const ANSI_FG_OFF = '\x1b[39m';
 
@@ -90,16 +171,21 @@ export function renderInlineMarkdown(text: string): string {
 /**
  * U2 流式增量冲刷：从缓冲里切出「完整段」（以 `\n` 或 `。` 收尾）做行内
  * markdown 转换后可输出；尾段不足一个完整段 → 留在缓冲等下一 delta。
+ * 计划块 holdback：未闭合的 <write_file> 等块（可能被 delta 切开）整体扣留，
+ * 闭合后在放行侧由 foldClosedPlanBlocks 折叠为单行摘要（防伪 XML 计划刷屏）。
  * 纯函数：返回 ready（已转换、可直接写终端）与 rest（继续缓冲的残段）。
  */
 export function flushBufferedMarkdown(buf: string): { ready: string; rest: string } {
-  const s = String(buf ?? '');
-  if (!s) return { ready: '', rest: '' };
+  const raw = String(buf ?? '');
+  if (!raw) return { ready: '', rest: raw };
+  const hold = planHoldbackIndex(raw);
+  const s = hold >= 0 ? raw.slice(0, hold) : raw;
+  const held = hold >= 0 ? raw.slice(hold) : '';
   const last = Math.max(s.lastIndexOf('\n'), s.lastIndexOf('。'));
-  if (last === -1) return { ready: '', rest: s };
+  if (last === -1) return { ready: '', rest: s + held };
   return {
-    ready: renderInlineMarkdown(s.slice(0, last + 1)),
-    rest: s.slice(last + 1),
+    ready: foldClosedPlanBlocks(renderInlineMarkdown(s.slice(0, last + 1))),
+    rest: s.slice(last + 1) + held,
   };
 }
 
@@ -415,23 +501,33 @@ export interface EffortSliderBlockOpts {
   width?: number;
 }
 
-/**
- * CC 式思考强度滑杆块（8 行）：标题 / 空 / 端标签（更快←→更强）/ 轨道线
- * （─ + ▲ 当前档列中心 + 扩展区前 ┊）/ 档名行（当前档默认白亮、其余 dim、
- * 扩展档品红）/ 副标注行（`▲ <当前档> · <副标注>`）/ 空 / 页脚。
- */
-export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
+/** 滑杆列布局（纯数据）——line 的 ANSI 版与 rich 的 ink 组件版共用同一几何。 */
+export interface EffortSliderLayout {
+  tiers: string[];
+  /** 每档列宽 = 显示宽(档名) + 2。 */
+  colWidths: number[];
+  /** 每档列在轨道内的起点偏移。 */
+  colStarts: number[];
+  /** 轨道整体居中起点（绝对列）。 */
+  trackStart: number;
+  trackWidth: number;
+  /** 首个扩展档下标（-1 = 无扩展区）。 */
+  firstExt: number;
+  /** 钳位后的当前档下标。 */
+  index: number;
+  /** ▲ 在轨道内的绝对列。 */
+  cursorCol: number;
+}
+
+/** 滑杆几何计算（纯函数）：列宽/居中/▲ 列。ink 版 TierPicker 与 ANSI 版共用。 */
+export function computeEffortSliderLayout(opts: {
+  tiers: ReadonlyArray<string>;
+  index: number;
+  width?: number;
+}): EffortSliderLayout {
   const tiers = (Array.isArray(opts.tiers) ? opts.tiers : []).map((t) => String(t || ''));
-  const sublabels = (Array.isArray(opts.sublabels) ? opts.sublabels : []).map((s) => String(s || ''));
-  const useColor = opts.useColor !== false;
   const width = Math.max(40, Math.floor(Number(opts.width) || termWidthSafe()));
-  const dim = (s: string) => (useColor ? `${ANSI_DIM}${s}${ANSI_RESET}` : s);
-  const mag = (s: string) => (useColor ? `${ANSI_MAGENTA}${s}${ANSI_RESET}` : s);
-  const bright = (s: string) => s;
-
-  const idx = Math.max(0, Math.min(tiers.length - 1, Math.floor(opts.index)));
-
-  // 列布局：每档列宽 = 显示宽(档名) + 2，轨道起点整体居中。
+  const idx = Math.max(0, Math.min(Math.max(0, tiers.length - 1), Math.floor(opts.index)));
   const colWidths = tiers.map((t) => stringWidth(t) + 2);
   const trackWidth = colWidths.reduce((a, b) => a + b, 0);
   const trackStart = Math.max(0, Math.floor((width - trackWidth) / 2));
@@ -441,6 +537,26 @@ export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
     for (const w of colWidths) { colStarts.push(acc); acc += w; }
   }
   const firstExt = tiers.findIndex((t) => TIER_SLIDER_EXTENSIONS.has(t));
+  const cursorCol = tiers.length > 0
+    ? colStarts[idx] + Math.floor(colWidths[idx] / 2)
+    : 0;
+  return { tiers, colWidths, colStarts, trackStart, trackWidth, firstExt, index: idx, cursorCol };
+}
+
+/**
+ * CC 式思考强度滑杆块（8 行）：标题 / 空 / 端标签（更快←→更强）/ 轨道线
+ * （─ + ▲ 当前档列中心 + 扩展区前 ┊）/ 档名行（当前档默认白亮、其余 dim、
+ * 扩展档品红）/ 副标注行（`▲ <当前档> · <副标注>`）/ 空 / 页脚。
+ */
+export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
+  const sublabels = (Array.isArray(opts.sublabels) ? opts.sublabels : []).map((s) => String(s || ''));
+  const useColor = opts.useColor !== false;
+  const dim = (s: string) => (useColor ? `${ANSI_DIM}${s}${ANSI_RESET}` : s);
+  const mag = (s: string) => (useColor ? `${ANSI_MAGENTA}${s}${ANSI_RESET}` : s);
+  const bright = (s: string) => s;
+
+  const { tiers, colWidths, colStarts, trackStart, trackWidth, firstExt, index: idx, cursorCol } =
+    computeEffortSliderLayout({ tiers: opts.tiers, index: opts.index, width: opts.width });
 
   // 端标签行：更快 右端对齐轨道起点，更强 左端对齐轨道终点（更强=扩展方向，品红）。
   const wFaster = stringWidth('更快');
@@ -455,9 +571,8 @@ export function buildEffortSliderBlock(opts: EffortSliderBlockOpts): string[] {
     const b = colStarts[firstExt] - 1;
     if (b >= 0 && b < trackChars.length) trackChars[b] = '┊';
   }
-  if (tiers.length > 0) {
-    const c = colStarts[idx] + Math.floor(colWidths[idx] / 2);
-    if (c >= 0 && c < trackChars.length) trackChars[c] = '▲';
+  if (tiers.length > 0 && cursorCol >= 0 && cursorCol < trackChars.length) {
+    trackChars[cursorCol] = '▲';
   }
   const track = ' '.repeat(trackStart) + trackChars.join('');
 
@@ -512,7 +627,7 @@ export function buildQuickHelpLines(totalCommands: number): string[] {
     entry('直接输入', '任务描述即开始，如：修复 README 里的错别字'),
     entry('/mode', '切换 plan/default/auto-accept（shift+tab 同效）'),
     entry('/model', '查看或切换模型'),
-    entry('/memory', '查看沉淀的记忆'),
+    entry('/memory', '查看沉淀的记忆 · stats 统计/注入账本'),
     entry('/usage', '本会话 token 用量'),
     entry('/undo', '撤销最近一次写盘'),
     entry('/compact', '立即压缩上下文'),
@@ -575,6 +690,17 @@ export function localizePhase(phase: string): string {
   return map[String(phase || '')] || String(phase || '');
 }
 
+/** recon 事件 → 单行灰字（侦察相位线与执行相位线之间的侦察结论）。 */
+export function reconLine(data: any): string {
+  const n = Number(data?.memoryCards) || 0;
+  const parts = [`侦察完成: 注入记忆 ${n} 张`];
+  if (data?.intent) parts.push(`意图 ${data.intent}`);
+  if (data?.tier) parts.push(`档位 ${data.tier}`);
+  if (data?.memoryOverflow) parts.push(`记忆溢出 ${data.memoryOverflow} 张`);
+  if (data?.promptChars) parts.push(`提示 ${data.promptChars} 字符`);
+  return parts.join(' · ');
+}
+
 /** rollout 状态本地化（/agents 展示用）。 */
 export function localizeRolloutStatus(status: string): string {
   const map: Record<string, string> = { running: '进行中', done: '完成', failed: '失败', pending: '等待' };
@@ -622,6 +748,11 @@ export function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnConte
     const ph = localizePhase(data.phase || data);
     if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'phase', phase: ph });
     if (typeof b.setTop === 'function') b.setTop({ phase: ph });
+    return;
+  }
+  if (t === 'recon' || event === 'recon') {
+    // 侦察结论（记忆注入/意图/档位）——相位线之间的侦察内容
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: reconLine(data), level: 'info' });
     return;
   }
   if (t === 'thinking.start' || event === 'thinking.start') {
@@ -726,6 +857,47 @@ export function mapSseToBridge(event: string, data: any, b: any, ctx?: TurnConte
     if (ctx) ctx.runningBadgeOn = false;
     return;
   }
+  if (t === 'tools/pre-execute' || event === 'tools/pre-execute') {
+    // 工具执行前 → 运行中工具卡（缺陷 #5：此事件旧实现落 fallback 分支被
+    // 原样 pushFeed 进 ink 树，JSON 裸字符串触发 "Text string must be rendered
+    // inside <Text>" 崩溃，整个 UI unmount、任务中断）
+    if (typeof b.pushTool === 'function') {
+      b.pushTool({ tool: data.tool || 'tool', params: data.params, status: 'running' });
+      return;
+    }
+    if (typeof b.pushFeed === 'function') b.pushFeed({ type: 'text', text: `▸ ${data.tool || 'tool'}`, level: 'info' });
+    return;
+  }
+  if (t === 'tools/post-execute' || event === 'tools/post-execute') {
+    // 工具执行后 → 结果工具卡（ok/fail + 输出预览/错误）
+    if (typeof b.pushTool === 'function') {
+      const preview = String(data.outputPreview || '').slice(0, 200);
+      b.pushTool({
+        tool: data.tool || 'tool',
+        status: data.ok === false ? 'fail' : 'ok',
+        ...(preview ? { result: preview } : (data.error ? { result: String(data.error) } : {})),
+        ...(data.lines ? { argsSummary: `${data.lines} 行` } : {}),
+      });
+      return;
+    }
+    if (typeof b.pushFeed === 'function') {
+      b.pushFeed({ type: 'text', text: `⎿ ${data.tool || 'tool'} ${data.ok === false ? '✗ ' + (data.error || '失败') : 'ok'}`, level: data.ok === false ? 'warn' : 'info' });
+    }
+    return;
+  }
+  if (t === 'approval.request' || event === 'approval.request') {
+    // 审批请求走 bridge.setConfirm 审批桥（approvalBridge），feed 不展示协议事件
+    return;
+  }
+  if (t === 'memory.finalized' || event === 'memory.finalized') {
+    // 记忆落定 → 灰字统计（与 classic 路径同文案口径）
+    if (typeof b.pushFeed === 'function') {
+      const cards = Number(data.cards) || 0;
+      const verified = Number(data.verified) || 0;
+      b.pushFeed({ type: 'text', text: `[记忆] 提炼 ${cards} 张卡，验证 ${verified} 张`, level: 'info' });
+    }
+    return;
+  }
   // Fallback generic
   if (typeof b.pushFeed === 'function') {
     if (data && typeof data === 'object' && data.type) b.pushFeed(data);
@@ -744,7 +916,11 @@ export function endMessageStream(ctx: TurnContext) {
   const buf = ctx.lineUi.messageBuf;
   if (buf) {
     ctx.lineUi.messageBuf = '';
-    try { process.stdout.write(renderInlineMarkdown(buf)); } catch {}
+    // 计划块 holdback 兜底：未闭合的计划块残段在回合收尾直接丢弃（不刷屏；
+    // 落盘原文不受影响），其余按行内 markdown + 计划块折叠输出。
+    const hold = planHoldbackIndex(buf);
+    const visible = hold >= 0 ? buf.slice(0, hold) : buf;
+    try { process.stdout.write(foldClosedPlanBlocks(renderInlineMarkdown(visible))); } catch {}
   }
   if (ctx.lineUi.messageStreaming) {
     ctx.lineUi.messageStreaming = false;
@@ -850,6 +1026,10 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
       // phase 值本地化（渲染层映射，不改事件值）
       r.writeLine(r.color(`── ${localizePhase(String(data.phase || data))} ──`, 'gray'));
       break;
+    case 'recon':
+      // 侦察结论（记忆注入/意图/档位）——相位线之间的侦察内容
+      r.writeLine(r.color(reconLine(data), 'gray'));
+      break;
     case 'step': {
       // 流式段收尾：thinking 折叠为统计行、正文流补换行
       endThinkingBlock(ctx, r);
@@ -903,8 +1083,6 @@ export function renderSseEvent(ctx: TurnContext, event: string, data: any, r: Re
       break;
     }
     case 'critique':
-      // 删除死前缀 `Critique: `（critique 机制已休眠，直接呈现内容）
-      r.writeLine(r.color(String(data.critique || data), 'yellow'));
       break;
     case 'tool':
       r.writeLine(r.color(`⚙ ${data.tool || ''} ${data.target || ''} [${data.status || ''}]`, 'cyan'));

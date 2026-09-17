@@ -1,9 +1,9 @@
 # Panshalach 效果评估报告（命题提交物 2 · 骨架）
 
 > 华为命题要求：(2) 效果评估报告——本方案与**无记忆基线或其他基线**对比，重点展示**长程记忆保持**与**历史信息利用**能力。
-> ⚠️ **数据状态声明：本文档所有结果表目前为待填占位，仅真实 openPangu 运行后填入；任何合成/离线演示数据均会明确标注，不虚报为真模型结果。**
+> ⚠️ **数据状态声明（2026-09-16 更新）**：**§4 结果表已回填真实 openPangu 数据**（2026-09-16，openpangu-embedded-1b-i1 本地端点，20 runs——0 通过 / 18 失败 / 2 不适用，逐题质量注记随表）；§4 之外的表（4.1/4.2 长程保持曲线）仍为占位，仅真实 openPangu 运行后填入；任何合成/离线演示数据均会明确标注，不虚报为真模型结果。
 > 评测运行方式（用户已确认）：**仅真实 openPangu 运行**（本机/昇腾 OpenAI 兼容端点，见 [USER-GUIDE.md §配置](USER-GUIDE.md)）。
-> 被测基线：**v0.8.0-rc**（messages 双通道 + 执行层七项 + 记忆链治理）；消融口径 A（`PANSHA_NO_MEMORY=1` 零注入）/ B（记忆卡）/ C（全能力）/ C4（语义检索）见 `scripts/eval/run-eval.mjs`。
+> 被测基线：**v0.8.8**（tier 体系收口 + 记忆门禁改造；交互播种 env 模型 / /workspace 派发 / 侦察内容透出 / rich Ctrl+C 中断等真机缺陷修复于 2026-09-16 合入）；消融口径 A（`PANSHA_NO_MEMORY=1` 零注入）/ B（记忆卡）/ C（全能力）/ C4（语义检索）见 `scripts/eval/run-eval.mjs`。
 
 ## 1. 应用场景与业务价值
 
@@ -52,67 +52,82 @@
 - 同任务同种子跑 A/B/C；A/B/C 除记忆注入差异外，档位/预算/温度一致。
 - 记录：openPangu 具体模型与版本、端点部署（昇腾/本机）、上下文窗口、每档任务量、随机种子、总 token 与成本。
 
-## 3. 运行步骤（端点就绪后执行）
+## 3. 运行步骤（2026-09-16 已执行）
 
-1. 配置 openPangu（见 USER-GUIDE）：`.panshalach.json` providers.openpangu（或新 `.panshalach.json`）+ `PANSHA_MODEL=openpangu:openPangu-7B`。
-2. 准备评测任务集（脚本化跑）：每个任务按 A/B/C 各跑一次，关记忆 = 不开 memoryLoad 或注入空；全能力 = P2/P3 代码落地后。
-3. 汇总到下方表；截图/日志归档到 `docs/panshalach/evals/<date>/`。
+1. 配置 openPangu（见 USER-GUIDE）：`.panshalach.json` providers.openpangu（或新 `.panshalach.json`）+ `PANSHA_MODEL=openpangu:openpangu-embedded-1b-i1`（本机 LM Studio 端点）。
+2. 准备评测任务集（脚本化跑）：每个任务按 A/B/C/C4 各跑一次，关记忆 = 不开 memoryLoad 或注入空；全能力 = P2/P3 代码落地后。
+3. 汇总到下方表；截图/日志归档到 `docs/panshalach/evals/<date>/`（实际落盘 `scripts/eval/results/`，运行产物不入 git）。
 4. 运行者核对声明：未混合合成数据。
 
-## 3.5 外部基准锚点与窗口探测（占位 — 选型见 EVAL-FEASIBILITY.md）
+## 3.5 外部基准锚点与窗口探测（锚点已完成 · 窗口探测待做）
 
-基准选型决策与落地方案见 **[EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md)**。本文预留两个数据节，由 P2/P3 产出入座（mock 不入表）：
+基准选型决策与落地方案见 **[EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md)**。
 
-- **外部基准锚点（LongMemEval-S 子集）**：能力维度（信息抽取/知识更新/拒答）× A/B 两列 + token 成本列；判分口径与自评偏差声明随表。
-- **有效窗口探测（RULER 式）**：openPangu-1B/7B 声称窗口 vs 有效窗口召回率曲线——支撑"小模型窗口下记忆外置是必需品"的底座级论证。
+- **外部基准锚点（LongMemEval-90）——已完成（2026-09-14/15）**：六格 harness 矩阵（ZL-product/direct/pipeline/compact × 1B + CC×M3 + Pi×1B），最终口径 **ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）· ZL×7B 31/90（本地最优）· ZL×1B 六档 quick 22 / standard 23 / high 20 / max 27 / ex 20 / pangu 22**，判分口径（grader v2.1 strict/lenient）与自评偏差声明见 [`scripts/eval/longmemeval-90/COMPARE-90.md`](../../scripts/eval/longmemeval-90/COMPARE-90.md)。
+- **有效窗口探测（RULER 式）——待做**：openPangu-1B/7B 声称窗口 vs 有效窗口召回率曲线——支撑"小模型窗口下记忆外置是必需品"的底座级论证。
 
-## 4. 结果表（占位 — 待真实 openPangu 数据）
+## 4. 结果表（2026-09-16 真实 openPangu-1B）
+
+> **外部基准已完成（2026-09-14/15）**：LongMemEval-90 交叉对比（六格 harness 矩阵 + 修复轨迹）最终口径 ZL×M3 strict **47/90**（超 CC×M3 41/90）、ZL×7B 31/90、ZL×1B 六档 20-27，见 [`scripts/eval/longmemeval-90/COMPARE-90.md`](../../scripts/eval/longmemeval-90/COMPARE-90.md)。该基准与本章 T1-T5 消融互为补充：LME 量长程记忆召回，T1-T5 量执行纪律与溢出治理。**T1-T5 消融已于 2026-09-16 真机执行（下表，20 runs 全量）**；逐题原始数据为运行产物不入库（`scripts/eval/results/`），本表为唯一入库口径。
 
 <!-- R6-AUTO-FILL §4 START -->
 
-> 自动生成于 2026-09-08T07:08:19.711Z | 来源: mock-smoke | 模型: mock://smoke
+> 自动生成于 2026-09-16T05:20:34.460Z | 来源: real-openpangu | 模型: openpangu:openpangu-embedded-1b-i1
+
+> ⚠️ **数据质量注记（2026-09-16，人工补充，随下次回填重写）**：
+> 1. **T4/T5 八条样本的 prompt 无效**（78 字符 = fixture.md 的说明文字，非真实任务）——根因是 run-eval.mjs 的 `## Prompt` 段解析缺陷（"## Prompt 加载" 说明节被误当段起点 + CRLF 行尾残留），已于本次修复（精确段标题匹配 + CRLF 归一），但本表数据为修复前产物，**T4/T5 结论不计入任何分析**。
+> 2. **T3-A/T5-A 标 not_applicable（overflow-skipped）**：溢出判定已收紧为 `[ctx] contextOverflowCompacted=1` 机器标记唯一正源（删除 stdout 子串匹配——长文档正文含"窗口/截断"字样造成假阳性，09-14 旧数据即被此污染）；1B 端点（LM Studio）对超窗请求返回 200 静默截断、loop 溢出重试未触发证据行，如实标不适用。真溢出场景需 7B 端点复验。
+> 3. **防线验证正常**：A 档 0 注入、B/C/C4 档 seed 注入非空（T3 三档注入 1 张 = 8281-token 长 prompt 下窗口预算挤压的如实记录）。
+> 4. **T3 prompt 拼接校准已生效**（33121 字符 ≈ 8.3K tokens：document.md 全文拼入 prompt，1B 不主动 read_file 长文档的实测对策）。
 
 ## 汇总
 
 - **总运行数**: 20
-- **有效样本**: 20
-- **通过**: 20 | **失败**: 0
-- **通过率**: 100.0%
+- **有效样本**: 18
+- **通过**: 0 | **失败**: 18
+- **通过率**: 0.0%
 
 ### 按消融档位
 
 | 档位 | 总数 | 通过 | 失败 | 无效 | 不适用 | 通过率 |
 |------|------|------|------|------|--------|--------|
-| A | 5 | 5 | 0 | 0 | 0 | 100.0% |
-| B | 5 | 5 | 0 | 0 | 0 | 100.0% |
-| C | 5 | 5 | 0 | 0 | 0 | 100.0% |
-| C4 | 5 | 5 | 0 | 0 | 0 | 100.0% |
+| A | 5 | 0 | 3 | 0 | 2 | 0.0% |
+| B | 5 | 0 | 5 | 0 | 0 | 0.0% |
+| C | 5 | 0 | 5 | 0 | 0 | 0.0% |
+| C4 | 5 | 0 | 5 | 0 | 0 | 0.0% |
+
+### 失败分类
+
+| 分类 | 计数 |
+|------|------|
+| verification-failed | 18 |
+| no-verification | 2 |
 
 
 ## 详细结果
 
 | 任务 | 任务族 | 档位 | 结论 | 验证信号 | 注入/验证卡 | Prompt 字符 | 耗时 | 失败分类 |
 |------|------|------|------|----------|------------|------------|------|----------|
-| T1-a-42 | T1 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | 0.0s | overflow-skipped |
-| T2-a-42 | T2 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
-| T3-a-42 | T3 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
-| T4-a-42 | T4 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
-| T5-a-42 | T5 | A | no-verification | NO_VERIFICATION | 0/0 | 19 | ? | overflow-skipped |
-| T1-b-42 | T1 | B | completed | PASS | 2/1 | 19 | ? | none |
-| T2-b-42 | T2 | B | completed | PASS | 2/1 | 19 | ? | none |
-| T3-b-42 | T3 | B | completed | PASS | 2/1 | 19 | ? | none |
-| T4-b-42 | T4 | B | completed | PASS | 2/1 | 19 | ? | none |
-| T5-b-42 | T5 | B | completed | PASS | 2/1 | 19 | ? | none |
-| T1-c-42 | T1 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
-| T2-c-42 | T2 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
-| T3-c-42 | T3 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
-| T4-c-42 | T4 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
-| T5-c-42 | T5 | C | completed | ALL_TESTS_PASSED | 1/1 | 19 | ? | none |
-| T1-c4-42 | T1 | C4 | completed | PASS | 1/1 | 20 | 0.0s | none |
-| T2-c4-42 | T2 | C4 | completed | PASS | 1/1 | 20 | ? | none |
-| T3-c4-42 | T3 | C4 | completed | PASS | 1/1 | 20 | ? | none |
-| T4-c4-42 | T4 | C4 | completed | PASS | 1/1 | 20 | ? | none |
-| T5-c4-42 | T5 | C4 | completed | PASS | 1/1 | 20 | ? | none |
+| T1 | T1 | A | no-verification | FAIL | 0/0 | 1146 | 10.1s | verification-failed + external-verify-nonzero |
+| T1 | T1 | B | no-verification | FAIL | 2/0 | 1146 | 10.7s | verification-failed + external-verify-nonzero |
+| T1 | T1 | C | no-verification | FAIL | 2/0 | 1146 | 9.1s | verification-failed + external-verify-nonzero |
+| T1 | T1 | C4 | no-verification | FAIL | 2/0 | 1146 | 35.4s | verification-failed + external-verify-nonzero |
+| T2 | T2 | A | no-verification | FAIL | 0/0 | 1485 | 19.8s | verification-failed + external-verify-nonzero |
+| T2 | T2 | B | no-verification | FAIL | 2/0 | 1485 | 52.2s | verification-failed + external-verify-nonzero |
+| T2 | T2 | C | no-verification | FAIL | 2/0 | 1485 | 160.3s | verification-failed + external-verify-nonzero |
+| T2 | T2 | C4 | no-verification | FAIL | 2/0 | 1485 | 33.8s | verification-failed + external-verify-nonzero |
+| T3 | T3 | A | not_applicable | EXIT_CODE:0 | 0/0 | 33121 | 48.8s | no-verification + prompt-too-short |
+| T3 | T3 | B | no-verification | FAIL | 1/0 | 33121 | 2.2s | verification-failed + external-verify-nonzero |
+| T3 | T3 | C | no-verification | FAIL | 1/0 | 33121 | 1.8s | verification-failed + external-verify-nonzero |
+| T3 | T3 | C4 | no-verification | FAIL | 1/0 | 33121 | 1.9s | verification-failed + external-verify-nonzero |
+| T4 | T4 | A | no-verification | FAIL | 0/0 | 78 | 87.4s | verification-failed + external-verify-nonzero |
+| T4 | T4 | B | no-verification | FAIL | 2/0 | 78 | 35.3s | verification-failed + external-verify-nonzero |
+| T4 | T4 | C | no-verification | FAIL | 2/0 | 78 | 4.6s | verification-failed + external-verify-nonzero |
+| T4 | T4 | C4 | no-verification | FAIL | 2/0 | 78 | 20.3s | verification-failed + external-verify-nonzero |
+| T5 | T5 | A | not_applicable | EXIT_CODE:0 | 0/0 | 78 | 4.9s | no-verification + prompt-too-short |
+| T5 | T5 | B | no-verification | FAIL | 2/0 | 78 | 21.6s | verification-failed + external-verify-nonzero |
+| T5 | T5 | C | no-verification | FAIL | 2/0 | 78 | 13.3s | verification-failed + external-verify-nonzero |
+| T5 | T5 | C4 | no-verification | FAIL | 2/0 | 78 | 18.4s | verification-failed + external-verify-nonzero |
 
 <!-- R6-AUTO-FILL §4 END -->
 

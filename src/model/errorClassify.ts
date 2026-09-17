@@ -10,7 +10,9 @@
 // 2. VerifyCritiqueLoop 捕获 context_overflow → 强制 compact 后重试本步（≤1 次）。
 //
 // 判定输入是 openai-compatible 客户端抛出的错误对象（status/body/network/
-// timeout 等字段），无 status 时退回 body/message 模式匹配。纯函数、零依赖。
+// timeout 等字段）。无 status 时退回 body/message 模式匹配——含 context_overflow
+// 的正文匹配（不少网关把超窗错误包成无 status 的通用 Error）；有 status 时
+// context_overflow 需状态码（400/413/422）+ 正文双条件。纯函数、零依赖。
 
 export type ApiErrorClass =
   | 'rate_limit'
@@ -39,11 +41,14 @@ const OVERFLOW_PATTERNS: RegExp[] = [
   /token.{0,8}(?:超|过长|上限)/i,
 ];
 
-/** billing 正文模式（429 与 4xx 下优先于 rate_limit）。 */
+/** billing 正文模式（429 与 4xx 下优先于 rate_limit）。
+ *  注意：只匹配"欠费"语义（insufficient + balance/credit 等共现）——裸 /billing/i
+ *  过宽，429 限流文案带 billing 字样（"see billing dashboard"）会被误杀不重试。 */
 const BILLING_PATTERNS: RegExp[] = [
   /insufficient (?:balance|quota|credits|funds)/i,
   /out of credits/i,
-  /billing/i,
+  /insufficient.{0,64}(?:balance|credit)/i,
+  /billing.{0,64}insufficient/i,
   /quota exceeded/i,
   /payment required/i,
   /余额不足/i,
@@ -81,8 +86,12 @@ export function classifyApiError(e: any): ApiErrorClass {
 
   // context_overflow 优先于 billing/rate_limit：正文同时含余额与超窗字样时，
   // 超窗是可恢复路径（强制 compact 重试），余额类应快速失败——可操作者优先。
-  if (status !== undefined && OVERFLOW_STATUS.has(status)
-    && OVERFLOW_PATTERNS.some((re) => re.test(body))) {
+  // status 缺失时仍做正文匹配（旧实现直接落空——不少网关把超窗包成无 status 的
+  // 通用 Error，永判 unknown → 漏掉强制 compact 重试）；有 status 时维持
+  // 状态码（400/413/422）+ 正文双条件。
+  if (status === undefined
+    ? OVERFLOW_PATTERNS.some((re) => re.test(body))
+    : (OVERFLOW_STATUS.has(status) && OVERFLOW_PATTERNS.some((re) => re.test(body)))) {
     return 'context_overflow';
   }
 

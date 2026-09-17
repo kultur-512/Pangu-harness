@@ -24,7 +24,7 @@ import { isApprovalActive, cancelActiveApproval, setApprovalActivityListener } f
 import { Session } from './Session.js';
 import * as rollout from './rolloutStore.js';
 import type { ModelProvider } from './types.js';
-import { createTurnContext, clearInlineLine, isRunning, updateQueueCount } from './turn/TurnContext.js';
+import { createTurnContext, clearInlineLine, isRunning, updateQueueCount, type TurnContext } from './turn/TurnContext.js';
 import { buildBanner, createClearingRenderer, modeBadgeVisual, shouldShowStartupTip, termWidth } from './turn/TurnRenderer.js';
 import { completeLineCommand, confirmPendingSuggestion, createModeRing, cycleMode, getSharedRegistry, handleEffortSelKey, handleLocalCommand, LINE_COMMANDS } from './turn/CommandRouter.js';
 import { buildSlashMenuItems, createSlashMenuController } from './turn/SlashMenu.js';
@@ -36,6 +36,48 @@ export interface SseInteractiveOptions {
   defaultWorkspace?: string;
   /** resume an existing session instead of starting fresh */
   session?: Session;
+}
+
+/**
+ * rich 桥的 Ctrl+C 处理器（PanshaApp 组件层接管后调用；抽成工厂函数供单测）。
+ * 2026-09-16 真机缺陷修复：旧顺序"审批挂起 → 仅拒绝一次审批"把 Ctrl+C 吞成
+ * 单次拒绝（模型立刻再请求审批 → 循环永远打断不了），且直接 abort 不 resolve
+ * 挂起的 setConfirm Promise → 引擎在审批处 await 永不 settle → 任务永远"运行中"。
+ * 新语义（CC 对齐）：任务运行中 → 中断优先，同时清掉所有挂起审批让引擎从
+ * 审批处醒来、看到 aborted signal 收尾（拒绝单次审批是 ConfirmBar 的 Esc/n
+ * 职责）；空闲 → 2s 内再按退出（复用 line 的 idleCtrlCAt 语义）。
+ */
+export function buildRichCtrlCHandler(ctx: TurnContext, session: Session, bridge: any): () => void {
+  return () => {
+    // 1) 任务运行中 → 中断（abort + 清挂起审批，缺一不可）
+    if (ctx.currentAbort) {
+      try { ctx.currentAbort.abort(); } catch {}
+      if (typeof (bridge as any).hasPendingConfirm === 'function' && (bridge as any).hasPendingConfirm()) {
+        try { (bridge as any).resolveConfirm('n'); } catch {}
+      }
+      if (isApprovalActive()) {
+        cancelActiveApproval('sigint');
+      }
+      return;
+    }
+    // 2) 空闲 → 二次确认模式：2s 内再按才退出
+    const now = Date.now();
+    if (ctx.lineUi.idleCtrlCAt && now - ctx.lineUi.idleCtrlCAt < 2000) {
+      try { rollout.appendMeta(session); } catch {}
+      try {
+        const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
+        if (inst && typeof inst.unmount === 'function') inst.unmount();
+      } catch {}
+      try { ctx.requestExit(); } catch { process.exit(0); }
+      return;
+    }
+    ctx.lineUi.idleCtrlCAt = now;
+    if (typeof (bridge as any).pushFeed === 'function') {
+      (bridge as any).pushFeed({ type: 'text', text: '再按一次 Ctrl+C 退出 · 任务运行中按 = 中断任务', level: 'info' });
+    }
+    const t = setTimeout(() => { ctx.lineUi.idleCtrlCAt = 0; }, 2000);
+    (t as any).unref?.();
+  };
 }
 
 export async function startSseInteractive(opts: SseInteractiveOptions = {}): Promise<void> {
@@ -54,9 +96,12 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
 
   // one shared session for rich + line paths (approval mode/allowlist
   // flow from here into the engine adapter; resume seeds it).
-  const { applyConfigModel } = await import('./modelSeed.js');
+  // D1（2026-09-15 真机）：此前只 applyConfigModel——PANSHA_MODEL 在交互
+  // REPL 被静默忽略（带 minimax:MiniMax-M3 启动仍落配置文件 1B）。播种
+  // 顺序纪律：applyEnvModel → applyConfigModel（env 优先，配置兜底）。
+  const { applyConfigModel, applyEnvModel } = await import('./modelSeed.js');
   const session: Session = applyConfigModel(
-    opts.session ?? new Session({ workspace: opts.defaultWorkspace, tier: (opts.defaultTier as any) || 'high' }),
+    applyEnvModel(opts.session ?? new Session({ workspace: opts.defaultWorkspace, tier: (opts.defaultTier as any) || 'high' })),
     opts.session?.workspace || opts.defaultWorkspace
   ) as Session;
   if (!opts.session) {
@@ -106,6 +151,9 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
       try {
         (bridge as any).cycleMode = () => cycleMode(ctx);
         (bridge as any).clearQueue = () => { ctx.queue.clear(); updateQueueCount(ctx); };
+        // Ctrl+C 组件层接管（exitOnCtrlC:false 后由 PanshaApp 调用）。
+        // 逻辑抽到 buildRichCtrlCHandler（可单测）；语义见函数注释。
+        (bridge as any).handleCtrlC = buildRichCtrlCHandler(ctx, session, bridge);
         (bridge as any).requestStatusPanel = () => {
           (async () => {
             const { recentCheckpoints } = await import('../../tools/fileHistory.js');
@@ -149,17 +197,18 @@ export async function startSseInteractive(opts: SseInteractiveOptions = {}): Pro
     ctx.renderer.writeLine(ctx.renderer.color(banner[0], 'bold'));
     ctx.renderer.writeLine(ctx.renderer.color(banner[1], 'gray'));
     ctx.renderer.writeLine(ctx.renderer.color(banner[2], 'gray'));
-    // 首跑预检——横幅处探测无任何可用 provider 时打一行灰字配置
-    // 指引（不阻塞、不报错；用户配置好后 /model list 会热加载）。
+    // 首跑预检——横幅处探测【当前 session 模型】是否可解析（不阻塞、不报错；
+    // 用户配置好后 /model list 会热加载）。2026-09-16 修：旧实现对 listModels()
+    // 返回的 provider 名逐个 createClient——provider 名 ≠ 模型名恒 NULL，导致
+    // 已正确配置（用户级 config.json 的 minimax）仍误报"未检测到可用模型"。
     try {
       const { createDefaultModelProvider } = await import('../../cli/repl/ModelProvider.js');
       const probe = opts.provider ?? createDefaultModelProvider();
-      const names = typeof probe.listModels === 'function' ? probe.listModels() : [];
-      const anyUsable = names.some((n) => { try { return !!probe.createClient(n); } catch { return false; } })
-        || !!(typeof probe.createDefaultClient === 'function' && probe.createDefaultClient());
-      if (!anyUsable) {
+      const { resolveSharedClient } = await import('../../cli/repl/ModelProvider.js');
+      const { client } = await resolveSharedClient(session.model, probe);
+      if (!client) {
         ctx.renderer.writeLine(ctx.renderer.color(
-          '未检测到可用模型。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3） ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择',
+          `当前模型 ${session.model} 不可解析。三选一：① 项目根放 .panshalach.json（示例见 README/DEPLOY-CN §2.3） ② 用户级 ~/.panshalach/config.json ③ 启动后 /model list 选择`,
           'gray'
         ));
       }

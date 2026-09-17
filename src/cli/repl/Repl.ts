@@ -202,6 +202,37 @@ export class Repl {
         if (res && res.started) {
           this.inkBridge = (this as any).inkBridge || (this as any)._inkBridge || null;
           inkStarted = true;
+          // Ctrl+C 组件层接管（exitOnCtrlC:false 后由 PanshaApp 调用）：
+          // 任务运行中 → 中断当前任务（currentAbort）；空闲 → 2s 内再按退出。
+          // 与 sseInteractive rich 分支同语义（审批挂起 → 先拒绝/落定）。
+          try {
+            const b: any = this.inkBridge;
+            b.handleCtrlC = () => {
+              if (typeof b.hasPendingConfirm === 'function' && b.hasPendingConfirm()) {
+                try { b.resolveConfirm('n'); } catch {}
+                return;
+              }
+              if (this.currentAbort) {
+                try { this.currentAbort(); } catch {}
+                return;
+              }
+              const now = Date.now();
+              if ((this as any).richIdleCtrlCAt && now - (this as any).richIdleCtrlCAt < 2000) {
+                try {
+                  const inst = (globalThis as any).__PANSHA_INK_INSTANCE__;
+                  if (inst && typeof inst.unmount === 'function') inst.unmount();
+                } catch {}
+                // process 'exit' 钩子（构造器注册）会 saveSession
+                process.exit(0);
+              }
+              (this as any).richIdleCtrlCAt = now;
+              if (typeof b.pushFeed === 'function') {
+                b.pushFeed({ type: 'text', text: '再按一次 Ctrl+C 退出 · 任务运行中按 = 中断任务', level: 'info' });
+              }
+              const t = setTimeout(() => { (this as any).richIdleCtrlCAt = 0; }, 2000);
+              (t as any).unref?.();
+            };
+          } catch {}
         }
       }
     } catch {
@@ -477,10 +508,6 @@ export class Repl {
         if (event.type === 'step') {
           this.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
         }
-        if (event.type === 'critique') {
-          // 删除死前缀 `Critique: `（critique 机制已休眠）
-          this.renderer.writeLine(this.renderer.color(event.critique, 'yellow'));
-        }
         if (event.type === 'softLimit' || event.type === 'budget') {
           const ratio = typeof event.usedRatio === 'number' ? event.usedRatio : 0;
           this.renderer.writeLine(this.renderer.color(`[budget ${(ratio * 100).toFixed(0)}%]`, 'cyan'));
@@ -506,7 +533,24 @@ export class Repl {
           } else if (event.type === 'softLimit' && typeof this.inkBridge.pushBudget === 'function') {
             this.inkBridge.pushBudget(event.usedRatio || 0);
           } else if (typeof this.inkBridge.pushFeed === 'function') {
-            this.inkBridge.pushFeed(event);
+            // 缺陷 #5：内部事件（tools/pre-execute / tools/post-execute /
+            // approval.request 等）绝不能原样推进 rich feed——ink 渲染树吃进
+            // 裸对象/JSON 字符串会触发 "Text string must be rendered inside
+            // <Text>" 崩溃并 unmount 整个 UI。工具事件转卡片，其余转安全文本。
+            if (event.type === 'tools/pre-execute' && typeof this.inkBridge.pushTool === 'function') {
+              this.inkBridge.pushTool({ tool: event.tool || 'tool', params: event.params, status: 'running' });
+            } else if (event.type === 'tools/post-execute' && typeof this.inkBridge.pushTool === 'function') {
+              const preview = String(event.outputPreview || '').slice(0, 200);
+              this.inkBridge.pushTool({
+                tool: event.tool || 'tool',
+                status: event.ok === false ? 'fail' : 'ok',
+                ...(preview ? { result: preview } : (event.error ? { result: String(event.error) } : {})),
+              });
+            } else if (event.type === 'approval.request' || event.type === 'memory.finalized') {
+              // 协议/内部事件不进 feed（审批走 setConfirm 桥）
+            } else {
+              this.inkBridge.pushFeed(event);
+            }
           }
         }
       },
@@ -541,6 +585,20 @@ export class Repl {
           }
         });
       } catch {}
+
+      // 对话事实记忆（chat 直答沉淀）——与 runAgentTask server 路径同款：
+      // answered 正文 + chat 意图才落卡。classic 行模式 REPL 此前静默零沉淀
+      // （对抗审查 F16）。best-effort：记忆沉淀失败绝不影响对话返回。
+      if ((result as any)?.bestTrajectory?.stopReason === 'answered' && this.session.workspace) {
+        try {
+          const ansTraj = (result as any).bestTrajectory;
+          const chatAnswer = String(ansTraj?.steps?.[ansTraj.steps.length - 1]?.result ?? '');
+          if (chatAnswer.trim() && classifyTaskIntent(issue) === 'chat') {
+            const { recordChatFact } = await import('../../memory/chatFactMemory.js');
+            await recordChatFact(this.session.workspace, issue, chatAnswer);
+          }
+        } catch { /* 记忆沉淀失败不影响对话 */ }
+      }
 
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = (result as any)?.bestTrajectory?.stopReason;

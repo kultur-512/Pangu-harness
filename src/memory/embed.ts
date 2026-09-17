@@ -1,9 +1,11 @@
 /**
- * embed.ts — Panshalach 语义检索底座（P4 · v0 草案）
+ * embed.ts — Panshalach 记忆检索相似度底座（P4 · v0 草案）
  *
- * 目标：在零外部依赖前提下，给记忆卡注入路径提供"语义相似度"打分能力。
- * 设计：v0 用 LocalNGramHashProvider（字符 2-gram + 4096 哈希桶 + 余弦），
- *       预留 EmbeddingProvider 接口给后续国产 embedding 可插拔。
+ * 诚实口径：v0 的 LocalNGramHashProvider 是「字符 2-gram + FNV-1a 哈希 + 4096 桶
+ * + L2 归一化余弦」的词面扩展（lexical n-gram hash），衡量的是字面相似度，不是
+ * 真正的语义 embedding。真 embedding 经 PANSHA_EMBEDDING=remote 可插拔
+ * （RemoteEmbeddingProvider，OpenAI 兼容 /embeddings），缺配置/异常自动降级
+ * 回词面 n-gram，绝不崩主流程。
  *
  * 状态：U1 起草（2026-09-04 周五前置日）；9/14 接口契约 PR 前需 Leader 拍板签名。
  * 作者：zhaotianang（Main-B / W4）
@@ -97,7 +99,11 @@ export function cosineSimilarity(a: DenseVector, b: DenseVector): CosineScore {
 export const DEFAULT_BUCKETS = 4096;
 
 /**
- * LocalNGramHashProvider —— 字符 2-gram 哈希 + L2 归一化
+ * LocalNGramHashProvider —— 字符 2-gram + FNV-1a 哈希 + L2 归一化
+ *
+ * 诚实口径：这是「词面扩展（lexical n-gram hash）」，不是语义 embedding——它衡量
+ * 的是字符 2-gram 的字面重叠，不含语义理解。"语义底座"之名沿用历史，能力边界是
+ * 词面相似度。真语义 embedding 见 RemoteEmbeddingProvider（PANSHA_EMBEDDING=remote）。
  *
  * 算法：
  *   1. 把文本前后各 pad 一格空格，滑窗切成 2 字符 grams
@@ -109,7 +115,7 @@ export const DEFAULT_BUCKETS = 4096;
  *   - 同文本 embed() 幂等（确定性，无随机）
  *   - 零网络、零依赖、零成本
  *   - 中文 / 代码 / 英文混合可用
- *   - 召回精度不如真 embedding，但作为 v0 已可用
+ *   - 召回精度不如真 embedding，但作为 v0 默认已可用
  *
  * 例：
  *   const p = new LocalNGramHashProvider();   // dim = 4096
@@ -171,6 +177,97 @@ export class LocalNGramHashProvider implements EmbeddingProvider {
   }
 }
 
+// ===== 4b. RemoteEmbeddingProvider（真语义 embedding · env 开关 · 可插拔骨架） =====
+
+/** 真 embedding 的 env 配置键。 */
+export const REMOTE_EMBED_ENV = {
+  BASE_URL: 'PANSHA_EMBED_BASE_URL',
+  API_KEY: 'PANSHA_EMBED_API_KEY',
+  MODEL: 'PANSHA_EMBED_MODEL',
+} as const;
+
+/** PANSHA_EMBEDDING 取 'remote' 时启用真 embedding（否则词面 n-gram）。 */
+export const EMBEDDING_MODE_ENV = 'PANSHA_EMBEDDING';
+
+/**
+ * RemoteEmbeddingProvider —— OpenAI 兼容 /embeddings 真语义 embedding 骨架
+ *
+ * 构造时从 env 读配置：PANSHA_EMBED_BASE_URL / PANSHA_EMBED_API_KEY /
+ * PANSHA_EMBED_MODEL。真正的远端调用是异步的（fetch），而当前检索路径
+ * RefinedMemoryStore.computeSemanticScores → toSyncVector 是同步的，无法消费
+ * Promise。因此：
+ *   - embed()（同步契约）内部持有 LocalNGramHashProvider 作同步兜底，返回词面
+ *     n-gram 向量（同步、确定、不抛错）——PANSHA_EMBEDDING=remote 时同步路径
+ *     仍能拿到词面扩展，不再降级纯词面；
+ *   - 真远程 /embeddings 调用实现在 embedAsync()（async），待将来异步检索路径
+ *     落地后由 embed()/embedBatch() 委托，本期先留骨架 + 文档说明。
+ */
+export class RemoteEmbeddingProvider implements EmbeddingProvider {
+  readonly name = 'remote';
+  private readonly baseUrl: string | undefined;
+  private readonly apiKey: string | undefined;
+  private readonly model: string | undefined;
+  /** 同步兜底：词面 n-gram（同 LocalNGramHashProvider，dim 一致）。 */
+  private readonly fallback: LocalNGramHashProvider;
+
+  constructor(buckets: number = DEFAULT_BUCKETS) {
+    const env = typeof process !== 'undefined' ? process.env : {};
+    this.baseUrl = env[REMOTE_EMBED_ENV.BASE_URL]?.trim();
+    this.apiKey = env[REMOTE_EMBED_ENV.API_KEY]?.trim();
+    this.model = env[REMOTE_EMBED_ENV.MODEL]?.trim();
+    this.fallback = new LocalNGramHashProvider(buckets);
+  }
+
+  /** 向量维度与同步兜底 provider 一致（n-gram 桶数）；真远程维度见 embedAsync 返回值。 */
+  get dim(): number {
+    return this.fallback.dim;
+  }
+
+  /** 配置是否齐全（baseUrl + apiKey + model 三者都在）。 */
+  get configured(): boolean {
+    return !!(this.baseUrl && this.apiKey && this.model);
+  }
+
+  /**
+   * 同步 embed：内部持有 LocalNGramHashProvider 兜底，同步、确定、不抛错。
+   * 返回词面 n-gram 扩展向量；真远程 /embeddings 走 embedAsync()（async）。
+   */
+  embed(text: string): DenseVector {
+    return this.fallback.embed(text);
+  }
+
+  /**
+   * OpenAI 兼容 /embeddings 真调用（async）。POST { model, input } → data[0].embedding。
+   * 本期只作可插拔骨架存在，尚未被同步检索路径消费（见 embed() 的 TODO）。
+   */
+  async embedAsync(text: string): Promise<DenseVector> {
+    if (!this.configured) {
+      throw new Error(
+        `[RemoteEmbeddingProvider] missing env: ${REMOTE_EMBED_ENV.BASE_URL}, ` +
+        `${REMOTE_EMBED_ENV.API_KEY}, ${REMOTE_EMBED_ENV.MODEL}`,
+      );
+    }
+    const url = `${this.baseUrl!.replace(/\/+$/, '')}/embeddings`;
+    const res: Response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+      },
+      body: JSON.stringify({ model: this.model, input: text }),
+    });
+    if (!res.ok) {
+      throw new Error(`[RemoteEmbeddingProvider] /embeddings ${res.status}: ${await res.text()}`);
+    }
+    const json = (await res.json()) as { data?: Array<{ embedding?: number[] }> };
+    const emb = json?.data?.[0]?.embedding;
+    if (!Array.isArray(emb)) {
+      throw new Error('[RemoteEmbeddingProvider] unexpected /embeddings response: missing data[0].embedding');
+    }
+    return emb;
+  }
+}
+
 // ===== 5. 缓存层（U2 落地）—— 占位接口 =====
 
 /**
@@ -192,7 +289,104 @@ export interface EmbeddingCache {
 
 // ===== 6. 工厂 =====
 
-/** 默认 provider 工厂（v0 直接返回 LocalNGramHashProvider）*/
+/** 默认 provider 工厂（v0 直接返回 LocalNGramHashProvider，词面 n-gram）。 */
 export function createDefaultProvider(buckets?: number): EmbeddingProvider {
   return new LocalNGramHashProvider(buckets);
+}
+
+/**
+ * 可插拔 provider 工厂：PANSHA_EMBEDDING=remote 且 env 配置齐全 → RemoteEmbeddingProvider
+ * （其同步 embed() 内持 LocalNGramHashProvider 词面兜底，真远程走 embedAsync()）；否则一律
+ * 返回词面 n-gram（LocalNGramHashProvider）。PANSHA_EMBEDDING=remote 但缺配置时也
+ * 回退 n-gram，绝不因缺配置崩溃主流程。
+ */
+export function createConfiguredProvider(buckets?: number): EmbeddingProvider {
+  const env = typeof process !== 'undefined' ? process.env : {};
+  if (env[EMBEDDING_MODE_ENV]?.trim() === 'remote') {
+    const remote = new RemoteEmbeddingProvider(buckets);
+    if (remote.configured) return remote;
+  }
+  return new LocalNGramHashProvider(buckets);
+}
+
+// ===== 7. 进程级向量缓存 + 增量批量接口（B4 · 2026-09-13 混合检索配套） =====
+
+import { createHash } from 'node:crypto';
+
+/** 可嵌入卡最小形状（RefinedMemoryStore 的候选卡投影）。 */
+export interface EmbeddableCard {
+  id: string;
+  summary: string;
+}
+
+interface CardVectorEntry {
+  /** sha1(summary)——摘要变才重嵌 */
+  hash: string;
+  vec: DenseVector;
+}
+
+/** 进程级向量缓存：key = cardId。跨回合复用（嵌入 200 卡重算仅 ~10ms，
+ *  但增量命中后接近 0）；纯内存不写盘。
+ *  【6】FIFO 帽（2026-09-13 迭代包）：此前无上限——长跑会话卡 id 无限增长
+ *  （每张新卡 set 一条永不淘汰）。size ≥ 1024 时按插入序删最旧 key。 */
+const cardVectorCache = new Map<string, CardVectorEntry>();
+export const CARD_VECTOR_CACHE_CAP = 1024;
+
+const sha1Hex = (s: string): string => createHash('sha1').update(s).digest('hex');
+
+function toSyncVector(v: DenseVector | Promise<DenseVector>): DenseVector {
+  // v0 provider 全部同步。Promise 形态（未来远端 provider）无法被同步混合排序
+  // 消费——此处显式抛错，由调用方（RefinedMemoryStore 混合排序）的 try/catch
+  // 降级到纯词面排序兜底。
+  if (v && typeof (v as Promise<DenseVector>).then === 'function') {
+    throw new Error('[embed] async provider is not supported by the synchronous hybrid ranking path');
+  }
+  return v as DenseVector;
+}
+
+/**
+ * 增量批量嵌入（B4）：key=cardId，hash=sha1(summary)，hash 变才重嵌。
+ * 返回 Map<cardId, 向量>（与入参卡一一对应，未知/缺 id 的卡跳过）。
+ */
+export function embedCards(
+  cards: readonly EmbeddableCard[],
+  provider: EmbeddingProvider = createDefaultProvider(),
+): Map<string, DenseVector> {
+  const out = new Map<string, DenseVector>();
+  for (const c of cards ?? []) {
+    const id = String(c?.id ?? '');
+    if (!id) continue;
+    const text = String(c?.summary ?? '');
+    const hash = sha1Hex(text);
+    const hit = cardVectorCache.get(id);
+    if (hit && hit.hash === hash) {
+      out.set(id, hit.vec);
+      continue;
+    }
+    const vec = toSyncVector(provider.embed(text));
+    // 【6】FIFO 帽：满员先按插入序删最旧 key 再入槽（对已存在 key 的 set 不改变
+    // 插入序、也不增条目，故只在"新 key + 满员"时淘汰）。
+    if (!cardVectorCache.has(id) && cardVectorCache.size >= CARD_VECTOR_CACHE_CAP) {
+      const oldest = cardVectorCache.keys().next().value;
+      if (oldest !== undefined) cardVectorCache.delete(oldest);
+    }
+    cardVectorCache.set(id, { hash, vec });
+    out.set(id, vec);
+  }
+  return out;
+}
+
+/** 查询向量（即时嵌入，不入卡缓存——查询文本几乎不重复）。 */
+export function embedQuery(text: string, provider: EmbeddingProvider = createDefaultProvider()): DenseVector {
+  return toSyncVector(provider.embed(String(text ?? '')));
+}
+
+/** 当前缓存条目数（测试/调试可见性）。 */
+export function embedCacheSize(): number {
+  return cardVectorCache.size;
+}
+
+/** 清空向量缓存（测试隔离用）。 */
+export function resetEmbedCacheForTest(): void {
+  cardVectorCache.clear();
 }

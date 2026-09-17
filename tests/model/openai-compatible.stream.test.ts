@@ -163,6 +163,117 @@ describe('openai-compatible streamChat', () => {
     assert.equal(text, '正在写入');
   });
 
+  // ── 包D 修复：llama.cpp/vLLM/MindIE 方言每个 chunk 重发完整 name ──
+  // 此前 acc.name += d.function.name 把整名重发拼成 write_filewrite_file。
+
+  it('方言整名重发 3 次 → name 幂等不重复（包D修复）', async () => {
+    const { port, close } = await startSseServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      // 3 个 chunk 的 delta.function.name 都是完整工具名（整名重发方言）
+      const nameChunk = (args: string) => JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'write_file', arguments: args } }] } }],
+      });
+      res.write(`data: ${nameChunk('')}\n\n`);
+      res.write(`data: ${nameChunk('')}\n\n`);
+      res.write(`data: ${nameChunk('{"file_path":"a.ts"}')}\n\n`);
+      res.end(`data: [DONE]\n\n`);
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const chunks: any[] = [];
+    for await (const c of client.streamChat!('q')) chunks.push(c as any);
+
+    const tc = chunks.filter(c => c.type === 'toolCalls')[0]?.toolCalls?.[0];
+    assert.ok(tc, 'toolCalls chunk 必须产出');
+    assert.equal(tc.toolName, 'write_file', `整名重发 3 次必须幂等，got: ${tc.toolName}`);
+    assert.deepEqual(tc.params, [{ name: 'file_path', value: 'a.ts' }]);
+  });
+
+  it('方言 name 首片重复后再真分片 → 拼接正确（包D修复）', async () => {
+    const { port, close } = await startSseServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const chunk = (name: string, args: string) => JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { name, arguments: args } }] } }],
+      });
+      res.write(`data: ${chunk('wri', '')}\n\n`);
+      res.write(`data: ${chunk('wri', '')}\n\n`);   // 重复首片（前缀重复方言）
+      res.write(`data: ${chunk('te_file', '{"file_path":"b.ts"}')}\n\n`); // 真分片
+      res.end(`data: [DONE]\n\n`);
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const chunks: any[] = [];
+    for await (const c of client.streamChat!('q')) chunks.push(c as any);
+
+    const tc = chunks.filter(c => c.type === 'toolCalls')[0]?.toolCalls?.[0];
+    assert.ok(tc, 'toolCalls chunk 必须产出');
+    assert.equal(tc.toolName, 'write_file', `got: ${tc.toolName}`);
+    assert.deepEqual(tc.params, [{ name: 'file_path', value: 'b.ts' }]);
+  });
+
+  // ── 包D 修复：SSE 尾行无换行被丢——逐行处理依赖 indexOf('\n')，流以
+  // 无尾随换行的 data: {...} / data: [DONE] 结束时最后一行静默丢失
+  // （usage 丢失 / sawAny 误判触发非流式重发双请求）──
+
+  it('SSE 尾行（usage chunk）无换行 → usage 仍回调、不触发非流式重发（包D修复）', async () => {
+    let requests = 0;
+    let usageSeen: { prompt?: number; completion?: number } | null = null;
+    const { port, close } = await startSseServer((req, res) => {
+      requests++;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '你好' } }] })}\n\n`);
+      // 末行（usage chunk）无 \n、无 [DONE]
+      res.end(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } })}`);
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const texts: string[] = [];
+    for await (const c of client.streamChat!('q', { onUsage: (u) => { usageSeen = u; } })) {
+      if (c.type === 'text') texts.push(c.text);
+    }
+    assert.equal(texts.join(''), '你好');
+    assert.deepEqual(usageSeen, { prompt: 7, completion: 3 }, '尾行 usage 不得因缺尾随换行被丢');
+    assert.equal(requests, 1, '不得触发非流式重发');
+  });
+
+  it('SSE 尾行（唯一正文）无换行 → 正文不丢、sawAny 不误判（包D修复）', async () => {
+    let requests = 0;
+    const { port, close } = await startSseServer((req, res) => {
+      requests++;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      // 唯一的正文 chunk 在末行且无换行——旧实现整行丢弃 → sawAny=false → 回退重发
+      res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: '尾行正文' } }] })}`);
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const texts: string[] = [];
+    for await (const c of client.streamChat!('q')) {
+      if (c.type === 'text') texts.push(c.text);
+    }
+    assert.equal(texts.join(''), '尾行正文', '末行正文必须经 flush 产出');
+    assert.equal(requests, 1, `sawAny 不得误判触发非流式重发，got ${requests} 次请求`);
+  });
+
+  it('SSE 末行 data: [DONE] 无换行 → 正常结束不挂起（守卫）', async () => {
+    const { port, close } = await startSseServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'a' } }] })}\n\n`);
+      res.end(`data: [DONE]`);
+    });
+    closers.push(close);
+
+    const client = createOpenAICompatClient({ baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' });
+    const texts: string[] = [];
+    for await (const c of client.streamChat!('q')) {
+      if (c.type === 'text') texts.push(c.text);
+    }
+    assert.equal(texts.join(''), 'a');
+  });
+
   // ── 0.7.4 任务 B4：streamChat 回退走 withRetry + emptyResponse 转空串 ──
 
   it('0.7.4 B4: fallback doComplete is wrapped in withRetry (≥2 requests on transient failure)', async () => {

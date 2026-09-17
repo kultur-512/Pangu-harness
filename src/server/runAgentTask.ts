@@ -74,6 +74,45 @@ export interface RunResult {
 import { resolveWindowTokens } from '../cli/repl/tokenEstimate.js';
 export { resolveWindowTokens };
 
+// ==================== 【1】chat 直答的最近对话段（2026-09-13 迭代包） ====================
+
+/** 最近对话段长度自限（chat user 净荷纪律：记忆块 + 本段 + 用户原话）。 */
+export const CHAT_RECENT_TURNS_MAX_CHARS = 600;
+
+/**
+ * 从 session 组装 chat 直答用的【最近对话】段：最近 2 轮 userInput+answerText。
+ * 背景：chat 直答模型此前看不到最近对话原文——【最近上下文】块只在被 chat
+ * 丢弃的 enriched 里，指代型追问（"那第二个呢"）零上下文硬答。
+ * 预算策略：新轮优先（从最新轮往回装），预算耗尽时旧轮整轮让位——指代型
+ * 追问依赖的恰是尾部；超限的行尾截断加 '…'。空段返回 ''（调用方不拼段）。
+ * 返回形态：`【最近对话】\n用户：…\n助手：…\n用户：…`（整段 ≤ maxChars 字符）。
+ */
+export function buildChatRecentTurnsBlock(
+  session: Pick<Session, 'turns'>,
+  maxChars = CHAT_RECENT_TURNS_MAX_CHARS
+): string {
+  const header = '【最近对话】';
+  // 窗口常量与 PromptBuilder.buildMemoryQueryText 同源（RECENT_TURN_WINDOW=2）
+  const turns = (session?.turns ?? []).slice(-2);
+  const picked: string[] = [];
+  let used = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t: any = turns[i];
+    const u = String(t?.userInput ?? '').replace(/\s+/g, ' ').trim();
+    const a = String(t?.result?.answerText ?? '').replace(/\s+/g, ' ').trim();
+    if (!u && !a) continue;
+    const line = u && a ? `用户：${u}\n助手：${a}` : `用户：${u || a}`;
+    const remain = maxChars - header.length - 1 - used; // -1 = 首个 '\n'
+    if (remain <= 10) break; // 残余预算装不下有意义的行 → 停（旧轮让位）
+    const piece = line.length > remain ? line.slice(0, remain - 1).trimEnd() + '…' : line;
+    if (!piece.trim()) break;
+    picked.unshift(piece); // 从最新往回收集，unshift 还原时间正序
+    used += piece.length + 1; // +1 = 行间 '\n'（末行多记 1，做安全裕量）
+  }
+  if (picked.length === 0) return '';
+  return `${header}\n${picked.join('\n')}`;
+}
+
 /**
  * Run a task and emit progress events through onEvent.
  * Events emitted (best effort, engine-dependent):
@@ -104,7 +143,7 @@ export async function runAgentTask(
   // the flat fields (server / headless paths stay compatible).
   const session = req.session ?? new Session();
   if (!req.session) {
-    if (req.tier) session.tier = req.tier as any;
+    if (req.tier) session.tier = TierRegistry.normalize(req.tier as string);
     if (req.workspace) session.workspace = req.workspace;
     if (req.model) session.model = req.model;
   }
@@ -157,6 +196,10 @@ export async function runAgentTask(
   // 评测由此回答"模型当时到底看见了什么"；lastBuildMeta 在此消费（不改变 buildForTask 的 string 返回契约）。
   // 供 finalizeTaskMemory 消费的注入卡账本。
   let injectedCardIds: string[] = [];
+  // 包C 缺陷8：作用域内长命记忆实例——旧实现 `new RefinedMemoryStore(...).markInjected(...)`
+  // 实例即弃（账本只写不读还每步重例化）。现挂到本作用域唯一实例上（账本已升级
+  // 进程级，跨实例可读；实例复用消除逐任务重例化），finalizeTaskMemory 复用同一实例。
+  let auditMemoryStore: import('../memory/RefinedMemoryStore.js').RefinedMemoryStore | null = null;
   try {
     const meta = pb.lastBuildMeta;
     const injected = meta?.injectedCardIds ?? [];
@@ -174,7 +217,8 @@ export async function runAgentTask(
       try {
         const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
         if (session.workspace) {
-          new RefinedMemoryStore(session.workspace).markInjected(injected);
+          auditMemoryStore ??= new RefinedMemoryStore(session.workspace);
+          auditMemoryStore.markInjected(injected);
         }
       } catch {}
       appendAgentEvent(session.id, {
@@ -193,7 +237,23 @@ export async function runAgentTask(
   // F3（0.8.1 第 2 轮）：chat 直答不发 explore 相位——真机实测 `── 侦察 ──`
   // 相位线是 rollout 语义噪声，chat 直答应只见正文流 + 终态行。intent 在入口
   // 已对原始输入分类（与传入 chaser 的 intent 同源），此处直接按其门控。
-  if (intent !== 'chat') ctx.onEvent({ type: 'phase', phase: 'explore' });
+  if (intent !== 'chat') {
+    ctx.onEvent({ type: 'phase', phase: 'explore' });
+    // 侦察内容透出（2026-09-15 真机实证"侦察/执行相位线之间无任何内容"）：
+    // 侦察实际工作（记忆检索/意图分类/prompt 组装）在 explore 事件前已静默
+    // 完成，UI 只见两条相位线、记忆注入审计只进 HOME 账本不进 feed。现把
+    // 侦察结论作为 recon 事件发出——rich（mapSseToBridge）/ line
+    // （renderSseEvent）/ classic·headless（RunCommand）三端各渲染一行灰字。
+    ctx.onEvent({
+      type: 'recon',
+      intent,
+      tier: session.tier,
+      memoryCards: injectedCardIds.length,
+      memoryOverflow: pb.lastBuildMeta?.memoryOverflowCount ?? 0,
+      promptChars: enriched.length,
+      workspace: session.workspace,
+    });
+  }
 
   let success = false;
 
@@ -204,6 +264,9 @@ export async function runAgentTask(
     // 侧通道传出，任务原文原样传 chaser。
     const solveIssueInput = intent === 'chat' ? req.task : enriched;
     const chatMemoryBlock = intent === 'chat' ? pb.getChatMemoryBlock() : undefined;
+    // 【1】chat 直答补最近对话原文：session 最近 2 轮原文组装 ≤600 字符段传入
+    //（记忆块之后的第二段——chaser 拿不到 session.turns，由宿主组装）。
+    const chatRecentTurns = intent === 'chat' ? buildChatRecentTurnsBlock(session) : undefined;
     const result = await chaser.solveIssue(solveIssueInput, session.workspace, {
       tier: session.tier as any,
       yes: true,
@@ -211,6 +274,8 @@ export async function runAgentTask(
       memoryPreInjected: true,
       // 0.8.2：chat 直答的独立记忆块（与原文分离——chaser 组装干净 user）
       chatMemoryBlock,
+      // 【1】chat 直答的最近对话段（拼在记忆块之后、用户原话之前）
+      chatRecentTurns,
       // 入口前移的意图显式传入（chaser 不再对富化文本兜底分类）
       intent,
       // 审批透传
@@ -270,10 +335,19 @@ export async function runAgentTask(
     // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不
     // 影响任务成功返回（本模块 console-silent，错误以事件透出）。
     try {
-      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start);
+      // 包C 缺陷8：复用作用域内长命实例（markInjected 与 refine/markVerified 同一实例）
+      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start, auditMemoryStore ?? undefined);
     } catch (memErr: any) {
       ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
     }
+
+    // 任务结束、记忆落定后：best-effort 触发任务状态归档（陈旧 >7 天 / 活跃 >200
+    // 的任务移入 <主文件>.archive.json）。任何异常都不影响任务成功返回。
+    try {
+      const { TaskStateStore } = await import('../memory/taskState.js');
+      const ts = new TaskStateStore(session.workspace, process.env.PANSHA_TASK_STATE_FILE?.trim() || undefined);
+      ts.archive();
+    } catch {}
 
     // R3: 从 trajectory 提取结构化字段（供宿主落 Turn.result）
     const trajSteps = result.bestTrajectory?.steps ?? [];
@@ -285,11 +359,24 @@ export async function runAgentTask(
 
     // R1（0.8.1）：answered 正文带出——chat 直答正文在轨迹末步 result 里，
     // 此前 RunResult 不携带 → TurnController/RunCommand 三端全部拿不到正文。
+    // 2026-09-16 放宽：不再限定 answered——execution 终局（completed/
+    // no-verification）模型常输出总结/结论，chat 追问的【最近对话】段
+    // （buildChatRecentTurnsBlock 读 result.answerText）依赖它；此前工具任务
+    // 后追问"这些文件是干嘛的"，模型因助手行为空而零上下文硬答（真机实证）。
     const lastStepResult = trajSteps.length > 0
       ? String(trajSteps[trajSteps.length - 1]?.result ?? '')
       : '';
-    const answerText = result.bestTrajectory?.stopReason === 'answered' && lastStepResult.trim()
-      ? lastStepResult
+    // 正文净化（2026-09-16）：末步正文为纯内部信号词（如历史渲染泄漏期的
+    // 学舌残留 "NO_TOOL_CALLS"）时不作为回复带出——展示/落盘/最近对话段
+    // 都不该把引擎信号词当模型回答。
+    const RAW_SIGNAL_ONLY_RE = /^\s*(?:NO_TOOL_CALLS|TOOL_ERROR:[^\n]*)\s*$/i;
+    // 2026-09-16：回复只取【面向用户的正文步】（空转 answered 的 step.result，
+    // userFacing 标记）——工具步的 result 是工具输出原文（READ_SUCCESS…），
+    // 不能当模型回复（真机：工具步终局时 answerText 泄漏工具原文）。
+    const userFacingSteps = trajSteps.filter((s) => (s as any)?.userFacing && String((s as any)?.result ?? '').trim());
+    const lastUserFacing = userFacingSteps.length > 0 ? String(userFacingSteps.at(-1)!.result) : '';
+    const answerText = lastUserFacing.trim() && !RAW_SIGNAL_ONLY_RE.test(lastUserFacing)
+      ? lastUserFacing.replace(/\n*\s*VERIFICATION:\s*PASS\s*$/i, '').trimEnd()
       : undefined;
 
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
@@ -366,13 +453,16 @@ export async function finalizeTaskMemory(
   injectedCardIds: string[],
   onEvent: (event: any) => void,
   taskText?: string,
-  startedAt = Date.now()
+  startedAt = Date.now(),
+  // 包C 缺陷8：可选复用调用方作用域内的长命实例（runAgentTask 传入）；
+  // 缺省时照旧自建（Repl.ts 等既有调用方零改动）。
+  reuseStore?: import('../memory/RefinedMemoryStore.js').RefinedMemoryStore
 ): Promise<void> {
   const traj = result?.bestTrajectory;
   if (!traj || traj.stopReason !== 'completed' || !session.workspace) return;
 
   const { RefinedMemoryStore } = await import('../memory/RefinedMemoryStore.js');
-  const store = new RefinedMemoryStore(session.workspace);
+  const store = reuseStore ?? new RefinedMemoryStore(session.workspace);
   const writtenFiles = extractWrittenFilePaths(traj);
 
   // R1：completed = 真实验证通过 → 提炼 success 卡并持久化（触发红线：写盘
@@ -380,7 +470,8 @@ export async function finalizeTaskMemory(
   const cards = store.refine({
     trajectory: traj,
     taskStyle: traj.taskStyle ?? 'all',
-    applicableTiers: [session.tier],
+    // 提炼卡为全档通用（空 applicableTiers = 全档可见），不绑定产出档位——
+    // 否则某档学会的工程教训在其它档不可见，违背"记忆召回不随档位降级"。
     attemptCount: 1, // 本路径恒单 rollout（runMultiple 已摘除），1 即真实值
     writtenFiles,
     taskText,

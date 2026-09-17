@@ -38,9 +38,10 @@ const command: Command = {
     if (!TierRegistry.isTier(newTier)) {
       return { message: `无效档位: ${args[0]}（可用: ${tiers.join(' | ')}）` };
     }
-    ctx.session.updateTier(newTier as any);
-    const sub = sublabels[tiers.indexOf(newTier)] || '';
-    ctx.renderer.success(`思考强度已切换: ${newTier}${sub ? ' · ' + sub : ''}`);
+    const normalized = TierRegistry.normalize(newTier);
+    ctx.session.updateTier(normalized);
+    const sub = sublabels[tiers.indexOf(normalized)] || '';
+    ctx.renderer.success(`思考强度已切换: ${normalized}${sub ? ' · ' + sub : ''}`);
     return {};
   },
 };

@@ -26,20 +26,14 @@ function fakeTierConfig(): TierConfig {
   return {
     tier: 'high',
     typicalUseCase: 'test',
-    maxRollouts: 1,
     maxStepsPerRollout: 5,
-    critiqueFrequency: { periodicEvery: 0, onProblem: true, longNoVerifyThreshold: 0, skipFirstN: 0 },
     ironLawInjectionLevel: 'high',
     maxConsecutiveFailures: 3,
     verifyFirstBias: true,
-    explorationDepth: 2,
     memoryLoadLevel: 'none',
-    budgetBehavior: 'soft_limit',
-    parallelRollouts: 1,
-    userConfirmationRequired: false,
     isStrongMode: true,
-    anchorMax: 4,
-  } as unknown as TierConfig;
+    autoPullMemory: true,
+  };
 }
 
 function setStdoutTty(v: boolean | undefined): void {
@@ -66,6 +60,9 @@ describe('sensitive path matcher', () => {
       '.env', '.env.local', '.env.production',
       'packages/x/.ssh/known_hosts',   // nested dir segment
       'config/.env.local',             // nested env file
+      '.panshalach.json',              // P2: 项目配置（审批清单）本身敏感
+      'sub/.panshalach.json',          // nested
+      '.git', '.git/config', 'packages/x/.git/HEAD', // P2: .git/ 目录配置类
     ]) {
       assert.equal(isSensitiveRelPath(p), true, `expected sensitive: ${p}`);
     }
@@ -75,6 +72,7 @@ describe('sensitive path matcher', () => {
     for (const p of [
       'src/a.ts', 'readme.md', '.gitignore', 'package.json',
       'env.local', 'my_id_rsa.txt', '.sshbar/config', 'ssh/config',
+      '.gitignore/config', '.panshalach/scratch/tool-1.txt', '.panshalach.json.bak',
     ]) {
       assert.equal(isSensitiveRelPath(p), false, `expected allowed: ${p}`);
     }
@@ -165,6 +163,19 @@ describe('adapter write gate (M2-6)', () => {
     const out = await adapter.execute(call('write_file', { file_path: 'notes.txt', content: 'fine' }));
     assert.ok(out.startsWith('WRITE_SUCCESS:'), out);
     assert.equal(fs.readFileSync(path.join(root, 'notes.txt'), 'utf-8'), 'fine');
+  });
+
+  it('config-class paths (.panshalach.json / .git/) denied at full tier (P2 manifest gap)', async () => {
+    setStdoutTty(true);
+    const adapter = createEngineAdapter({
+      workspaceRoot: root, tierConfig: fakeTierConfig(), approvalMode: 'full',
+    });
+    const o1 = await adapter.execute(call('write_file', { file_path: '.panshalach.json', content: '{"approvalAllowlist":["bash"]}' }));
+    assert.ok(o1.startsWith('TOOL_ERROR: SENSITIVE_PATH'), o1.slice(0, 120));
+    const o2 = await adapter.execute(call('write_file', { file_path: '.git/hooks/pre-commit', content: 'x' }));
+    assert.ok(o2.startsWith('TOOL_ERROR: SENSITIVE_PATH'), o2.slice(0, 120));
+    assert.ok(!fs.existsSync(path.join(root, '.panshalach.json')), 'approval-allowlist config must not be writable by the agent');
+    assert.ok(!fs.existsSync(path.join(root, '.git', 'hooks', 'pre-commit')));
   });
 });
 

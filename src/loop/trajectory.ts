@@ -21,8 +21,8 @@ export interface TrajectoryStep {
   readBeforeWriteViolation?: boolean;
   terminalNoCheck?: boolean;
   automationNoEffectCheck?: boolean;
-  /** answered 路径：模型面向用户的回复正文（extractUserText 剥离结构块后） */
-  replyText?: string;
+  /** 面向用户的正文步（空转 answered / chat 直答）——answerText 带出依据 */
+  userFacing?: boolean;
 }
 
 export interface Trajectory {

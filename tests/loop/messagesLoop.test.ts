@@ -105,7 +105,9 @@ describe('0.8 P2 messages 栈组装（loop 层）', () => {
     assert.deepEqual(first[0], { role: 'system', content: 'STABLE' }, 'system 首位');
     assert.deepEqual(first[1], { role: 'user', content: 'TASK-INIT' }, '首条 user = 初始 prompt');
     assert.equal(first[2].role, 'user');
-    assert.ok(first[2].content.includes('现在立刻调用工具，不要先写计划'), '首步格式教学作为独立 user 消息注入');
+    // T1 重构后首句为 V1 实证措辞；read_file 示例恒有（配合度修复）
+    assert.ok(first[2].content.includes('你必须只输出一个工具调用块'), '首步格式教学作为独立 user 消息注入（V1 首句）');
+    assert.ok(first[2].content.includes('<read_file>'), 'read_file 示例恒有');
     assert.equal(model.calls.chat, 1);
     assert.equal(model.calls.complete, 0, 'chat 通道下 complete 零调用');
   });
@@ -354,13 +356,12 @@ describe('0.8 P2 chaser 接线（messages 通道）', () => {
         intent: 'execution',
       });
       assert.equal(chatCalls, 0, 'off 模式零 messages 调用');
-      // 0.8.2 防呆 nudge 生效后：execution 意图首步"只说话不动手"注入格式提醒重试
-      // 一步（prompts=2）；第二次仍不动手 → no-verification（假完成不计 answered 成功）。
-      assert.equal(prompts.length, 2, 'execution 意图文本空转 → nudge 重试一步');
+      // 2026-09-16 success 语义摘除：execution 意图文本空转有正文 → 一步
+      // answered 终局（nudge 阶梯已摘除，不再两级引导）。
+      assert.equal(prompts.length, 2, '首次空谈注入纠偏重试，二次空谈终局');
       assert.ok(prompts[0].includes('修复 login 页面'), 'off 模式任务文本走 issueDescription');
-      assert.ok(prompts[1].includes('修复 login 页面'), 'nudge 步仍携带任务文本');
       assert.ok(!prompts[0].includes('STABLE-SEG'), 'off 模式 segments 不进入 prompt');
-      assert.equal(res.bestTrajectory?.stopReason, 'no-verification');
+      assert.equal(res.bestTrajectory?.stopReason, 'answered');
     } finally {
       restoreEnv();
     }

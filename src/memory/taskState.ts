@@ -15,8 +15,9 @@
 // JSON 布局（对齐团队 `~/.panshalach/task_state.json` 概念，语义一致）：
 //   { schemaVersion, tasks: Record<taskId, TaskState> }
 
-import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { join, isAbsolute } from 'path';
+import { atomicWriteFileSync } from '../utils/atomicFile.js';
 import type { TaskState, AgentEvent } from '../cli/repl/types.js';
 
 /** 单文件默认名（多个 workspace 用不同文件） */
@@ -32,6 +33,23 @@ export interface TaskStateFile {
 
 /** 单例默认路径（跨会话共享一份任务台账）——与记忆存储约定一致 */
 export const DEFAULT_STORE_PATH = '.panshalach-task-state.json';
+
+// ==================== 拆分存储（活跃 + 历史归档） ====================
+// 旧实现把任务控制面状态存在单个 JSON（tasks map 无限增长），运行产物
+// .panshalach-task-state.json 可达 7.5MB。拆分存储：archive() 把「陈旧/超限」
+// 任务移入归档文件，活跃文件保持有界。判定标准：
+//   1) updatedAt 早于 now - ARCHIVE_OLDER_THAN_DAYS 天 → 陈旧，归档；
+//   2) 归档陈旧后活跃数仍超 MAX_ACTIVE_TASKS → 按 updatedAt 升序（LRU）把最旧
+//      的移入归档，直到 ≤ MAX_ACTIVE_TASKS。
+
+/** 一天毫秒数（归档阈值换算用）。 */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 活跃任务数上限：超过则把最旧（updatedAt 最早）的任务移入归档（LRU）。 */
+export const MAX_ACTIVE_TASKS = 200;
+
+/** 陈旧归档阈值（天）：updatedAt 早于 now-7d 的任务视为陈旧，移入归档。 */
+export const ARCHIVE_OLDER_THAN_DAYS = 7;
 
 /** 从用户侧约束映射到原语结构的事件种类 */
 export const STATE_KINDS = ['decision', 'requirement', 'constraint', 'progress', 'verified', 'failure'] as const;
@@ -119,14 +137,26 @@ export function rebuildFromEvents(taskId: string, events: AgentEvent[], now = Da
 export class TaskStateStore {
   private filePath: string;
   private cache: TaskStateFile | null = null;
+  private archiveCache: TaskStateFile | null = null;
 
   constructor(workspaceRoot: string, customFilename?: string) {
-    this.filePath = join(workspaceRoot, customFilename ?? DEFAULT_FILENAME);
+    // 包C 缺陷5：env（PANSHA_TASK_STATE_FILE，runAgentTask.ts / PromptBuilder.ts
+    // 原样透传）传绝对路径时直接采用——旧实现一律 join(workspaceRoot, ...)，
+    // 绝对路径被拼成 `<ws>\P:\...` 垃圾路径 → existsSync false → 静默空台账。
+    // 对齐 RefinedMemoryStore 同款解析（优先级：显式参数 > env > 默认文件名）。
+    const fromEnv = typeof process !== 'undefined' ? process.env?.PANSHA_TASK_STATE_FILE?.trim() : undefined;
+    const resolved = customFilename ?? fromEnv ?? DEFAULT_FILENAME;
+    this.filePath = isAbsolute(resolved) ? resolved : join(workspaceRoot, resolved);
   }
 
   /** 返回单例默认路径的 absolute（task_state.json——跨会话共享的任务台账） */
   get path(): string {
     return this.filePath;
+  }
+
+  /** 归档文件路径 = 主文件路径 + '.archive.json'（同目录、路径可推导）。 */
+  get archivePath(): string {
+    return this.filePath + '.archive.json';
   }
 
   load(): TaskStateFile {
@@ -145,30 +175,131 @@ export class TaskStateStore {
     }
   }
 
+  /** 非原子提交（遗留入口，当前无调用方；保留以备调试直写）——同样走共享原子写。 */
   private commit(file: TaskStateFile): void {
     this.cache = file;
-    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
+    atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
   }
 
   /**
    * 原子提交（tmp → rename）：避免写盘中途崩溃留下半个文件（R5 落地合同）。
-   * rename 在同一目录内是原子的；tmp 名带进程号防并发写串扰。
+   * 包C 缺陷4：实现委托共享 src/utils/atomicFile.ts（同目录 tmp + 带进程号
+   * tmp 名 + renameSync + 失败清理）；rename 失败仍抛本层错误信息（行为不变）。
    */
   private commitAtomic(file: TaskStateFile): void {
     this.cache = file;
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(file, null, 2), 'utf-8');
     try {
-      renameSync(tmp, this.filePath);
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
     } catch {
-      rmSync(tmp, { force: true });
       throw new Error(`task state write failed: ${this.filePath}`);
     }
   }
 
-  /** 读单任务台账；不存在时返回 null（不自动创建，避免空文件刷盘） */
+  /**
+   * 读归档文件（惰性；实例级缓存，与主文件 cache 同语义——本实例写、本实例读）。
+   * 损坏/缺失按空归档处理，绝不抛错影响主流程。
+   */
+  private loadArchive(): TaskStateFile {
+    if (this.archiveCache) return this.archiveCache;
+    if (!existsSync(this.archivePath)) {
+      this.archiveCache = { schemaVersion: TASK_STATE_SCHEMA_VERSION, lastUpdated: 0, tasks: {} };
+      return this.archiveCache;
+    }
+    try {
+      const parsed = JSON.parse(readFileSync(this.archivePath, 'utf-8')) as TaskStateFile;
+      const ok = parsed && typeof parsed === 'object' &&
+        parsed.tasks && typeof parsed.tasks === 'object';
+      this.archiveCache = ok ? parsed : { schemaVersion: TASK_STATE_SCHEMA_VERSION, lastUpdated: 0, tasks: {} };
+      return this.archiveCache;
+    } catch {
+      this.archiveCache = { schemaVersion: TASK_STATE_SCHEMA_VERSION, lastUpdated: 0, tasks: {} };
+      return this.archiveCache;
+    }
+  }
+
+  /** 原子写归档文件（同主文件 tmp→rename）。 */
+  private commitArchive(file: TaskStateFile): void {
+    this.archiveCache = file;
+    try {
+      atomicWriteFileSync(this.archivePath, JSON.stringify(file, null, 2));
+    } catch {
+      throw new Error(`task state archive write failed: ${this.archivePath}`);
+    }
+  }
+
+  /**
+   * 归档（拆分存储）：把「陈旧」与「超限」任务从活跃 tasks map 移到归档文件，
+   * 活跃文件保持有界（≤ MAX_ACTIVE_TASKS，且无早于 ARCHIVE_OLDER_THAN_DAYS 天的
+   * 陈旧任务）。写盘顺序：先归档（失败则活跃未动、无丢失），再活跃。
+   *
+   * 判定：
+   *   1) updatedAt < now - ARCHIVE_OLDER_THAN_DAYS 天 → 陈旧归档；
+   *   2) 归档陈旧后活跃数仍 > MAX_ACTIVE_TASKS → 按 updatedAt 升序（LRU）把最旧
+   *      的移入归档，直到 ≤ MAX_ACTIVE_TASKS。
+   *
+   * 返回 { archived, remaining }：归档条数 + 归档后活跃条数。无变化时不写盘。
+   */
+  archive(now = Date.now()): { archived: number; remaining: number } {
+    const file = this.load();
+    const activeIds = Object.keys(file.tasks);
+    if (activeIds.length === 0) return { archived: 0, remaining: 0 };
+
+    const threshold = now - ARCHIVE_OLDER_THAN_DAYS * DAY_MS;
+    const archived = new Set<string>();
+
+    // 1) 陈旧任务（updatedAt 早于阈值）
+    for (const id of activeIds) {
+      const t = file.tasks[id];
+      const last = t.updatedAt ?? t.createdAt ?? now;
+      if (last < threshold) {
+        archived.add(id);
+      }
+    }
+
+    // 2) 超限 → LRU（updatedAt 升序）移最旧
+    const freshIds = activeIds.filter((id) => !archived.has(id));
+    const overCap = freshIds.length - MAX_ACTIVE_TASKS;
+    if (overCap > 0) {
+      const sorted = [...freshIds].sort((a, b) =>
+        (file.tasks[a].updatedAt ?? file.tasks[a].createdAt ?? 0) -
+        (file.tasks[b].updatedAt ?? file.tasks[b].createdAt ?? 0));
+      for (let i = 0; i < overCap; i++) {
+        archived.add(sorted[i]);
+      }
+    }
+
+    if (archived.size === 0) {
+      // 短路：无归档任务时不读归档文件（每任务结束触发，省一次同步读）
+      return { archived: 0, remaining: activeIds.length };
+    }
+
+    // 确有归档才读归档文件、合并、写盘。
+    const archive = this.loadArchive();
+    const mergedArchive: Record<string, TaskState> = { ...archive.tasks };
+    for (const id of archived) mergedArchive[id] = file.tasks[id];
+
+    const remaining: Record<string, TaskState> = {};
+    for (const id of activeIds) {
+      if (!archived.has(id)) remaining[id] = file.tasks[id];
+    }
+
+    // 先写归档（失败则活跃未动、无丢失），再写活跃。
+    this.commitArchive({ ...archive, lastUpdated: now, tasks: mergedArchive });
+    this.commitAtomic({ ...file, lastUpdated: now, tasks: remaining });
+    return { archived: archived.size, remaining: Object.keys(remaining).length };
+  }
+
+  /** compact() —— archive() 的别名（语义同：把陈旧/超限任务归档，活跃文件保持有界）。 */
+  compact(now = Date.now()): { archived: number; remaining: number } {
+    return this.archive(now);
+  }
+
+  /** 读单任务台账；活跃不存在时回退查归档（只读）；仍无 → null（不自动创建）。 */
   get(taskId: string): TaskState | null {
-    return this.load().tasks[taskId] ?? null;
+    const active = this.load().tasks[taskId];
+    if (active) return active;
+    // 回退查归档（成本可控：仅活跃 miss 时读归档；归档只增，读多写少）。
+    return this.loadArchive().tasks[taskId] ?? null;
   }
 
   /** 创建（带原子重命名）：originalRequirement 必须非空；taskId 冲突即抛。 */
@@ -187,9 +318,10 @@ export class TaskStateStore {
     return s;
   }
 
-  /** 读取已有台账；不存在时创建并返回（供 CLI/评测入口使用）。 */
+  /** 读取已有活跃台账；不存在（含仅存归档）时创建并返回（供 CLI/评测入口使用）。
+   *  注意：归档任务视为「不在活跃」——resume 时据此重建新的活跃任务，历史留在归档。 */
   getOrCreate(taskId: string, originalRequirement: string, now = Date.now()): TaskState {
-    return this.get(taskId) ?? this.create(taskId, originalRequirement, now);
+    return this.load().tasks[taskId] ?? this.create(taskId, originalRequirement, now);
   }
 
   /** 带期望版本的整卡更新（乐观锁）：version 不符即抛；originalRequirement 被改即抛。 */

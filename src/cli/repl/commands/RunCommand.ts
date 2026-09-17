@@ -2,6 +2,7 @@
 import type { Command, CommandContext, CommandResult, ModelProvider } from '../types.js';
 import { expandAtPaths } from '../types.js';
 import { extractChangedFiles, extractVerifyCommands, mapOutcome } from '../../../loop/trajectory.js';
+import { reconLine } from '../turn/TurnRenderer.js';
 
 const command: Command = {
   name: 'run',
@@ -83,9 +84,9 @@ const command: Command = {
           onEvent: (event: any) => {
             if (event.type === 'step') {
               ctx.renderer.writeLine(`[Step ${event.stepNumber}] ${event.thinking || event.plan || ''}`);
-            }
-            if (event.type === 'critique') {
-              ctx.renderer.writeLine(ctx.renderer.color('Critique: ' + event.critique, 'yellow'));
+            } else if (event.type === 'recon') {
+              // 侦察结论行（classic/headless 文本流）——相位线之间可见
+              ctx.renderer.writeLine(ctx.renderer.color(reconLine(event), 'gray'));
             }
             if (event.type === 'memory.finalized') {
               memFinalized = event;
@@ -96,7 +97,8 @@ const command: Command = {
             if (b) {
               if (event.type === 'step' && typeof b.pushStep === 'function') b.pushStep(event);
               else if (event.type === 'critique' && typeof b.pushCritique === 'function') b.pushCritique(event);
-              else b.pushFeed?.(event);
+              // 侦察结论已由上方文本行呈现，裸 recon 对象不进 feed（防脆弱透传）
+              else if (event.type !== 'recon') b.pushFeed?.(event);
             }
           },
         }

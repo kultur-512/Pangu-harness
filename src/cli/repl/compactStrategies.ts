@@ -6,6 +6,7 @@
 // default. compactService reads .panshalach.json compaction.strategy.
 
 import type { Turn } from './types.js';
+import { safeSlice } from './tokenEstimate.js';
 
 export interface CompactStrategy {
   id: string;
@@ -13,9 +14,24 @@ export interface CompactStrategy {
   postprocess?(summary: string): string;
 }
 
+/**
+ * 结果摘要内联上限：嵌套压缩（[COMPACT] 合成轮的 result.summary 是上一代摘要
+ * 全文）不治理时摘要代代膨胀。turnFullBrief 与 fallbackSummary 共用此 cap。
+ */
+export const NESTED_SUMMARY_MAX_CHARS = 400;
+/** 摘要超限的显式省略标记（截断点必须可见，不静默丢原文）。 */
+const SUMMARY_TRUNCATED_MARK = '…[上一代摘要已截断]';
+
+function capSummary(raw: string): string {
+  const s = String(raw || '');
+  return s.length > NESTED_SUMMARY_MAX_CHARS
+    ? safeSlice(s, 0, NESTED_SUMMARY_MAX_CHARS) + SUMMARY_TRUNCATED_MARK
+    : s;
+}
+
 /** Shared per-turn brief (kept identical to compactService's). */
 export function turnBrief(t: Turn): string {
-  const u = (t.userInput || '').replace(/\s+/g, ' ').slice(0, 80);
+  const u = safeSlice((t.userInput || '').replace(/\s+/g, ' '), 0, 80);
   const r = t.result?.summary || '';
   return `[${u}]${r ? ` → ${r}` : ''}`;
 }
@@ -32,9 +48,12 @@ export const TURN_BRIEF_MAX_CHARS = 2000;
 export function turnFullBrief(t: Turn): string {
   const u = String(t.userInput || '').trim();
   const capped = u.length > TURN_BRIEF_MAX_CHARS
-    ? u.slice(0, TURN_BRIEF_MAX_CHARS) + '…[超长已截断]'
+    ? safeSlice(u, 0, TURN_BRIEF_MAX_CHARS) + '…[超长已截断]'
     : u;
-  const r = t.result?.summary || '';
+  // 嵌套压缩治理：summary 与 userInput 同样封顶——[COMPACT] 合成轮的
+  // result.summary 是上一代摘要全文，无 cap 则每代压缩把全部历史摘要再内联
+  // 一遍进摘要 prompt（代代膨胀，可自身超窗）。
+  const r = capSummary(t.result?.summary || '');
   return `[${capped}]${r ? ` → ${r}` : ''}`;
 }
 

@@ -1,14 +1,14 @@
 // src/cli/repl/typeahead.ts
 // cc-typeahead: unified typeahead suggestion engine (CC useTypeahead port).
 // One source of truth for in-line suggestions while typing — commands,
-// providers/models, files/directories and history all flow through
-// generateSuggestions. PURE (testable): files come via ctx.files callback so
-// the engine never touches the FS itself; everything else is local data.
+// providers/models, files/directories flow through generateSuggestions.
+// 历史不直显建议条（走输入框 ↑/↓ 翻页，CC 行为）。PURE (testable): files come
+// via ctx.files callback so the engine never touches the FS itself.
 
 import { PANSHA_COMMANDS, type ProviderOption, parseCommandInput, argStageFor, filterArgCandidates, type SlashCommand } from './SlashPicker.js';
 import { rankSlashCandidates } from './FuzzyMatcher.js';
 
-export type SuggestionType = 'command' | 'file' | 'directory' | 'path' | 'model' | 'provider' | 'history';
+export type SuggestionType = 'command' | 'file' | 'directory' | 'path' | 'model' | 'provider';
 
 export interface SuggestionItem {
   id: string;            // stable id — preserved across suggestion-set changes
@@ -23,7 +23,6 @@ export interface TypeaheadContext {
   commands?: SlashCommand[];
   workspace?: string;
   providers: ProviderOption[];
-  history?: string[];
   /** File/directory candidates (caller injects; keeps the engine pure). */
   files?: string[];
 }
@@ -88,14 +87,10 @@ export function generateSuggestions(input: string, cursorOffset: number, ctx: Ty
       }));
   }
 
-  // 3. plain text → history suggestions (best-effort prefix match)
-  const hist = (ctx.history ?? []).filter((h) => h.toLowerCase().startsWith(v.toLowerCase()) && h !== v);
-  return hist.slice(0, 8).map((h) => ({
-    id: 'hist:' + h,
-    type: 'history' as const,
-    displayText: h,
-    replacement: h,
-  }));
+  // 3. plain text → 无建议（历史不直显在建议条——历史翻页走输入框 ↑/↓，
+  //    CC 行为：上箭头往回一条、下箭头往前、到最新清空；建议条只服务
+  //    / 命令与 @/路径补全）
+  return [];
 }
 
 /**

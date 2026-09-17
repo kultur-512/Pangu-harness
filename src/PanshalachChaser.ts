@@ -41,15 +41,12 @@ export interface BudgetReport {
    * 重复计入历史，不能当上下文占用用。
    */
   lastPromptTokens?: number;
-  triggeredSoftLimit: boolean;
-  triggeredDegradation: boolean;
   rolloutsExecuted: number;
   stepsExecuted: number;
   notes: string[];
 }
 
 export interface ChaserConfig {
-  maxRollouts?: number;
   maxStepsPerRollout?: number;
   budgetTokens?: number;
   earlyStopOnHighScore?: boolean;
@@ -69,6 +66,13 @@ export interface ChaserConfig {
   /** 0.8.2：chat 直答的独立记忆块（宿主从 PromptBuilder 传出；chat 的 user =
    *  "此块 + 用户原话"——绝不整段 enriched 塞 user，1B 元话语根因）。 */
   chatMemoryBlock?: string;
+  /**
+   * 【1】chat 直答的最近对话段（2026-09-13 迭代包）：宿主从 session 组装
+   * （最近 2 轮 userInput+answerText，≤600 字符，自带【最近对话】段头）。
+   * chaser 拿不到 session.turns——拼在 chatMemoryBlock 之后、用户原话之前，
+   * 指代型追问（"那第二个呢"）不再零上下文硬答。
+   */
+  chatRecentTurns?: string;
   // ---- 真实执行审批透传（全部可选） ----
   /** Session approval mode (default: readonly — safe floor). */
   approvalMode?: 'readonly' | 'default' | 'full';
@@ -130,16 +134,12 @@ export class PanshalachChaser {
     /** 本任务触发过溢出截断重试（RunResult 透传 → RunCommand 溢出证据行）。 */
     contextOverflowCompacted?: boolean;
   }> {
-    // 解析 tier（必须在任何客户端校验前完成，因为 dryRun/确认等返回需要 tierConfig）
+    // 解析 tier（必须在任何客户端校验前完成，因为 dryRun 等返回需要 tierConfig）
     let effectiveTier: Tier;
     if (config.tier) {
-      effectiveTier = config.tier;
-    } else if (this.defaultModeOrTier === 'strong' || this.defaultModeOrTier === 'practical' || this.defaultModeOrTier === 'universal') {
-      effectiveTier = TierRegistry.fromMode(this.defaultModeOrTier);
-    } else if (TierRegistry.isTier(this.defaultModeOrTier as string)) {
-      effectiveTier = this.defaultModeOrTier as Tier;
+      effectiveTier = TierRegistry.normalize(config.tier);
     } else {
-      effectiveTier = DEFAULT_TIER;
+      effectiveTier = TierRegistry.normalize(this.defaultModeOrTier);
     }
     const tierConfig = TierRegistry.get(effectiveTier);
 
@@ -155,7 +155,6 @@ export class PanshalachChaser {
     }
 
     const {
-      maxRollouts = tierConfig.maxRollouts,
       maxStepsPerRollout = tierConfig.maxStepsPerRollout,
       earlyStopOnHighScore = true,
       budgetTokens = tierConfig.tier === 'pangu' ? 250_000
@@ -173,31 +172,13 @@ export class PanshalachChaser {
     // chat/search 走单次/受限路径，不进完整 agent 循环。
     const intent: TaskIntent = config.intent ?? classifyTaskIntent(issueDescription);
 
-    // 用户确认（max/ex/pangu）
-    if (tierConfig.userConfirmationRequired && !config.yes && !config.dryRun) {
-      const { renderConfirmationPanel, waitForUserConfirmation } = await import('./cli/UserConfirmation.js');
-      const panel = renderConfirmationPanel({
-        tierConfig,
-        estimatedTokensUpper: budgetTokens,
-        estimatedCalls: maxRollouts * maxStepsPerRollout,
-        estimatedDuration: `约 ${Math.max(1, Math.ceil(budgetTokens / 50000))} 分钟`,
-      });
-      console.log(panel);
-      const result = await waitForUserConfirmation();
-      if (!result.confirmed) {
-        console.log('\n✗ 用户取消，任务未执行。');
-        return { success: false, totalRollouts: 0, tierConfig };
-      }
-    }
-
     if (config.dryRun) {
       console.log(`\n[dry-run] Panshalach 任务预估`);
       console.log(`Tier        : ${tierConfig.tier} (${tierConfig.typicalUseCase})`);
       console.log(`Task Style  : ${taskStyle ?? 'auto'}`);
       console.log(`Budget      : ${budgetTokens} tokens`);
-      console.log(`Rollouts    : ${maxRollouts}`);
-      console.log(`Max Steps   : ${maxStepsPerRollout}`);
-      console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel}`);
+      console.log(`Max Steps   : ${maxStepsPerRollout > 0 ? maxStepsPerRollout : '∞（不限，预算闸兜底）'}`);
+      console.log(`Iron Law    : ${tierConfig.ironLawInjectionLevel ?? 'N/A（实用模式）'}`);
       console.log(`Memory      : ${tierConfig.memoryLoadLevel}`);
       return { success: false, totalRollouts: 0, tierConfig };
     }
@@ -235,13 +216,12 @@ export class PanshalachChaser {
         }
       );
 
-      if (tierConfig.ironLawInjectionLevel !== 'none') {
-        // 写工具已全档位注册（2026-09-05 裁决），教学名单固定为全集，
-        // 与格式教学示例严格一致，防 UNKNOWN_TOOL 空转。
-        basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(
-          ['bash', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']
-        )}`;
-      }
+      // 格式教学恒注入（ironLawInjectionLevel 现已仅强档 high/highest 携带，不再有
+      // 'none' 档位；quick/standard/high 也需格式教学防 UNKNOWN_TOOL 空转）。
+      // 教学名单固定为全集，与格式教学示例严格一致。
+      basePrompt += `\n\n${StructuredReasoner.buildToolCallFormatEnforcementPrompt(
+        ['bash', 'read_file', 'glob', 'grep', 'write_file', 'edit_file']
+      )}`;
     }
 
     // chat 意图：单次直答，不进 agent 循环。
@@ -273,11 +253,12 @@ export class PanshalachChaser {
       // 0.8.2 chat 净化：user = "记忆块 + 用户原话"。宿主传 chatMemoryBlock 时
       // issueDescription 已是原文（runAgentTask chat 分离传递）；记忆块拼在前，
       // 与 system 的对话指令配对——不再整段 enriched 塞 user（1B 元话语根因）。
-      const chatUserContent = config.chatMemoryBlock
-        ? `${config.chatMemoryBlock}
-
-${issueDescription}`
-        : issueDescription;
+      // 【1】最近对话原文（2026-09-13 迭代包）：chat 直答模型此前看不到最近对话
+      // 原文（【最近上下文】块只在被 chat 丢弃的 enriched 里），指代型追问零
+      // 上下文硬答——宿主组装的【最近对话】段拼在记忆块之后、用户原话之前。
+      const chatUserContent = [config.chatMemoryBlock, config.chatRecentTurns, issueDescription]
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        .join('\n\n');
       const chatMessages = [
         { role: 'system' as const, content: StructuredReasoner.buildChatSystemDirective() },
         { role: 'user' as const, content: chatUserContent },
@@ -292,8 +273,6 @@ ${issueDescription}`
           estimatedUsedTokens: 0,
           usageRatio: 0,
           usageMeasured: false,
-          triggeredSoftLimit: false,
-          triggeredDegradation: false,
           rolloutsExecuted: 1,
           stepsExecuted: 0,
           notes: ['chat 单次回复（不进 agent 循环）', `rollout 失败原因：${errMsg}`],
@@ -396,7 +375,12 @@ ${issueDescription}`
           // 无流式但有 chat：整段直答（正文由宿主 answered 兜底呈现——R1 路径）
           chatText = extractReplyText(await chatClient.chat(chatMessages, chatOpts));
         } else {
-          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）
+          // 回落 plain complete（0.7 原路径：basePrompt 内嵌对话指令 + 用户输入）。
+          // 覆盖边界申报（审查建议-5，2026-09-14 迭代）：此通道不含记忆块与
+          // 【最近对话】——仅有 complete 无 chat/streamChatMessages 的客户端在
+          // chat 意图下仍是"零记忆 + 零上下文"直答。已知缺口非本批回归；
+          // classic REPL 通道（Repl.ts solveIssue(enriched) 不传 chatMemoryBlock/
+          // chatRecentTurns）同样未覆盖，补齐属独立工作项。
           chatText = extractReplyText(await chatClient.complete(basePrompt, chatOpts));
         }
       } catch (e: any) {
@@ -425,6 +409,7 @@ ${issueDescription}`
           plan: '',
           action: [],
           result: chatText,
+          userFacing: true, // chat 直答正文即面向用户回复（answerText 带出的标记）
         }],
         success: true,
         stopReason: 'answered',
@@ -438,8 +423,6 @@ ${issueDescription}`
         usageRatio: chatMeasured > 0 ? Math.min(1, chatMeasured / budgetTokens) : 0,
         usageMeasured: chatMeasured > 0,
         ...(chatMeasured > 0 && chatUsage.prompt > 0 ? { lastPromptTokens: chatUsage.prompt } : {}),
-        triggeredSoftLimit: false,
-        triggeredDegradation: false,
         rolloutsExecuted: 1,
         stepsExecuted: 0,
         notes: ['chat 单次回复（不进 agent 循环）'],
@@ -455,8 +438,6 @@ ${issueDescription}`
     config.onStep?.({ version: 1, type: 'phase', phase: 'rollout' });
 
     let estimatedUsedTokens = 0;
-    let triggeredSoftLimit = false;
-    let triggeredDegradation = false;
     const rolloutsExecuted = 1; // 恒单 rollout
     let stepsExecuted = 0;
     const budgetNotes: string[] = [];
@@ -481,11 +462,16 @@ ${issueDescription}`
       usageSamples++;
     };
 
-    // search 意图用受限只读循环（≤3 步，写/bash 被拒）；execution 用完整循环。
+    // search 意图用受限只读循环（≤30 步，写/bash 被拒）；execution 用完整循环。
     const isSearchIntent = intent === 'search';
     const dynamicOptions: VerifyCritiqueLoopOptions = {
       strictStructured: isHighRigor && !isSearchIntent,
-      maxSteps: isSearchIntent ? Math.min(3, maxStepsPerRollout) : maxStepsPerRollout,
+      // 2026-09-16 取消步数限制：0 = 不限步数（预算闸兜底）。search 意图保留
+      // 只读窄检索上限（控制人裁决：全档位步数 ×10——3→30，"读文件数标题"
+      // 类多文件问答 3 步经常不够用，真机 REPL 实测第 3 步截断无回答）。
+      maxSteps: isSearchIntent
+        ? (maxStepsPerRollout > 0 ? Math.min(30, maxStepsPerRollout) : 30)
+        : maxStepsPerRollout,
       maxConsecutiveFailures: tierConfig.maxConsecutiveFailures,
       verifyFirstBias: tierConfig.verifyFirstBias,
       practicalMode: !isHighRigor || isSearchIntent,
@@ -494,6 +480,7 @@ ${issueDescription}`
       benchmarkType: taskStyle,
       // 0.8.2：显式执行意图（task 意图才驱动防呆 nudge；chat 直答不进 loop、search 只读）
       executionIntent: intent === 'execution',
+      searchIntent: isSearchIntent,
       ironLawInjectionLevel: isSearchIntent ? 'none' : tierConfig.ironLawInjectionLevel,
       signal: config.signal,
       windowTokens: config.windowTokens,
@@ -717,8 +704,11 @@ ${issueDescription}`
           thought: s.reasoning.thinking,
           plan: s.reasoning.plan,
           action: s.toolCalls,
-          result: s.verificationResult,
-          critique: s.critique,
+          // 2026-09-16：verificationResult（工具结果）为空时回退 step.result
+          // （空转 answered 步的用户正文）——此前空转正文在此处被空串覆盖，
+          // answerText 带出链路断在最后一环（"已回复"但无内容）。
+          result: s.verificationResult || (s as any).result || '',
+          ...(s.userFacing ? { userFacing: true } : {}),
           detectedFormat: s.detectedFormat,
           didRealVerification: s.didRealVerification,
           readBeforeWriteViolation: s.readBeforeWriteViolation,
@@ -759,13 +749,11 @@ ${issueDescription}`
       usageRatio: Math.min(1, estimatedUsedTokens / budgetTokens),
       usageMeasured,
       ...(usageMeasured && usageAccum.lastPrompt > 0 ? { lastPromptTokens: usageAccum.lastPrompt } : {}),
-      triggeredSoftLimit,
-      triggeredDegradation,
       rolloutsExecuted,
       stepsExecuted,
       notes: budgetNotes,
     };
 
-    return { success, bestTrajectory: best, totalRollouts: maxRollouts, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
+    return { success, bestTrajectory: best, totalRollouts: rolloutsExecuted, budgetReport, tierConfig, contextOverflowCompacted: overflowCompacted, message: !success ? best.lastError : undefined };
   }
 }

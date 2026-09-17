@@ -12,9 +12,9 @@
 import path from 'path';
 
 /** Directory names — the directory itself and every descendant are protected. */
-const SENSITIVE_DIRS = ['.ssh', '.aws', '.kube'];
+const SENSITIVE_DIRS = ['.ssh', '.aws', '.kube', '.git'];
 /** Exact file names — protected at any depth. */
-const SENSITIVE_FILES = ['.git-credentials', '.netrc'];
+const SENSITIVE_FILES = ['.git-credentials', '.netrc', '.panshalach.json'];
 /** Trailing-`*` globs matched against each path segment (`.env`, `.env.local`, `id_rsa`, `id_rsa.pub`, …). */
 const SENSITIVE_SEGMENT_GLOBS = ['id_rsa*', '.env*'];
 
@@ -36,12 +36,17 @@ export function normalizeRelPath(rel: string): string {
     .join('/');
 }
 
+/** 段级豁免（2026-09-16）：.env.example/.env.sample/.env.template 是模板文件
+ *  （占位值，不含真密钥），不落敏感清单——真机 M3 实证被 .env* 通配误拦。 */
+const SEGMENT_EXEMPT = /^\.env\.(example|sample|template)$/i;
+
 /** True when the workspace-relative path hits the sensitive manifest. */
 export function isSensitiveRelPath(rel: string): boolean {
   const norm = normalizeRelPath(rel);
   if (!norm) return false;
   return norm.split('/').some((raw) => {
     const seg = fold(raw);
+    if (SEGMENT_EXEMPT.test(seg)) return false;
     return (
       SENSITIVE_DIRS.some((d) => fold(d) === seg) ||
       SENSITIVE_FILES.some((f) => fold(f) === seg) ||

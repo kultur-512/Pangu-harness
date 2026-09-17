@@ -1,8 +1,10 @@
 // src/cli/repl/Session.ts
 // In-memory Session representation (blueprint v1.1)
 
+import { TierRegistry } from '../../tiers/TierConfig.js';
 import type { Tier } from '../../tiers/TierConfig.js';
 import type { SessionFile, Turn, SessionSummary, ModelProvider } from './types.js';
+import type { EnvSnapshot } from './EnvContext.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,13 +56,22 @@ export class Session {
   public planMode: boolean = false;
   public turns: Turn[] = [];
   public stats = { totalTurns: 0, totalTokens: 0, totalDurationMs: 0 };
+  /**
+   * B2：env 增量注入的上一轮环境快照（EnvContext.snapshotEnv 产物）。
+   * 挂在长命 Session 上使快照跨任务/跨 PromptBuilder 实例存活（调用方每任务
+   * new PromptBuilder——快照若存在 builder 上会被每任务重置为 null → 恒全量
+   * delta）。进程内 live-only 缓存，不持久化：SessionStore 走 toFile() 白名单，
+   * 本字段不进会话文件 schema（fromFile 恢复的会话回到 null → 下一次 build
+   * 重新注入 cwd 基线，无害）。
+   */
+  public envSnapshot: EnvSnapshot | null = null;
 
   constructor(init?: Partial<SessionFile> & { provider?: ModelProvider }) {
     this.id = init?.id ?? randomUUID();
     this.name = init?.name;
     this.createdAt = init?.createdAt ?? Date.now();
     this.updatedAt = init?.updatedAt ?? Date.now();
-    this.tier = (init?.tier ?? 'high') as Tier;
+    this.tier = TierRegistry.normalize(init?.tier);
     this.workspace = init?.workspace ?? process.cwd();
     this.model = init?.model ?? 'default';
     this.currentTaskId = (init as any)?.currentTaskId;

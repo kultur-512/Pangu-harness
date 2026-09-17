@@ -1,10 +1,10 @@
 # 烛龙 Zhulong — 基于 openPangu 的记忆增强通用智能体
 
 > **命题**：基于 openPangu-1B/7B/7B-VL 构建具备长程上下文管理能力的智能体（华为 · 国产操作系统软件组）。
-> **一句话**：把"每轮都从零记"的 Agent，变成"有卡片记忆 + 会话资产 + 事件/状态持续跟踪"的长程智能体；既擅长软件工程（读写代码、执行命令、验证变更），也直接回答日常对话、知识问答与创作（0.8.0-rc 身份画像对齐）。
-> **当前版本 v0.8.0-rc**（0.7 终止语义重构/意图前移/记忆落定 → **0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链三缺陷治理**）· 分版详录见 [CHANGELOG.md](../../CHANGELOG.md) · 外部产品 **烛龙 Zhulong** / 内部代号 **盤沙拉克 Panshalach**。
+> **一句话**：把"每轮都从零记"的 Agent，变成"有卡片记忆 + 会话资产 + 事件/状态持续跟踪"的长程智能体；既擅长软件工程（读写代码、执行命令、验证变更），也直接回答日常对话、知识问答与创作（身份画像对齐）。
+> **当前版本 v0.8.8**（0.7 终止语义重构/意图前移/记忆落定 → **0.8 换地基：turn 四模块 + messages 双通道协议 + stable/volatile 三段 prompt + 执行层七项强化 + Claude Code 级交互手感 + 记忆链三缺陷治理**）· 分版详录见 [CHANGELOG.md](../../CHANGELOG.md) · 外部产品 **烛龙 Zhulong** / 内部代号 **盤沙拉克 Panshalach**。
 
-## 0.8.0-rc 架构速览
+## 架构速览
 
 - **turn 会话壳四模块**（`src/cli/repl/turn/`）：2115 行巨函数 sseInteractive 拆为 `TurnContext`（巨状态显式化）/ `TurnController`（任务提交/审批桥/中断/排队 drain）/ `TurnRenderer`（SSE 事件渲染/CC 式视觉纯函数）/ `CommandRouter`（命令注册派发）+ `SlashMenu`（斜杠即时菜单纯函数状态机）——sseInteractive 收缩为会话壳。
 - **messages 双通道协议**（M1-PROTOCOL）：`ChatMessage`（system/user/assistant/tool role）+ `ModelClient.chat()/streamChatMessages()` 加性接口，`complete(prompt)` 文本协议保留为降级路径；`PANSHA_MESSAGES_MODE=off` 逃生门。
@@ -24,6 +24,7 @@
 | [EVALUATION.md](EVALUATION.md) | 场景设定、消融口径（A/B/C/C4）、指标、数据表（真实数据回填位） | **命题提交物 (2) 效果评估报告** |
 | [SUBMISSION.md](SUBMISSION.md) | 国创赛项目书：概述/方案/创新点/差异化/部署/评测 | 命题提交物（项目书） |
 | [EVAL-FEASIBILITY.md](EVAL-FEASIBILITY.md) | 评测基准选型与可行性评估（外部基准接入裁决 + 落地方案） | 评测决策文档 |
+| [EVAL-RUNBOOK.md](EVAL-RUNBOOK.md) | 评测操作手册：模型/harness/代码版本/判分口径四维拆解 + label 归类 + 各 harness/题量/模型/上下文开关的操作命令 | 跑评测时查（怎么跑） |
 | [DEPLOY-CN.md](DEPLOY-CN.md) | 从零到一部署：本机已验证路径 + 昇腾/麒麟框架（待实测）+ PANSHA_* 全集 | 部署指南 |
 | [USER-GUIDE.md](USER-GUIDE.md) | 安装、配置、交互手感（斜杠菜单/档位环/滑杆）、命令总表 | 用户手册 |
 | [ROADMAP-NEXT.md](ROADMAP-NEXT.md) | R0-R9 路线 + 实施合同 + 遗留表（0.8 M3 项/记忆审计剩余项） | 当前执行路线 |

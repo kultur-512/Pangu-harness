@@ -15,6 +15,11 @@ export interface OpenAICompatConfig {
   baseUrl: string;
   apiKey: string;
   timeoutMs?: number; // default 120000
+  /**
+   * 流式通道整体 deadline（毫秒，从请求开始计；headers + 全部 SSE chunk）。
+   * 默认 10 分钟——SSE 中途停滞此前会永远卡在 reader.read()（包D 修复）。
+   */
+  streamDeadlineMs?: number;
   /** 附加请求头（网关场景），与默认 Authorization 合并 */
   headers?: Record<string, string>;
 }
@@ -204,19 +209,27 @@ const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 522, 524, 529]);
 // 远程网关抖动窗口常超 3 次退避周期——重试上限取 5 次。
 const MAX_RETRIES = 5;
 
+/** Retry-After 长等待阈值：超过它服务端明确要求"很久后再来"，不再常规 5 连发。 */
+const LONG_RETRY_AFTER_MS = 30_000;
+
 function parseRetryAfter(res: Response): number | null {
+  // 包D 修复：返回服务端原始毫秒（此前钳到 30s 后照常最多 5 连发——
+  // Retry-After: 3600 也被 5 连锤 6 次）。>30s 的处理在 withRetry 的一次性补试标志。
   try {
     const h = res.headers?.get?.('retry-after');
     if (!h) return null;
     const sec = Number(h);
-    if (Number.isFinite(sec) && sec >= 0) return Math.min(30_000, sec * 1000);
+    if (Number.isFinite(sec) && sec >= 0) return sec * 1000;
     const at = Date.parse(h);
-    if (!Number.isNaN(at)) return Math.max(0, Math.min(30_000, at - Date.now()));
+    if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
   } catch {}
   return null;
 }
 
 function isRetryableErr(e: any): boolean {
+  // 显式不可重试标记优先（如 body 读取超时：响应头已到、body 半途挂死——
+  // 重试收益低且可能重复计费/重复生成，快速失败）。
+  if (e && e.retryable === false) return false;
   // M2-5：分类器接入——auth/billing/context_overflow 类快速失败（不再白吃
   // 5 次退避）；context_overflow 的重试交由 loop 的强制 compact 路径接管。
   const cls = classifyApiError(e);
@@ -236,17 +249,49 @@ function isRetryableErr(e: any): boolean {
 
 const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** 流式通道整体 deadline 默认值（从请求开始计，覆盖 headers + 全部 SSE chunk）。 */
+const STREAM_TOTAL_DEADLINE_MS = 10 * 60_000;
+
+/**
+ * 包D 修复：给慢 body 读取（res.text()/res.json()/reader.read()）加超时护栏。
+ * fetchWithTimeout 的 timer 在响应头返回即清——此后 res.text() 可无限挂起。
+ * 超时错误带 timeout=true + retryable=false：头已到的 body 挂死重试收益低
+ * 且可能重复生成，快速失败（isRetryableErr 对 retryable===false 直接短路）。
+ */
+function raceWithTimeout<T>(p: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: any = null;
+  const guard = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err: any = new Error(`${label} timeout: 响应体超过 ${timeoutMs}ms 未读取完成（网关半挂起）`);
+      err.timeout = true;
+      err.retryable = false;
+      reject(err);
+    }, Math.max(1, timeoutMs));
+  });
+  return Promise.race([p, guard]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
 /** 429/5xx/网络错误/空响应的指数退避重试；Retry-After 头优先；耗尽后抛出最后错误。 */
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   let attempt = 0;
-  let lastErr: any;
+  // 包D 修复：Retry-After > 30s 的错误用一次性标志——最多补试 1 次（总 2 请求），
+  // 跳过常规 MAX_RETRIES 循环（服务端明确要求一小时后再来时连锤 6 次无意义）。
+  let longWaitProbed = false;
   for (;;) {
     try {
       return await fn();
     } catch (e: any) {
-      lastErr = e;
       if (attempt >= MAX_RETRIES || !isRetryableErr(e)) throw e;
-      const base = e.retryAfterMs ?? Math.min(8_000, 500 * Math.pow(2, attempt));
+      const retryAfterMs = typeof e?.retryAfterMs === 'number' ? e.retryAfterMs : null;
+      if (retryAfterMs !== null && retryAfterMs > LONG_RETRY_AFTER_MS) {
+        if (longWaitProbed) throw e;
+        longWaitProbed = true;
+      }
+      // ≤30s：按服务端要求等待；>30s：整段等待会阻塞调用方数分钟——
+      // 只按普通退避做那一次快速补试。
+      const base = (retryAfterMs !== null && retryAfterMs <= LONG_RETRY_AFTER_MS)
+        ? retryAfterMs
+        : Math.min(8_000, 500 * Math.pow(2, attempt));
       const jittered = Math.round(base * (0.75 + Math.random() * 0.5)); // ±25% jitter
       await sleepMs(jittered);
       attempt++;
@@ -274,8 +319,25 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-/** 把 doComplete 的结果转成 streamChat 回退 chunk 序列（toolCalls/truncated 不被吞掉） */
-function chunksFromCompleteOutput(out: string | OpenAICompatOutput): ModelStreamChunk[] {
+/**
+ * 包D 修复：SSE delta.tool_calls 的 function.name 幂等拼接。
+ * 分片方言（OpenAI 官方）每 chunk 发 name 的一个切片 → 真分片用 +=；
+ * llama.cpp/vLLM/MindIE 方言每 chunk 重发完整 name → 直接 += 会拼成
+ * write_filewrite_file。规则：
+ * - acc 空 → 直接赋值；
+ * - delta === acc，或 acc 是 delta 的真前缀（delta 更长，整名重发后补全）→ 取 delta；
+ * - delta 是 acc 的真前缀（重复首片）→ 保持 acc；
+ * - 其余（真分片）→ +=。
+ */
+function mergeStreamToolName(acc: string, delta: string): string {
+  if (!acc) return delta;
+  if (delta === acc) return acc;
+  if (delta.length > acc.length && delta.startsWith(acc)) return delta;
+  if (delta.length > 0 && delta.length < acc.length && acc.startsWith(delta)) return acc;
+  return acc + delta;
+}
+
+/** 把 doComplete 的结果转成 streamChat 回退 chunk 序列（toolCalls/truncated 不被吞掉） */function chunksFromCompleteOutput(out: string | OpenAICompatOutput): ModelStreamChunk[] {
   const finishReason = (out as OpenAICompatOutput)?.truncated ? 'length' : undefined;
   const withFr = (c: ModelStreamChunk): ModelStreamChunk => (finishReason ? { ...c, finishReason } : c);
   if (typeof out === 'string') return [withFr({ type: 'text', text: out })];
@@ -372,7 +434,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
 
     if (!res.ok) {
       let bodyText = '';
-      try { bodyText = await res.text(); } catch {}
+      try { bodyText = await raceWithTimeout(res.text(), timeoutMs, 'complete error body'); } catch {}
       const err: any = new Error(`complete failed: ${res.status} ${res.statusText}`);
       err.status = res.status;
       err.body = bodyText;
@@ -383,8 +445,15 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       throw err;
     }
 
+    // 包D 修复：body 读取此前无超时——头返回后 res.text() 可无限挂起。
+    // 超时错误（timeout=true, retryable=false）直接浮出，不吞。
     let bodyText = '';
-    try { bodyText = await res.text(); } catch {}
+    try {
+      bodyText = await raceWithTimeout(res.text(), timeoutMs, 'complete body');
+    } catch (e: any) {
+      if (e?.timeout === true) throw e;
+      // 其余读取异常维持旧语义（吞掉，走下方 json() 兜底）
+    }
     let json: any = null;
     if (bodyText) { try { json = JSON.parse(bodyText); } catch { /* not JSON */ } }
     if (!json) {
@@ -458,11 +527,13 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         return parts.join('');
       }
     }
-    // 改动包 B：可识别的响应形状（有 choices）但提取失败 → 保留 stringify 兜底；
+    // 包D 修复：可识别的响应形状（有 choices）但提取失败 → 返回带明确标记的
+    // 空回复占位（此前 JSON.stringify(json) 把原始响应当模型话语灌上下文）；
     // 其余（真正空响应/无 choices）标记为可重试 EMPTY_RESPONSE，重试耗尽才返回空——
     // 消灭"空响应静默返回空串 → 模型空转烧步数"。
     if (json && Array.isArray(json.choices)) {
-      try { return JSON.stringify(json); } catch { return ''; }
+      const fr = json.choices[0]?.finish_reason;
+      return `[模型返回空回复 finish_reason=${typeof fr === 'string' ? fr : 'unknown'}]`;
     }
     const emptyErr: any = new Error(
       'EMPTY_RESPONSE: 端点返回 200 但无有效内容。若使用 diffusion/embedding 类模型，'
@@ -501,7 +572,6 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           'Authorization': `Bearer ${apiKey}`,
         },
       }, timeoutMs);
-
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch {}
@@ -511,7 +581,7 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
         throw err;
       }
 
-      const json: any = await res.json().catch(() => ({}));
+      const json: any = await raceWithTimeout(res.json(), timeoutMs, 'listModels body').catch(() => ({}));
       const data = Array.isArray(json?.data) ? json.data : [];
       const ids: string[] = [];
       for (const item of data) {
@@ -580,6 +650,9 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       }
 
       const url = joinUrl(baseUrl, '/chat/completions');
+      // 包D 修复：整体 deadline（从请求开始计，含连接阶段）——SSE 中途停滞
+      // 此前会永远卡在 reader.read()（默认 10 分钟，测试可经 config 注入）。
+      const streamDeadlineAt = Date.now() + (config.streamDeadlineMs ?? STREAM_TOTAL_DEADLINE_MS);
       let res: Response;
       try {
         res = await fetchWithTimeout(url, {
@@ -623,13 +696,74 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
       // SSE delta.tool_calls 增量拼接（按 index 聚合 id/name/arguments 分片）
       const toolCallAcc = new Map<number, { id?: string; name: string; args: string }>();
 
+      // 单行消费：返回该行产出的 chunk 与是否 [DONE]（抽出以便流结束后 flush 残余行）
+      const consumeLine = (line: string): { chunks: ModelStreamChunk[]; done: boolean } => {
+        if (!line || line.startsWith(':')) return { chunks: [], done: false };
+        if (!line.startsWith('data:')) return { chunks: [], done: false };
+        const dataStr = line.slice(5).trim();
+        if (dataStr === '[DONE]') return { chunks: [], done: true };
+
+        const out: ModelStreamChunk[] = [];
+        let json: any;
+        try { json = JSON.parse(dataStr); } catch { return { chunks: out, done: false }; }
+
+        // usage chunk（choices 常为空数组）——先于 choices 检查捕获
+        const u = extractUsage(json);
+        if (u) streamUsage = u;
+
+        const delta = json?.choices?.[0]?.delta;
+        if (!delta && typeof json?.choices?.[0]?.finish_reason !== 'string') return { chunks: out, done: false };
+        // finish_reason 通常出现在最后一个（delta 为空的）chunk 上
+        if (typeof json?.choices?.[0]?.finish_reason === 'string') {
+          streamFinishReason = json.choices[0].finish_reason;
+        }
+        if (!delta) return { chunks: out, done: false };
+
+        const reasoning = delta.reasoning_content ?? delta.reasoning;
+        if (typeof reasoning === 'string' && reasoning.length > 0) {
+          sawAny = true;
+          out.push({ type: 'thinking', text: reasoning } as ModelStreamChunk);
+        }
+        if (typeof delta.content === 'string' && delta.content.length > 0) {
+          sawAny = true;
+          out.push({ type: 'text', text: delta.content } as ModelStreamChunk);
+        }
+
+        const tcDelta = delta.tool_calls;
+        if (Array.isArray(tcDelta)) {
+          for (const d of tcDelta) {
+            const i = typeof d?.index === 'number' ? d.index : 0;
+            let acc = toolCallAcc.get(i);
+            if (!acc) {
+              acc = { name: '', args: '' };
+              toolCallAcc.set(i, acc);
+            }
+            if (typeof d?.id === 'string' && d.id) acc.id = d.id;
+            if (typeof d?.function?.name === 'string') acc.name = mergeStreamToolName(acc.name, d.function.name);
+            if (typeof d?.function?.arguments === 'string') acc.args += d.function.arguments;
+          }
+        }
+        return { chunks: out, done: false };
+      };
+
       outer: while (true) {
         if (opts.signal?.aborted) {
           const err: any = new Error('TASK_ABORTED');
           err.code = 'ABORTED';
           throw err;
         }
-        const { value, done } = await reader.read();
+        const readP = raceWithTimeout<{ value: any; done: boolean }>(
+          reader.read(),
+          streamDeadlineAt - Date.now(),
+          'stream body',
+        );
+        // 生成器被调用方中途放弃后 deadline 仍会触发——抑制孤儿 unhandled rejection
+        readP.catch(() => {});
+        const { value, done } = await readP.catch(async (e: any) => {
+          // deadline 到期：取消底层流后把超时浮出（不是用户 abort——保留 TASK_ABORTED 语义）
+          try { await reader.cancel(); } catch {}
+          throw e;
+        });
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -639,55 +773,23 @@ export function createOpenAICompatClient(config: OpenAICompatConfig): OpenAIComp
           const line = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 1);
 
-          if (!line || line.startsWith(':')) continue;
-          if (!line.startsWith('data:')) continue;
-
-          const dataStr = line.slice(5).trim();
-          if (dataStr === '[DONE]') {
+          const r = consumeLine(line);
+          for (const c of r.chunks) yield c;
+          if (r.done) {
             // 不能直接 return——必须先走循环后的 delta.tool_calls 拼装
             break outer;
           }
-
-          let json: any;
-          try { json = JSON.parse(dataStr); } catch { continue; }
-
-          // usage chunk（choices 常为空数组）——先于 choices 检查捕获
-          const u = extractUsage(json);
-          if (u) streamUsage = u;
-
-          const delta = json?.choices?.[0]?.delta;
-          if (!delta && typeof json?.choices?.[0]?.finish_reason !== 'string') continue;
-          // finish_reason 通常出现在最后一个（delta 为空的）chunk 上
-          if (typeof json?.choices?.[0]?.finish_reason === 'string') {
-            streamFinishReason = json.choices[0].finish_reason;
-          }
-          if (!delta) continue;
-
-          const reasoning = delta.reasoning_content ?? delta.reasoning;
-          if (typeof reasoning === 'string' && reasoning.length > 0) {
-            sawAny = true;
-            yield { type: 'thinking', text: reasoning } as ModelStreamChunk;
-          }
-          if (typeof delta.content === 'string' && delta.content.length > 0) {
-            sawAny = true;
-            yield { type: 'text', text: delta.content } as ModelStreamChunk;
-          }
-
-          const tcDelta = delta.tool_calls;
-          if (Array.isArray(tcDelta)) {
-            for (const d of tcDelta) {
-              const i = typeof d?.index === 'number' ? d.index : 0;
-              let acc = toolCallAcc.get(i);
-              if (!acc) {
-                acc = { name: '', args: '' };
-                toolCallAcc.set(i, acc);
-              }
-              if (typeof d?.id === 'string' && d.id) acc.id = d.id;
-              if (typeof d?.function?.name === 'string') acc.name += d.function.name;
-              if (typeof d?.function?.arguments === 'string') acc.args += d.function.arguments;
-            }
-          }
         }
+      }
+
+      // 包D 修复：流结束（reader done / [DONE]）后 flush buffer 残余行——
+      // 逐行处理依赖 indexOf('\n')，流以无尾随换行的末行结束时它此前被
+      // 静默丢弃（usage 丢失 / sawAny 误判触发非流式重发双请求）。
+      const tailLine = buffer.trim();
+      buffer = '';
+      if (tailLine) {
+        const r = consumeLine(tailLine);
+        for (const c of r.chunks) yield c;
       }
 
       // 流式结束——拼好的 toolCalls 作为独立 chunk 交给上层

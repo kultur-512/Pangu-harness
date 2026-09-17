@@ -1,7 +1,7 @@
 # 烛龙（Zhulong）部署指南（DEPLOY-CN）
 
 > 内部代号 Panshalach · 基于 openPangu 的记忆增强通用智能体（产品名烛龙 Zhulong）。
-> 部署基线：**v0.8.0-rc**；`npm run build` 后 bin 指向 dist/（src 有更新时启动会出现 dist-fresh 黄字提醒）。
+> 部署基线：**v0.8.8**；`npm run build` 后 bin 指向 dist/（src 有更新时启动会出现 dist-fresh 黄字提醒）。
 > **状态口径**：§1–§4 为**本机已验证路径**（Windows + Node 22 + LM Studio 本地 openPangu 端点，见 CHANGELOG 0.6.4/0.6.5/0.7.x 记录）；§5 昇腾与 §6 麒麟/国产 OS 为**标准流程框架，待端点/整机实测验证**，文中显著标注，不作为已完成能力声明。
 
 ## 1. 环境要求

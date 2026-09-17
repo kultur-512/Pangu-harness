@@ -36,7 +36,7 @@ describe('A4 buildHistoryPrompt：裁剪复查与单步封顶', () => {
   it('PANSHA_NO_BUDGET_TRIM=1 → 禁用主动窗口裁剪（评测 A 档逃生门），溢出应急档不受影响', () => {
     process.env.PANSHA_NO_BUDGET_TRIM = '1';
     const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
-    (loop as any).windowTokens = 1000; // budgetChars = 2800
+    (loop as any).windowTokens = 1000; // budgetTokens = 700
     (loop as any).steps = [mkStep(1, 950), mkStep(2, 950), mkStep(3, 950), mkStep(4, 950), mkStep(5, 950), mkStep(6, 950)];
     const full = (loop as any).buildHistoryPrompt() as string;
     assert.ok(full.length > 2800, '逃生门下超预算也不裁（让真溢出可达网关）');
@@ -52,7 +52,7 @@ describe('A4 buildHistoryPrompt：裁剪复查与单步封顶', () => {
 
   it('裁剪后复查：保下的首尾步仍超预算时继续迭代收缩（旧实现切一刀就返回）', () => {
     const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
-    (loop as any).windowTokens = 1000; // budgetChars = 2800
+    (loop as any).windowTokens = 1000; // budgetTokens = 700
     // 6 步 × ~1000 字符：旧逻辑保前2+后2（≈4000+ 字符）仍超预算直接返回
     (loop as any).steps = [mkStep(1, 950), mkStep(2, 950), mkStep(3, 950), mkStep(4, 950), mkStep(5, 950), mkStep(6, 950)];
     const res = (loop as any).buildHistoryPrompt() as string;
@@ -63,7 +63,7 @@ describe('A4 buildHistoryPrompt：裁剪复查与单步封顶', () => {
 
   it('单步封顶：巨步（>20% 预算）内容被截断，4 个巨步不再原样超窗', () => {
     const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
-    (loop as any).windowTokens = 1000; // perStep = 560 chars
+    (loop as any).windowTokens = 1000; // perStep = 140 tokens
     (loop as any).steps = [mkStep(1, 3000), mkStep(2, 3000), mkStep(3, 3000), mkStep(4, 3000)];
     const res = (loop as any).buildHistoryPrompt() as string;
     assert.ok(res.includes('本步内容过长已截断（单步窗口预算）'), '巨步必须被单步封顶');
@@ -90,7 +90,7 @@ describe('C1 messages 巨结果封顶与迭代收缩', () => {
 
   it('pushToolMessages：单条工具结果超 20% 窗口预算 → 头 60% + 尾 25% 截断', () => {
     const loop = new VerifyCritiqueLoop({} as any, {} as any, { practicalMode: true });
-    (loop as any).windowTokens = 1000; // per-message budget = 800 chars
+    (loop as any).windowTokens = 1000; // per-message budget = 200 tokens
     (loop as any).pushToolMessages(
       [{ toolName: 'read_file', params: [] }],
       null,

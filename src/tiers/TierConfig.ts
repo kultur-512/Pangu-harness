@@ -1,6 +1,6 @@
 // Panshalach 六档强度体系（TierConfig）
 // 全部使用小写：quick / standard / high / max / ex / pangu
-// 默认档位：high（高强度 + 高验证密度 + 高适用编码）
+// 默认档位：high（实用优先/标准纪律，轻纪律 low 注入）；高纪律档为 max/ex/pangu
 // 目标：让每个 tier 都有可量化的行为契约，差异化纪律规则、记忆、探索、预算
 
 export type Tier =
@@ -30,157 +30,97 @@ const TIER_ALIASES: Record<string, Tier> = {
   zorge: 'pangu', // 旧档位名 zorge → pangu（兼容既有会话/配置）
 };
 
-export interface CritiqueFrequencySpec {
-  /** 周期性复盘的步数间隔（0 = 不周期性复盘） */
-  periodicEvery: number;
-  /** 是否在问题步骤必须复盘 */
-  onProblem: boolean;
-  /** 连续多少步未真实验证后强制复盘（0 = 不强制） */
-  longNoVerifyThreshold: number;
-  /** 前几步跳过复盘（减少早期噪音） */
-  skipFirstN: number;
-}
-
 export type IronLawInjectionLevel = 'none' | 'minimal' | 'low' | 'medium' | 'medium_high' | 'high' | 'highest';
-
-export type BudgetBehavior = 'hard_cap' | 'soft_limit' | 'soft_limit_with_report' | 'soft_limit_with_warning';
 
 export interface TierConfig {
   tier: Tier;
   /** 人类可读的典型场景 */
   typicalUseCase: string;
-  /** 默认 maxRollouts */
-  maxRollouts: number;
-  /** 默认 maxStepsPerRollout */
+  /** 默认 maxStepsPerRollout（0 = 不限步数，预算闸兜底；2026-09-16 取消步数限制） */
   maxStepsPerRollout: number;
-  /** 纪律规则注入强度 */
-  ironLawInjectionLevel: IronLawInjectionLevel;
+  /** 纪律规则注入强度（仅强档 isStrongMode=true 生效；非强档省略） */
+  ironLawInjectionLevel?: IronLawInjectionLevel;
   /** maxConsecutiveFailures */
   maxConsecutiveFailures: number;
   /** verifyFirstBias */
   verifyFirstBias: boolean;
-  /** 探索深度（RepoExplorer maxDepth） */
-  explorationDepth: number;
   /** 失败记忆加载级别 */
   memoryLoadLevel: 'none' | 'light' | 'medium' | 'high' | 'full';
-  /** 预算行为 */
-  budgetBehavior: BudgetBehavior;
-  /** 是否允许并行 rollout */
-  parallelRollouts: number;
-  /** 是否需要用户确认 */
-  userConfirmationRequired: boolean;
-  /** 是否高纪律模式（严格解析 + 验证密集 + 并行 rollout） */
+  /** 是否高纪律模式（严格解析 + 验证密集） */
   isStrongMode: boolean;
-  /** 锚点数量上限 */
-  anchorMax: number;
+  /** 是否在探索阶段自动拉取溢出记忆（standard/high 档语义） */
+  autoPullMemory: boolean;
 }
 
 const TIER_CONFIGS: Record<Tier, TierConfig> = {
   quick: {
     tier: 'quick',
     typicalUseCase: '热修复、临时检查',
-    maxRollouts: 1,
-    maxStepsPerRollout: 10,
-    ironLawInjectionLevel: 'none',
+    maxStepsPerRollout: 0,
     maxConsecutiveFailures: 2,
     verifyFirstBias: false,
-    explorationDepth: 3,
-    memoryLoadLevel: 'none',
-    budgetBehavior: 'hard_cap',
-    parallelRollouts: 1,
-    userConfirmationRequired: false,
+    memoryLoadLevel: 'light',
     isStrongMode: false,
-    anchorMax: 4,
+    autoPullMemory: false,
   },
   standard: {
     tier: 'standard',
     typicalUseCase: '常规小修改',
-    maxRollouts: 1,
-    maxStepsPerRollout: 15,
-    ironLawInjectionLevel: 'low',
+    maxStepsPerRollout: 0,
     maxConsecutiveFailures: 3,
     verifyFirstBias: false,
-    explorationDepth: 4,
     memoryLoadLevel: 'light',
-    budgetBehavior: 'soft_limit',
-    parallelRollouts: 1,
-    userConfirmationRequired: false,
     isStrongMode: false,
-    anchorMax: 6,
+    autoPullMemory: true,
   },
   high: {
     tier: 'high',
     typicalUseCase: '日常主力（推荐）',
-    maxRollouts: 1,
-    maxStepsPerRollout: 20,
-    ironLawInjectionLevel: 'low',
+    maxStepsPerRollout: 0,
     maxConsecutiveFailures: 3,
     verifyFirstBias: false,
-    explorationDepth: 5,
     memoryLoadLevel: 'medium',
-    budgetBehavior: 'soft_limit_with_report',
-    parallelRollouts: 1,
-    userConfirmationRequired: false,
     isStrongMode: false,
-    anchorMax: 8,
+    autoPullMemory: true,
   },
   max: {
     tier: 'max',
     typicalUseCase: '重要/高风险任务',
-    maxRollouts: 1,
-    maxStepsPerRollout: 25,
+    maxStepsPerRollout: 0,
     ironLawInjectionLevel: 'high',
     maxConsecutiveFailures: 4,
     verifyFirstBias: true,
-    explorationDepth: 6,
     memoryLoadLevel: 'high',
-    budgetBehavior: 'soft_limit_with_warning',
-    parallelRollouts: 1,
-    userConfirmationRequired: true, // 必须
     isStrongMode: true,
-    anchorMax: 10,
+    autoPullMemory: false,
   },
   ex: {
     tier: 'ex',
     typicalUseCase: '极难任务、核心模块',
-    maxRollouts: 1,
-    maxStepsPerRollout: 30,
+    maxStepsPerRollout: 0,
     ironLawInjectionLevel: 'highest',
     maxConsecutiveFailures: 5,
     verifyFirstBias: true,
-    explorationDepth: 7,
     memoryLoadLevel: 'high',
-    budgetBehavior: 'soft_limit_with_warning',
-    parallelRollouts: 1,
-    userConfirmationRequired: true, // 必须
     isStrongMode: true,
-    anchorMax: 12,
+    autoPullMemory: false,
   },
   pangu: {
     tier: 'pangu',
     typicalUseCase: '极致追求（终极长程记忆模式）',
-    maxRollouts: 1,
-    maxStepsPerRollout: 40,
+    maxStepsPerRollout: 0,
     ironLawInjectionLevel: 'highest',
     maxConsecutiveFailures: 6,
     verifyFirstBias: true,
-    explorationDepth: 8,
     memoryLoadLevel: 'full',
-    budgetBehavior: 'soft_limit_with_warning',
-    parallelRollouts: 1,
-    userConfirmationRequired: true, // 必须 + 预算确认
     isStrongMode: true,
-    anchorMax: 15,
+    autoPullMemory: false,
   },
 };
 
 export class TierRegistry {
   static get(tier: Tier | string | undefined): TierConfig {
-    if (!tier) return TIER_CONFIGS[DEFAULT_TIER];
-    const raw = String(tier).toLowerCase();
-    // alias 兼容
-    const aliased = TIER_ALIASES[raw] ?? (raw as Tier);
-    return TIER_CONFIGS[aliased] ?? TIER_CONFIGS[DEFAULT_TIER];
+    return TIER_CONFIGS[TierRegistry.normalize(tier)];
   }
 
   static getAll(): TierConfig[] {
@@ -192,25 +132,34 @@ export class TierRegistry {
     return raw in TIER_CONFIGS || raw in TIER_ALIASES;
   }
 
-  static get defaultTier(): Tier {
-    return DEFAULT_TIER;
-  }
-
-  /**
-   * 读取 tier 的高纪律旗标
-   */
-  static isStrong(tier: Tier | string | undefined): boolean {
-    return TierRegistry.get(tier).isStrongMode;
-  }
-
   /**
    * 任务风格（ModelMode）到 tier 的映射
+   * strong = 高纪律 → max；practical = 务实 → quick；universal = 通用 → standard
    */
   static fromMode(mode: 'strong' | 'practical' | 'universal' | undefined): Tier {
     if (!mode) return DEFAULT_TIER;
     if (mode === 'practical') return 'quick';
-    if (mode === 'strong') return 'high';
+    if (mode === 'strong') return 'max';
     if (mode === 'universal') return 'standard';
+    return DEFAULT_TIER;
+  }
+
+  /**
+   * 唯一 tier 归一化入口：trim + lowercase 后依次尝试
+   *   mode 名（strong/practical/universal）→ fromMode 语义；
+   *   alias（rapid/fast/strong/power/zorge）→ alias 映射；
+   *   规范 tier → 自身；
+   *   否则 → DEFAULT_TIER。
+   */
+  static normalize(input: string | undefined): Tier {
+    const raw = String(input ?? '').trim().toLowerCase();
+    if (!raw) return DEFAULT_TIER;
+    if (raw === 'strong' || raw === 'practical' || raw === 'universal') {
+      return TierRegistry.fromMode(raw as 'strong' | 'practical' | 'universal');
+    }
+    const aliased = TIER_ALIASES[raw];
+    if (aliased) return aliased;
+    if (raw in TIER_CONFIGS) return raw as Tier;
     return DEFAULT_TIER;
   }
 }

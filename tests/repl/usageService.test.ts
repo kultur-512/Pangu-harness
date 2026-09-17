@@ -13,8 +13,6 @@ function mkTurn(i: number, estimatedUsedTokens: number): Turn {
     budgetTokens: 120000,
     estimatedUsedTokens,
     usageRatio: Math.min(1, estimatedUsedTokens / 120000),
-    triggeredSoftLimit: false,
-    triggeredDegradation: false,
     rolloutsExecuted: 1,
     stepsExecuted: 3,
     notes: [],

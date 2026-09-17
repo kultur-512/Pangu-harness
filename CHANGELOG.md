@@ -1,7 +1,85 @@
 # Changelog
 
-> **当前状态（2026-09-12）**：v0.8.0-rc · 四分支已合入 develop（`5105ebf`）· tsc 干净 + `npm test` **1008 例全绿** + 双契约 PASS + eval 冒烟 A/B/C/C4 全过 · 评测管线就绪待真机端点 · 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
+> **当前状态（2026-09-15）**：v0.8.8 · tsc 干净 + `npm test` **1399 例全绿（1398 通过 + 1 跳过）**（CI 已挂 test 门）· **90 题 LongMemEval**：ZL×M3 strict 47/90（新纪录，超 CC×M3 41/90）为旗舰基准，ZL×7B 31/90 本地最优，ZL×1B 六档 strict quick 22 / standard 23 / high 20 / max 27 / ex 20 / pangu 22（档位门禁修复后 quick/standard 不再零注入，详见 `scripts/eval/longmemeval-90/COMPARE-90.md`）· 未完成项见 [docs/panshalach/ROADMAP-NEXT.md](docs/panshalach/ROADMAP-NEXT.md)。
 > 注：0.7.x 及更早历史段落中引用的 `docs/panshalach/` 方案文档（PLAN-*/GAP-MATRIX/HERMES-ALIGN/UI-UX-REVAMP/REFLECTION/USABLE-PLAN/ALIGNMENT-REVIEW/FIX-0.7-*/PROJECT-BRIEF/ROADMAP 等）已于 2026-09-12 归档至 `archive/2026-09-12-process-docs/`——历史正文按当时路径原文保留，不回改。
+
+## 0.8.8 tier 体系收口 + 记忆门禁改造（2026-09-15 · zhaiyuanhao1）
+
+六档评测暴露低档记忆召回塌缩（quick 2/90、standard 1/90）→ 归因根因是 tier 可见性过滤器把 chat-fact（insight）/偏好（general）卡挡在低档门外 → 系统性收口：
+
+- **tier 空壳删除**：`budgetBehavior`/`maxRollouts`/`parallelRollouts`/`explorationDepth`/`anchorMax`/`userConfirmationRequired` 及 `BudgetReport.triggeredSoftLimit/Degradation` 全部删除（单 rollout、预算仅事后报告、无并行、无确认面板，均已如实收口）；`ironLawInjectionLevel` 改可选（仅 max/ex/pangu 强档生效）；新增 `autoPullMemory` 配置化。
+- **门禁改造（核心）**：`loadFiltered` 删除按 memoryCategory 的 `isVisible` 阶梯过滤，改为按卡 `applicableTiers` 卡级门禁（空=全档、非空且不含当前档=排除）；任务提炼卡改为全档通用（不再绑定产出档位）。
+- **别名归一化**：`TierRegistry.normalize()` 统一入口（Session/envTier/TierCommand/loadFiltered/chaser 全接入），`strong` 对齐 `max`；`fromMode` 与 `TIER_ALIASES` 一致。
+- **记忆注入差异化**：quick `memoryLoadLevel` none→light（不再零注入）；light/medium/high/full 四档按窗口预算乘数差异化（0.6/1.0/1.2/1.4，medium=1.0 保 high 档行为不变）。
+- **死代码清理**：critique（`buildCritiquePrompt`/`LoopStep.critique`/渲染点）+ `FailureMemory`/`GenerativeTestEngine` 类（仅留 `FailureCategory`）+ `appendMemoryCards`/`isStrong`/`defaultTier`/`tierRequiresConfirmation`/`CritiqueFrequencySpec`；`looksLikeRealPass` 删 benchmark 定向 hack（硬编码"加法例子"数字判定）。
+- **语义检索收口**：`RemoteEmbeddingProvider.embed()` 同步兜底 n-gram（不再"设 remote 反而降级纯词面"）；`embedAsync()` 真远程留待 async 检索路径。
+- **taskState 归档**：活跃+归档拆分，任务结束自动触发 `archive()`（无归档任务短路，不读归档文件）。
+- **六档 × 1B 90 题复验**：strict quick 2→**22** / standard 1→**23** / high 24→20 / max 20→**27** / ex 20→20 / pangu 18→22——quick/standard 从个位数跃升，证实门禁是低档塌缩根因（`0210553`）。
+- 测试：1399 例全绿（1398 通过 + 1 跳过），6 个 tools fakeTierConfig 去死字段/补 `autoPullMemory`/去强转。
+
+## 0.8.7 token 口径收口（2026-09-15 · zhaiyuanhao1）
+
+token 估算器口径审查（对照目标模型中文原生 tokenizer 实测 token/字 比）→ 两包并行实现 + 子代理 review（9 项全 pass、无阻塞缺陷）→ 全量 1383 例绿（1382 通过 + 1 跳过）。
+
+- **文本路径裁剪口径收口**：`VerifyCritiqueLoop` 的 `pushToolMessages` / `buildHistoryPrompt` / `capStepPart` 从旧 `windowTokens*4` 字符预算统一到 `estTokens` + `sliceToTokenBudget`——messages 通道本就 CJK 感知，文本通道此前对中文按 4 字符/token 低估 ~6 倍；纯 ASCII 行为 ≤1 token 内等价
+- **CJK 系数 1.5→1.0 可配**：`estTokens` 的 CJK 系数抽成 `CJK_TOKENS_PER_CHAR`（默认 1.0，`PANSHA_CJK_TOKENS` 进程启动读一次覆盖，`setCjkTokensPerCharForTest` 测试 seam）。1.5 是按 LLaMA 系定的，对目标模型（openpangu/Pangu·MiniMax-M3·Qwen3·DeepSeek-R1，中文实测 ≈0.6~1.0 token/字）高估 ~1.5~2.5 倍 → 压缩/裁剪提前触发、浪费上下文容量；1.0 是真实区间上界，仍安全（70% 预算线 + 溢出应急档兜底）
+- 测试更新：`tokenEstimate`/`compactService` 断言随系数更新；`CjkBudget` 两条「每条 ≤ 单条封顶」断言放松为「总账 ≤ 70% 窗口 + 至少一条被二级截断」（对齐 `enforceMessagesBudget` 真实契约，review 核验非掩盖 bug）
+- **90 题复验（归因隔离）**：ZL×1B 19/90（vs it3-1b 20/90，噪声内无回归）· ZL×M3 **47/90**（vs gapfix-m3 41/90，+6）· 单变量隔离 `PANSHA_CJK_TOKENS=1.5` vs 1.0 → 46 vs 47 → **token fix 系数贡献 +1，其余 +5 为中间记忆/检索迭代**（factDate 重排/C4 数字句前置/R2 预算/B9 relTime/MMR 默认关闭，此前未单独在 M3 验证）。结论：token fix 是正确性收口（文本路径中文不再低估 6 倍、系数不再高估 1.5-2.5 倍），非 benchmark 提分杠杆；M3 47/90 新纪录主要来自记忆/检索迭代
+
+## 0.8.5 全适用性迭代（2026-09-14 · zhaiyuanhao1）
+
+三路探查（中文适用性 / 非评测场景 / 遗留核销）→ 两包串行实现 → 子代理 review（16 项：1 必须返工 + 7 建议，全部处置）→ 全量 1253 例绿 → 英文回归守护轮 strict 16/90 无回退（`55526d7`）。
+
+- **中文检索双通道打通**（探查实证：中文无空格 → 关键词恒整句 → 词面永不命中 + 语义闸 `kws≥2` 恒闭 → 排序退化纯新近度，而 embed 底座中文区分度实测优秀）：关键词抽取 CJK 分支（标点切短句 + 2-gram 词粒度 + 单位词白名单 + ASCII 段保留）· 语义闸对含 CJK 查询放宽 · `MAX_PHRASE_CHARS` 20→8（干扰卡用例实证：粒度不足时双方 rel=0，新近度顶掉 gold）· 查询稀释修复（issue 双拼主导 + 最近 2 轮各截 60 字——77 字无关前缀曾把 gold cos 0.119 砸到 0.030）
+- **chat 最近对话原文**：`【最近对话】`段（≤600 字符）贯通 chaser chat user——修多轮指代（"那第二个呢"）零上下文硬答；`RECENT_TURN_WINDOW` 常量与查询构造同源
+- **数据防御**：`load()` statSync size+mtime 基线（跨实例静默抹卡洞，CrossInstanceCache 5 例锁定）；cardVectorCache FIFO 帽 1024
+- **出口一致性**：auto-pull 按意图门禁（chat 不再白耗嵌入计算并虚报注入账本——实测 ids 17 vs 可见 12）；L1 ghost 去 `
+` 使 chat 块含"另有 N 张"提示（L2 有意保留并注释防误统一）
+- **遗留核销**：对卡 confidence 0.7A+0.3Q 加权（双侧 max 使软惩罚几乎永不生效）；老格式互去重 / B2 判别力测试补强；旧评测 harness 冻结弃用注释（假日期污染在旧脚本存活，已声明仅用于复现历史成绩）
+- 排序公平性修正申报（review 纠正算式）：对卡 effBase 出局门修复的真实载体是 dialogue-pair 基线 0.85（`decayWeight ?? weight` 优先级证伪 weight 路径，三处注释已按正确算式重写）
+- 新测试：ChineseRetrieval 25 + ChatUserAssembly 9 + CrossInstanceCache 5 + LegacyFormatDedup 4 + ChatFactPairConfidence 3 等
+
+## 0.8.4 记忆架构优化（2026-09-14 · zhaiyuanhao1）
+
+三路架构探索（写路径实证 84.5% 句子丢弃率 / 检索召回实验 / 时间性失败归因 9/15 假日期污染）→ 两包实现 → 子代理 review（16 项：1 必须返工 + 4 建议，全部处置，含一处实现注释算式纠正与一处自引入回归回退）→ 全量 1162 例绿 → 90 题度量 strict 13→15（`7e1acd7`）。
+
+- **时间锚定**：sessionDate 参数贯通播种链（评测回放不再把记录时间冒充事实时间）；卡带 `factDate/factDateText`；stable 段与 chat directive 注入"今天是 X"；悬空 `[S日期]` 规则替换为事实时间差值规则——temporal-reasoning 产品管线首次得分（0→1）
+- **宽进严排**：对卡（Q/A 对）为主落卡单元无条件落卡；`isFactSentence` 从硬门改 confidence 分类器（句级补充卡 ≥0.7 才发）；80 帽硬拒绝删除（新进旧出交存储层 kind 分桶淘汰）；配对牵连修复（user 噪音不再连坐 assistant）；分句器缩写保护（Dr./e.g. 不再切碎）
+- **混合检索**：embed.ts 4096 维 n-gram 语义接入 loadFiltered（两步归一防量纲压制；keywords<2/异常自动回纯词面；投影 key 含查询防串槽；进程级向量缓存）——`PANSHA_SEMANTIC_SEARCH=0` 显式关闭
+- **窗口感知注入**：固定卡数帽改窗口比例预算（8K≈10% / 大窗 15%、1600 token 帽）+ 渲染后实测 token 贪心门（对卡实际 122-470 token/张，纯张数帽超发 3-11 倍——review FAIL 实测后返工）；A 行渲染与写侧 smartSlice(400) 同源；`PANSHA_MEMORY_LIMIT` 显式时行为不变
+
+## 90 题 LongMemEval 交叉对比（2026-09-13/14 · zhaiyuanhao1）
+
+题集 = oracle 500 题确定性抽样 15/型×6（48 题集超集）；同 runner 同播种归因纪律；判分 strict（主口径：多候选拆分+复述豁免+词边界）/lenient（数字回退）双口径；六格 harness 矩阵（CC×M3 / Pi×1B / 烛龙 product·direct·pipeline·compact）+ 修复 A/B 轨迹（`3b61ea3`、`c16a2dd`、`55526d7`）：
+
+| 轮 | strict | 说明 |
+|---|---|---|
+| baseline | 9/90 | 修复前代码 |
+| repaired | 13/90 | 0.8.3 修缮批次 |
+| optimized | 15/90 | 0.8.4 记忆架构优化 |
+| **optimized2** | **16/90** | 0.8.5 全适用性迭代（回归守护轮） |
+
+六格同题对比：CC×M3 31/90 · ZL-compact（1B，无门控播种+检索）26/90 · ZL-direct = Pi（1B）20/90 · ZL-pipeline 14/90。关键发现：烛龙系 1B 最强配置是"宽进播种+检索注入"；preference 题型全格 ≤1 属判分盲区（自由文本偏好 vs 子串匹配）；M3 与 1B 绝对分不可直接归因 harness。全量报告见 `scripts/eval/longmemeval-90/COMPARE-90.md`。
+
+## 0.8.6 工具调用配合度 + 压缩检索迭代（2026-09-14/15 · zhaiyuanhao1）
+
+**工具调用配合度**（三路探查实证：模型=示例复制器，schema 措辞/工具数量零效应，few-shot 示例工具族唯一杠杆；文本协议下参数名不可见→参数幻觉 100%）：格式教学重构（read_file 示例恒有+按意图追加+参数名从 schema 取+中性占位+V1 实证措辞+每工具速览行）· 参数名别名归一（executor 中心化+engineAdapter gate 前应用，堵敏感写检查旁路）· 解析器四修补（全角归一/属性式参数/首标签错配救援限闭合后兄弟块/双调用拆分）+ rootless 兜底（已知工具标签开头丢壳三重门控救回）· 失败恢复三级阶梯（教学全文→具体实例短命令→终局）+ INVALID_PARAMS 回灌正确参数名 + guardrails 停滞闸按归一名计数 · 意图门补检索/枚举动词（英文  词边界）+ execution 零工具 answered 不计 success + 假验证收紧。**1B 实测：首步出块+正确工具 5/5（修复前 3/5 且 edit 参数幻觉 100%）、零 UNKNOWN_TOOL；解析/执行口径调用成功率 100%**（20 畸形形态全接住）。
+
+**压缩与检索迭代**（67 失败题四类归因驱动）：R1 打包 break→continue · C1a 注入块 factDate 升序重排 + C1b 规则行补冲突事实取最新（修 KU 新旧值反向误导，KU 3→6）· L1 规则行答案语言镜像 · R2 8K 档预算 10%→15%（819→1229；归因实证 819 只装 3.8 张对卡）· C2 对卡 A 行渲染 smartSlice（it2 实证 400 裁剪对 assistant/user 题型净损失，迭代回退至与写侧同源 800）· C4 smartSlice 数字句前置 + gold 丢失边界回退。90 题三轮严格对照 23→22→20（方差 ±3）：**管道优化进入 1B 方差噪声区的诚实记录**，temporal 0→2→3→4 单调上升为真实管道增益；模型升级验证轮 ZL×7B 31/90 超越 ZL×M3 29/90（本地 7B 为性价比最优交付配置）。
+
+## 修缮批次（2026-09-13 · 对抗性审查修复 zhaiyuanhao1）
+
+对抗性审查（四路子系统深审 + 双路独立复核 + 新测试旧代码验红）确认 3 P0 + 12 P1 + 全部 P2，本轮全量修复（约 50 文件，新增对抗性回归测试 118 例——每项修复先在旧代码上断言级验红再转绿）：
+
+- **fix(tools) 审批与沙箱**：工具名统一 normalizeToolName 归一（堵 `write`/`edit` 别名绕过 readonly/plan 档审批与 checkpoint/写锁）· readonly 白名单补 `
+`/反引号/`$`（堵换行连击与命令替换逃逸；`%` 不收防误伤 `--format=%h`）· 'a' 决策对 bash 改会话内放行且 dangerous 仍强制审批、不再把整个 bash 持久化落盘 · checkpoint realpath 校验（堵工作区内 symlink 把工作区外文件外拷进历史目录）· 敏感清单补 `.panshalach.json`/`.git` · DANGER_PATTERNS 补漏（push -f 独立 flag / rm 分离旗标 / Remove-Item）· grep 5MB 读取上限 · rewindToTurn 逐文件容错 + 半回滚汇总 · redact 扩 Bearer 全值/AKIA/ghp_/私钥块并接入 grep 输出 · UserConfirmation 非 TTY 守卫 · mcpClient 树杀 + 审批 timer 局部化
+- **fix(loop+model) 循环与计量**：messages 二级收缩改 estTokens 反推 + 64 次迭代上限 + 进展检查（堵纯中文巨工具结果的收缩定点死循环——P0，生产常量复现 18 万次迭代不终止）· estTokens CJK 范围扩至中文标点/全角/Ext-A/假名/谚文 · classifySignal 残余全文 includes 全部尾锚定（堵 ALL_TESTS_PASSED 正文误判假成功）· readonly 拒绝改段尾结构化标记 `[TOOL_DENIED_READONLY <tool>]`（堵正文含字面量误计数的假硬闸）· recordResult 仅写工具成功才清零跨工具拒绝计数（堵读写交替饿死阈值 2）· errorClassify 无 status 正文判 overflow + /billing/ 收窄（429 限流文案不再被误杀不重试）· 多调用分段不整段复制 · B4 kept 收缩落 coveredTurnIds 账本（resume 不再复活已收缩轮）· 模型摘要路径嵌套封顶 · compact cancel 竞态复查 · safeSlice 码点安全截断全截断点换用
+- **fix(memory) 记忆系统**：容量分桶按 kind 治理（failure 40/类内每 category 10 · success 10 · preference 80——chat-fact 卡以该桶承载；pinned 免淘汰）——旧实现所有正向卡挤 category:'OTHER' 一个 10 张桶，"80 张对话记忆/总 200" 声明不可达、第 11 张起静默截断 · recordFactLines 返回真实落盘数（不再谎报截断前候选数）· load() 形状校验 + 损坏文件 quarantine（`.corrupt-<时间戳>`，不再静默清库/毒化）· 7 处写盘换 atomicFile（tmp+rename，复用 taskState commitAtomic 抽共享模块）· taskState env 绝对路径直采（对齐 1d75f73 修复的同类 bug 在此残留）· isFactSentence 词界（旧正则实为字面退格符死代码）+ chat-fact 去重键剥离时间戳前缀（堵跨分钟重复落卡）· `/memory stats` 注入审计视图（按 kind 卡数/注入账本/最近注入事件）· markInjected 进程级账本持久可查（不再一次性实例记账即弃）· 事件流尾部读取（超 5000 条最新事件可见）· /memory import 形状+大小校验 · mergeSimilarCards NaN 防护 + 停用词修正 · classic REPL 接 recordChatFact（chat 直答事实沉淀此前在此路径静默缺失）· PromptBuilder 卡 id 注入契约修正
+- **fix(adapter+model) 适配器与模型层**：容错切分不再砍尾（漏写 `</>` 的块此前被无条件切掉末 3 字符——弱模型深层残缺形态最后一个参数静默丢失）+ 残缺闭合标签 best-effort 提取 · 流式 tool name delta 幂等合并（方言网关整名重发不再拼成 `write_filewrite_file`）· 非流式 body 读取纳入超时 + SSE 整体 deadline（`streamDeadlineMs` 可注入）· Retry-After ≤30s 按服务端、>30s 最多补试 1 次（不再钳 30s 连锤 6 发）· 空回复改占位标记（不再把原始响应 JSON 灌进上下文）· SSE 尾行无换行 flush（usage/[DONE] 不再丢、不再误触发非流式重发双请求）· ProviderRegistry 前缀剥离单点化且仅剥已配置 provider 名（防误剥 Ollama/LM Studio 含冒号目录名）· 死代码归档（RateLimiter/universal-tool-parser.cjs/XmlStructuredToolParser/demo×2 → `archive/2026-09-13-adapter-model/`）
+- **chore(ci)**：新增 `.github/workflows/ci.yml`（install + tsc + `node --test --test-concurrency=4`，失败自动重跑一次规避已知进程级假象）——此前仓库 CI 只有分支保护检查，npm test 从不被 CI 执行
+- **feat(eval)**：90 题 LME 基建 `scripts/eval/longmemeval-90/`（确定性抽样 15/型×6 + 产品管线 runner——recordChatFact 同源播种 + headless QA，弃用评测复制品直写存储路线 + 统一判分器 strict/lenient 双口径/复述豁免/数字回退）；90 题修复前基线 **strict 9/90**（平均落卡 8.3 张——旧 OTHER 桶 10 张帽的实证）
+
+**质量门**：`npx tsc --noEmit` 干净；`node --test --test-concurrency=4` **1162 例 1161 pass + 1 skip + 0 fail**；`smoke-eval.mjs` 20/20；三组安全 payload（别名写/换行命令/命令替换）在旧代码实证绕过存在、修复后全部拒绝。
 
 ## 合并记录（2026-09-12 · 四分支收口 develop）
 

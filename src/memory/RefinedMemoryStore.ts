@@ -1,7 +1,7 @@
 // Panshalach 提炼后持久化存储
 // 功能：提炼 / 加载 / 过滤 / 容量控制 / 衰减 / .gitignore 默认加入
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync, statSync } from 'fs';
 import { join, isAbsolute } from 'path';
 import { createHash } from 'crypto';
 import { RefinedMemoryCard, RefinedMemoryFile, MEMORY_LIMITS, LESSON_TEMPLATES } from './RefinedMemoryCard.js';
@@ -10,6 +10,51 @@ import { FailureCategory } from './FailureMemory.js';
 import { Trajectory } from '../loop/trajectory.js';
 import { Tier, TierRegistry } from '../tiers/TierConfig.js';
 import { normalizeRelPath } from './trajectoryFiles.js';
+import { atomicWriteFileSync } from '../utils/atomicFile.js';
+// B3 混合排序的相似度底座（embed.js 零依赖、零副作用）：默认是字符 n-gram 哈希
+// 词面扩展（词面 + 字符 n-gram 哈希，非真语义）；真 embedding 经
+// PANSHA_EMBEDDING=remote 可插拔，缺配置/异常自动降级纯词面。申报：原设想"动态
+// import('./embed.js')"——但 loadFiltered 必须保持同步签名（不传 queryText 的
+// 现有调用方行为逐字节不变是硬约束，改成 async 会破坏全部同步消费方），import()
+// 是异步的，故降为静态 import + 惰性实例化（provider 仅在 semantic 激活时创建）。
+import { cosineSimilarity, embedCards, embedQuery, createConfiguredProvider } from './embed.js';
+// B9 相对时间检索信号（ROADMAP B9）：查询时间表达 → [start,end) 区间，卡
+// factDate 落入则 relevance+1。"今天"经 resolveToday()（尊重 PANSHA_TODAY，
+// 与评测锚定同源）；解析器零依赖纯函数，异常由接线处 try/catch 兜底。
+import { parseRelativeTimeRanges, RelTimeRange } from './relTime.js';
+import { resolveToday } from './timeAnchor.js';
+
+// ==================== 持久化文件校验（包C 缺陷3/10 共用） ====================
+
+/**
+ * 单卡形状校验：id / summary 必须是非空字符串。
+ * load() 与 import() 共用——旧实现对 parsed.cards 直接 cast，cards 非数组时
+ * 下游 .map 抛 TypeError 被上层 catch 吞 → 静默零注入/静默清库。
+ */
+export function isValidMemoryCardShape(c: unknown): boolean {
+  return !!c && typeof c === 'object' &&
+    typeof (c as any).id === 'string' && (c as any).id.length > 0 &&
+    typeof (c as any).summary === 'string';
+}
+
+/** 持久化文件整体校验：cards 必须是数组且逐卡形状合格（meta 宽松——save 会重建）。 */
+export function isValidMemoryFile(parsed: unknown): parsed is RefinedMemoryFile {
+  return !!parsed && typeof parsed === 'object' &&
+    Array.isArray((parsed as any).cards) &&
+    (parsed as any).cards.every(isValidMemoryCardShape);
+}
+
+/**
+ * 进程级注入账本（cardId → 最近注入时间 + 累计次数）——包C 缺陷8：
+ * 从实例级升级，短命实例（runAgentTask 每步 new 即弃）的记账不再丢。
+ * 仍纯内存、不写盘（契约 v3：markInjected 仅记账）。
+ */
+const injectionLedger = new Map<string, { at: number; count: number }>();
+
+/** 清空注入账本（测试隔离用）。 */
+export function resetInjectionLedgerForTest(): void {
+  injectionLedger.clear();
+}
 
 export interface RefineInput {
   /** 原始轨迹（来自 VerifyCritiqueLoop） */
@@ -60,6 +105,16 @@ export interface LoadFilter {
   keywords?: string[];
   /** preference 保留 1 席位（即使排序靠后） */
   reservePreferenceSeat?: boolean;
+  // ===== B3 混合排序（2026-09-13 检索端配套） =====
+  /**
+   * 查询文本（当前任务 + 最近轮次拼合）——semantic 激活的必要条件之一。
+   * 不传时所有行为与旧版逐字节一致（旧公式 0.7×eff + 0.3×rel）。
+   */
+  queryText?: string;
+  /** 语义通道开关（还需 queryText 且 keywords ≥2 才真正激活） */
+  semantic?: boolean;
+  /** 融合权重 α ∈ [0,1]（默认 0.5）：score = α*(0.5*effN+0.5*relN) + (1-α)*cos */
+  semanticWeight?: number;
 }
 
 /** 投影缓存条目（快照冻结） */
@@ -92,13 +147,160 @@ function normalizeFilterKey(filter: LoadFilter): string {
     `ws=${normFilterValue(filter.currentWorkspaceFiles)}`,
     `kw=${normFilterValue(filter.keywords)}`,
     `seat=${normFilterValue(filter.reservePreferenceSeat)}`,
+    // B3：查询文本与 α 进投影 key——不同查询/不同融合权重不得共享同一排序快照
+    `q=${normFilterValue(filter.queryText)}`,
+    `sem=${normFilterValue(filter.semantic)}`,
+    `alpha=${normFilterValue(filter.semanticWeight)}`,
   ].join('&');
+}
+
+// ==================== B3 混合排序（词面 + 字符 n-gram 哈希扩展） ====================
+// 诚实口径：默认 provider 是字符 n-gram 哈希（词面扩展，非真语义 embedding）。
+// 真 embedding 经 PANSHA_EMBEDDING=remote 可插拔；缺配置/异常由下方 try/catch
+// 自动降级纯词面（旧公式 0.7×eff + 0.3×rel）。
+
+export type SemanticEmbedder = (texts: string[]) => number[][];
+
+/** 测试注入口：非 null 时替代 embed.js（可注入确定性向量或抛错模拟降级）。 */
+let semanticEmbedderOverride: SemanticEmbedder | null = null;
+
+/** 注入/清除测试用语义嵌入器（进程级；测后传 null 还原产品路径）。 */
+export function setSemanticEmbedderForTest(fn: SemanticEmbedder | null): void {
+  semanticEmbedderOverride = fn;
+}
+
+/**
+ * 混合排序融合公式（两步归一）：
+ *   effN = eff / maxEff（候选集内归一）、relN = min(1, rel/2)、
+ *   score = α*(0.5*effN + 0.5*relN) + (1-α)*cos，α = semanticWeight（默认 0.5）。
+ * cos 缺失（_sem=0）时语义项为 0，该卡按纯词面项参与排序。
+ */
+export function hybridScore(eff: number, maxEff: number, rel: number, sem: number, alpha: number): number {
+  const effN = maxEff > 0 ? eff / maxEff : 0;
+  const relN = Math.min(1, rel / 2);
+  const a = Number.isFinite(alpha) ? Math.min(1, Math.max(0, alpha)) : 0.5;
+  return a * (0.5 * effN + 0.5 * relN) + (1 - a) * sem;
+}
+
+/**
+ * 对候选集计算查询余弦：返回 Map<cardId, cos>。
+ * 走 embed.js 产品路径（embedCards 进程级增量缓存）；测试可注入 override。
+ * 默认 provider 为词面 n-gram（createConfiguredProvider）；PANSHA_EMBEDDING=remote
+ * 当前同步路径仍回退词面 n-gram（RemoteEmbeddingProvider.embed 内持
+ * LocalNGramHashProvider 兜底），真远程 embedding 待 async 检索路径。任何异常
+ * 向上抛出，由 loadFiltered 捕获后回退纯词面。
+ */
+function computeSemanticScores(cards: RefinedMemoryCard[], queryText: string): Map<string, number> {
+  const out = new Map<string, number>();
+  if (semanticEmbedderOverride) {
+    const vectors = semanticEmbedderOverride([queryText, ...cards.map((c) => String(c.summary ?? ''))]);
+    const qv = vectors[0];
+    if (!qv) return out;
+    cards.forEach((c, i) => {
+      const v = vectors[i + 1];
+      out.set(c.id, v && v.length === qv.length ? cosineSimilarity(v, qv) : 0);
+    });
+    return out;
+  }
+  const provider = createConfiguredProvider();
+  const qv = embedQuery(queryText, provider);
+  const vecs = embedCards(cards.map((c) => ({ id: c.id, summary: String(c.summary ?? '') })), provider);
+  for (const c of cards) {
+    const v = vecs.get(c.id);
+    out.set(c.id, v ? cosineSimilarity(v, qv) : 0);
+  }
+  return out;
+}
+
+// ==================== B8 MMR 近重复惩罚（2026-09-14 ROADMAP B8） ====================
+
+/** 重叠判定阈值：|A∩B|/min(|A|,|B|) ≥ 0.6 视为近重复。 */
+export const MMR_OVERLAP_THRESHOLD = 0.6;
+/** 近重复惩罚因子（ROADMAP 口径）：被罚卡 score ×0.6 后放回队列重比。 */
+export const MMR_DUPLICATE_PENALTY = 0.6;
+
+/** 停用词（与 mergeSimilarCards 的 tokenize 停用表同值——两处用途不同：
+ *  2-gram 分组 vs 3-gram 近重复，各自独立维护防互相牵连）。 */
+const TRIGRAM_STOP_WORDS = new Set([
+  '这个', '那个', '我们', '你们', '他们', '自己', '什么', '一个', '没有',
+  '还是', '只是', '都是', '也是', '就是', '不是', '可以', '以及', '或者',
+  '但是', '所以', '如果', '对于', '之后', '然后',
+  'the', 'and', 'for', 'with', 'this', 'that', 'was', 'were', 'are',
+  'you', 'your', 'our', 'not', 'but', 'its', 'from',
+]);
+
+/**
+ * summary 归一化后按词内字符 3-gram 建 Set（与 mergeSimilarCards 的 tokenize
+ * 风格对齐：小写、去标点折空白、≥2 字符词且非停用词；词长 <3 整词入集，
+ * 否则取全部字符 3-gram）。
+ */
+export function summaryTrigramSet(summary: string): Set<string> {
+  const norm = String(summary || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const grams = new Set<string>();
+  for (const w of norm.split(' ')) {
+    if (w.length < 2 || TRIGRAM_STOP_WORDS.has(w)) continue;
+    if (w.length <= 3) { grams.add(w); continue; }
+    for (let i = 0; i <= w.length - 3; i++) grams.add(w.slice(i, i + 3));
+  }
+  return grams;
+}
+
+/** 重叠率 = |A∩B| / min(|A|,|B|)；任一空集 → 0（无重叠语义，不惩罚）。 */
+export function trigramOverlapRatio(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const g of small) if (large.has(g)) inter++;
+  return inter / small.size;
+}
+
+/**
+ * B8 贪心 MMR：按分序遍历，候选与任一已选卡 3-gram 重叠率 ≥0.6 → 该卡
+ * score ×0.6 放回队列重比（二选一实现申报：选「×0.6 重比」而非「直接跳过」——
+ * 跳过会塌缩 maxCards 名额/注入预算，重比让被罚卡在无更好候选时回填末位）。
+ * 每卡至多惩罚一次（二次弹出时即使仍近重复也照常入选）→ 至多 2N 次弹出，
+ * 保证终止；200 卡规模 grams 惰性建 Set 一次、重叠比对走较小集，开销 <5ms。
+ */
+export function mmrDiversify<T>(scored: Array<{ c: T; score: number }>, summaryOf: (c: T) => string): T[] {
+  const gramsCache = new Map<T, Set<string>>();
+  const gramsOf = (c: T): Set<string> => {
+    let g = gramsCache.get(c);
+    if (!g) { g = summaryTrigramSet(summaryOf(c)); gramsCache.set(c, g); }
+    return g;
+  };
+  const queue = [...scored];
+  const picked: T[] = [];
+  const penalized = new Set<T>();
+  while (queue.length > 0) {
+    const top = queue.shift()!;
+    const g = gramsOf(top.c);
+    let nearDup = false;
+    if (g.size > 0) {
+      for (const sel of picked) {
+        if (trigramOverlapRatio(g, gramsOf(sel)) >= MMR_OVERLAP_THRESHOLD) { nearDup = true; break; }
+      }
+    }
+    if (nearDup && !penalized.has(top.c)) {
+      penalized.add(top.c);
+      top.score *= MMR_DUPLICATE_PENALTY;
+      let i = 0;
+      while (i < queue.length && queue[i].score >= top.score) i++;
+      queue.splice(i, 0, top);
+      continue;
+    }
+    picked.push(top.c);
+  }
+  return picked;
 }
 
 export class RefinedMemoryStore {
   private workspaceRoot: string;
   private filePath: string;
   private cache: RefinedMemoryFile | null = null;
+  // 【4】缓存数据防御（2026-09-13 迭代包）：cache 对应的盘面 stat 基线
+  // （size+mtimeMs）。null = 建缓存时盘上无文件（空库/被隔离）或尚无基线——
+  // 与"现在 stat 失败（文件被删）"同为 null 视为一致（仍是空库盘面）。
+  private cacheStat: { size: number; mtimeMs: number } | null = null;
 
   // 投影缓存 — 多槽 Map（上限 8，超限删最旧）。
   // 一致性语义：任务内快照冻结（有意）；任务边界/写入 invalidateProjection 重建；
@@ -264,9 +466,9 @@ export class RefinedMemoryStore {
       );
     }
 
-    // 写入
-    writeFileSync(this.filePath, serialized, 'utf-8');
-    this.cache = file;
+    // 写入（包C 缺陷4：原子写——tmp + rename，崩溃不留半截文件）
+    atomicWriteFileSync(this.filePath, serialized);
+    this.setCache(file);
     this.invalidateProjection(); // save() 写入 → 重建
 
     // 确保 .gitignore 包含
@@ -277,22 +479,83 @@ export class RefinedMemoryStore {
 
   /**
    * 加载
+   * 包C 缺陷3：load 后校验 Array.isArray(parsed.cards) + 逐卡 id/summary；
+   * 不合格 → quarantine（原文件改名 <原名>.corrupt-<时间戳> 留证）+ 从空库
+   * 启动 + console.error 一条告警。旧实现 JSON.parse 后直接 cast：cards 非数组
+   * 时下游 .map 抛 TypeError 被上层 catch 吞 → 静默零注入；撕裂 JSON → catch
+   * 后返回空库缓存 → 下次 save 静默清库。
+   * 【4】缓存数据防御（2026-09-13 迭代包）：缓存命中前 statSync 比对盘面
+   * size+mtimeMs——实例缓存此前对盘面变化完全失明，长命实例 A load 一次后
+   * 实例 B save 写盘的新卡对 A 不可见，A 后续 save 用陈旧全量快照静默抹掉
+   * B 的卡（唯一能静默丢数据的缺陷）。不匹配 → 重读盘并刷新缓存条目；
+   * statSync 失败（文件被删）按 miss 处理；两侧都无文件视为一致（空库）。
    */
   load(): RefinedMemoryFile {
-    if (this.cache) return this.cache;
-    if (!existsSync(this.filePath)) {
-      this.cache = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
-      return this.cache;
+    if (this.cache) {
+      const st = this.statDisk();
+      const fresh = (st === null && this.cacheStat === null) ||
+        (st !== null && this.cacheStat !== null &&
+          st.size === this.cacheStat.size && st.mtimeMs === this.cacheStat.mtimeMs);
+      if (fresh) return this.cache;
+      // 盘面已变化（他实例写入/改写/删除）→ 落到 miss 路径重读盘
     }
+    if (!existsSync(this.filePath)) {
+      this.setCache({ meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] });
+      return this.cache!;
+    }
+    let parsed: RefinedMemoryFile;
     try {
       const raw = readFileSync(this.filePath, 'utf-8');
-      const parsed = JSON.parse(raw) as RefinedMemoryFile;
-      this.cache = parsed;
-      return parsed;
+      parsed = JSON.parse(raw) as RefinedMemoryFile;
     } catch {
-      this.cache = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
-      return this.cache;
+      return this.quarantineCorruptFile('JSON 解析失败（撕裂/损坏）');
     }
+    if (!isValidMemoryFile(parsed)) {
+      return this.quarantineCorruptFile('结构校验失败（cards 非数组或卡片缺 id/summary）');
+    }
+    this.setCache(parsed);
+    return parsed;
+  }
+
+  /**
+   * 盘面 stat 快照（【4】防御用）；文件不存在/stat 失败 → null。
+   * 已知微窗口（审查建议-7，申报不修）：read→stat 间隙的他实例写入会让
+   * cacheStat 比缓存内容新，下次外部写入自愈；FAT 2s 粒度下同长改写可能漏检
+   * （工作区按 NTFS 假设）。
+   */
+  private statDisk(): { size: number; mtimeMs: number } | null {
+    try {
+      const st = statSync(this.filePath);
+      return { size: st.size, mtimeMs: st.mtimeMs };
+    } catch {
+      return null;
+    }
+  }
+
+  /** 缓存写入唯一入口：cache 与盘面 stat 基线同步刷新（【4】防御不变量）。 */
+  private setCache(file: RefinedMemoryFile): void {
+    this.cache = file;
+    this.cacheStat = this.statDisk();
+  }
+
+  /**
+   * 损坏隔离（quarantine）：原文件改名 `<原名>.corrupt-<时间戳>` 留证供人工恢复，
+   * 从空库启动。改名失败也要给出可见告警（绝不静默吞）。
+   */
+  private quarantineCorruptFile(reason: string): RefinedMemoryFile {
+    try {
+      const stamped = `${this.filePath}.corrupt-${Date.now()}`;
+      renameSync(this.filePath, stamped);
+      console.error(
+        `[memory] 记忆文件损坏已隔离：${this.filePath} → ${stamped}（${reason}）。` +
+        `已从空库启动；原文件保留在 .corrupt-* 可人工恢复。`
+      );
+    } catch (qerr: any) {
+      console.error(`[memory] 记忆文件损坏且隔离失败：${this.filePath}（${reason}）：${qerr?.message || qerr}`);
+    }
+    const empty: RefinedMemoryFile = { meta: { version: '1.0.0', lastUpdated: 0, totalCards: 0 }, cards: [] };
+    this.setCache(empty);
+    return empty;
   }
 
   /**
@@ -332,6 +595,8 @@ export class RefinedMemoryStore {
   /**
    * 探索阶段自动拉取 — top-N 之外的相关卡（≤5），排除已注入卡。
    * 走投影 Map（独立键：maxCards 未设 → 与 L1 注入键不同槽，不重算 loadFiltered）。
+   * B5：filter 整体透传（含 queryText/semantic/semanticWeight——投影 key 已含
+   * 查询文本与 α，不同查询不串槽）。
    */
   getOverflowCards(filter: LoadFilter, alreadyInjected: string[]): { pulled: RefinedMemoryCard[]; totalRemaining: number } {
     const all = this.loadFilteredCached({ ...filter, maxCards: undefined, reservePreferenceSeat: false });
@@ -348,7 +613,9 @@ export class RefinedMemoryStore {
   loadFiltered(filter: LoadFilter = {}): RefinedMemoryCard[] {
     const file = this.load();
     const now = filter.now ?? Date.now();
-    const tierName = filter.tier ? (TierRegistry.isTier(filter.tier as string) ? filter.tier as Tier : undefined) : undefined;
+    const tierName = filter.tier && TierRegistry.isTier(String(filter.tier))
+      ? TierRegistry.normalize(String(filter.tier))
+      : undefined;
 
     // 规范化老卡片（无 memoryCategory 时按 kind 补默认）
     const normalized = file.cards.map(c => {
@@ -367,23 +634,6 @@ export class RefinedMemoryStore {
       } as RefinedMemoryCard & { referencedFiles?: string[] };
     });
 
-    // Tier 可见性规则（architecture 始终可见）
-    const isVisible = (t: Tier | undefined, mc: MemoryCategory): boolean => {
-      if (mc === 'architecture') return true;
-      if (!t) return true;
-      switch (t) {
-        case 'quick': return mc === 'failure';
-        case 'standard': return mc === 'failure' || mc === 'implementation';
-        case 'high': return mc === 'failure' || mc === 'implementation' || mc === 'insight';
-        case 'max':
-        case 'ex':
-        case 'pangu':
-          return true;
-        default:
-          return true;
-      }
-    };
-
     // 对抗评审修正（第二轮攻击1c）：归档卡必须退出注入——否则 merge 软删后
     // 原卡与合并卡同时注入，"合并"净增重复内容，中期遗忘机制结构失效。
     const activeCards = normalized.filter(c => (c as any).status !== 'archived');
@@ -393,10 +643,12 @@ export class RefinedMemoryStore {
       if (filter.taskStyle && c.taskStyle !== 'all' && c.taskStyle !== filter.taskStyle) {
         return false;
       }
-      // 档位可见性（使用 memoryCategory）
-      const mc = (c.memoryCategory || 'general') as MemoryCategory;
-      if (tierName && !isVisible(tierName, mc)) {
-        return false;
+      // 档位门禁（applicableTiers）：空数组 = 全档可见；非空且不含当前档 = 排除
+      if (tierName) {
+        const tiers = (c as any).applicableTiers;
+        if (Array.isArray(tiers) && tiers.length > 0 && !tiers.includes(tierName)) {
+          return false;
+        }
       }
       return true;
     });
@@ -420,37 +672,109 @@ export class RefinedMemoryStore {
       filtered = refSet.length > 0 ? refSet : preReference;
     }
 
-    // 阶梯衰减 + effectiveWeight 计算
+    // 阶梯衰减 + effectiveWeight 计算。_effective（含 confidence 惩罚）只进排序；
+    // 出局门用未惩罚基线 _effectiveBase（审查建议-4：惩罚若进淘汰判定，0.4 置信卡
+    // 在第一个衰减段即跌破 0.3，"排序自然下沉"变成提前约一倍寿命的硬出局）。
     filtered = filtered
       .map(c => {
-        const eff = this.calculateEffectiveWeight(c, now);
-        return { ...c, _effective: eff } as RefinedMemoryCard & { _effective: number };
+        const effBase = this.calculateEffectiveBase(c, now);
+        const eff = this.applyConfidencePenalty(effBase, c);
+        return { ...c, _effective: eff, _effectiveBase: effBase } as RefinedMemoryCard & { _effective: number; _effectiveBase?: number };
       })
-      .filter(c => (c as any)._effective >= 0.3);
+      .filter(c => ((c as any)._effectiveBase ?? (c as any)._effective) >= 0.3);
 
-    // 相关性（任务关键词命中 summary → +1，cap 3）
+    // 相关性关键词归一（B2/B9/排序共用）
     const kws = (filter.keywords ?? []).map(k => String(k).toLowerCase()).filter(Boolean);
-    if (kws.length > 0) {
+
+    // B3 语义闸（提前到相关性段——B9 与语义同门）：semantic 且 queryText 且候选
+    // 关键词 ≥2 才激活语义通道；任一异常（embed 不可用等）回退纯词面（旧公式），
+    // 绝不影响加载主流程。
+    // 【2】语义闸放宽（2026-09-13 迭代包）：纯中文查询（queryText 含 CJK）哪怕
+    // 只抽出 1 个关键词也激活语义——中文无空格，改写查询常只切出 1 个短句级
+    // 关键词，kws>=2 对中文恒闭 → 排序退化纯新近度。英文查询不含 CJK，闸门
+    // 行为逐字节不变（1 关键词仍不激活）。
+    const semanticActive = filter.semantic === true && !!filter.queryText &&
+      (kws.length >= 2 || /[\u3000-\u9fff]/.test(String(filter.queryText ?? '')));
+
+    // B9（ROADMAP B9）：查询文本里的时间表达（"3月/上个月/two months ago"）→
+    // [start,end) 区间（UTC ms，与 factDate 同锚）。仅 semantic 激活时解析
+    // （与语义同门，纯词面路径不解析零开销）；"今天"经 resolveToday()——
+    // 尊重 PANSHA_TODAY，评测锚定与产品一致。解析失败/无表达 → 空 → 不加分。
+    let timeRanges: RelTimeRange[] = [];
+    if (semanticActive) {
+      try {
+        timeRanges = parseRelativeTimeRanges(String(filter.queryText), resolveToday());
+      } catch {
+        timeRanges = []; // 解析器任何异常不影响加载主流程
+      }
+    }
+
+    // 相关性（任务关键词命中 summary → +1；B9 时间命中 factDate 落 range → +1；cap 3）
+    if (kws.length > 0 || timeRanges.length > 0) {
       filtered = filtered.map(c => {
         const s = (c.summary || '').toLowerCase();
         let rel = 0;
         for (const k of kws) if (s.includes(k)) rel++;
+        // B2：对卡（source==='dialogue-pair'）按 Q:/A: 分段，Q 侧（首行）命中的
+        // 关键词计数 ×2（提问侧命中说明"这卡在答这个问题"）；总帽 3 不变。
+        if ((c as any).source === 'dialogue-pair') {
+          const qSide = (String(c.summary || '').split('\n')[0] || '').toLowerCase();
+          let qRel = 0;
+          for (const k of kws) if (qSide.includes(k)) qRel++;
+          rel += qRel;
+        }
+        // B9：卡 factDate（"记的是何时的事"，chatFactMemory 0.8.3 起携带）落入
+        // 查询解析出的任一时间区间 → +1；老卡无 factDate → Number(undefined)=NaN
+        // → 天然不加分（行为不变）。cap 3 总帽不变。
+        if (timeRanges.length > 0) {
+          const fd = Number((c as any).factDate);
+          if (Number.isFinite(fd) && timeRanges.some(r => fd >= r.start && fd < r.end)) rel++;
+        }
         return { ...c, _relevance: Math.min(3, rel) } as any;
       });
     }
+    let semScores: Map<string, number> | null = null;
+    const alpha = filter.semanticWeight ?? 0.5;
+    if (semanticActive) {
+      try {
+        semScores = computeSemanticScores(filtered, String(filter.queryText));
+      } catch {
+        semScores = null; // 降级：纯词面
+      }
+    }
 
-    // 排序 = 0.7×effectiveWeight + 0.3×relevance；同分先按 count 再按
-    // lastSeen **倒序**（G3 最小版：新旧事实并存时让较新者排前——旧排序
-    // 同分回退稳定插入序 = 时间正序 = 旧事实恒在前，1B 取第一张即错）。
-    filtered.sort((a, b) => {
-      const ea = (a as any)._effective ?? 0;
-      const eb = (b as any)._effective ?? 0;
-      const ra = (a as any)._relevance ?? 0;
-      const rb = (b as any)._relevance ?? 0;
-      const sa = 0.7 * ea + 0.3 * ra;
-      const sb = 0.7 * eb + 0.3 * rb;
-      return sb - sa || (b as any).count - (a as any).count || (b.lastSeen ?? 0) - (a.lastSeen ?? 0);
-    });
+    // 排序。semantic 未激活 = 旧公式 0.7×effectiveWeight + 0.3×relevance（不传
+    // queryText 的现有调用方行为逐字节不变）；激活时按两步归一融合（hybridScore）。
+    // 同分先按 count 再按 lastSeen **倒序**（G3 最小版：新旧事实并存时让较新者
+    // 排前——旧排序同分回退稳定插入序 = 时间正序 = 旧事实恒在前，1B 取第一张即错）。
+    const maxEff = semScores
+      ? filtered.reduce((m, c) => Math.max(m, (c as any)._effective ?? 0), 0)
+      : 0;
+    const scoreOf = (c: RefinedMemoryCard): number => {
+      const eff = (c as any)._effective ?? 0;
+      const rel = (c as any)._relevance ?? 0;
+      return semScores
+        ? hybridScore(eff, maxEff, rel, semScores.get(c.id) ?? 0, alpha)
+        : 0.7 * eff + 0.3 * rel;
+    };
+    const scored = filtered
+      .map(c => ({ c, score: scoreOf(c) }))
+      .sort((A, B) =>
+        B.score - A.score ||
+        ((B.c as any).count ?? 0) - ((A.c as any).count ?? 0) ||
+        (B.c.lastSeen ?? 0) - (A.c.lastSeen ?? 0));
+
+    // B8：MMR 近重复惩罚——排序后、maxCards 切片前；仅 semanticActive 执行
+    // （与语义同门，纯词面路径行为不变）。×0.6 重比实现（非直接跳过）申报：
+    // 保持 maxCards 名额不塌缩（近重复降权后仍可在末位回填，注入预算不缩水）。
+    // it3 实测回退（7B 90 题：MMR 激活时 KU 9→5，近重复重述对弱模型是
+    // 强化信号而非噪声——×0.6 惩罚恰好消弱 gold 重述）。默认关闭，env
+    // PANSHA_MMR=1 选择性启用（实现与测试保留，供强模型场景 A/B）。
+    if (semanticActive && scored.length >= 2 && process.env.PANSHA_MMR === '1') {
+      filtered = mmrDiversify(scored, (c) => String(c.summary ?? ''));
+    } else {
+      filtered = scored.map(s => s.c);
+    }
 
     if (filter.maxCards && filter.maxCards > 0) {
       // preference 保留 1 席位（排序靠后也保留，其余按 top-N）
@@ -478,22 +802,32 @@ export class RefinedMemoryStore {
 
   /**
    * markInjected（接口契约 v3 · 二态之一）：注入即记账。
-   * - 仅记录内存账本（lastInjectedAt），不写盘、不改 count/lastUsedAt；
+   * - 仅记录内存账本（进程级 injectionLedger），不写盘、不改 count/lastUsedAt；
    * - 事件（memory_injected）由调用方经 rollout 'context'/'agent' 事件落盘；
    * - 有意不影响衰减：count 驱动维持现状（refine/merge/refineCompactSignals），
    *   避免"注入≠使用"的自激励循环（对抗评审 A1/攻击1.1 的结论）。
+   * 包C 缺陷8：账本从实例级升级为进程级（模块级 Map）——runAgentTask 每步
+   * `new RefinedMemoryStore(...)` 的短命实例旧账本记账即弃（只写不读）；
+   * /memory stats 的一次性 CLI 实例也永远查不到。进程级共享后同进程任意实例
+   * 记账可查（仍不写盘，契约不变）。
    */
-  private lastInjectedAt = new Map<string, number>();
   markInjected(cardIds: string[], now = Date.now()): { injected: number; cardIds: string[] } {
     for (const id of cardIds) {
-      if (id) this.lastInjectedAt.set(id, now);
+      if (!id) continue;
+      const prev = injectionLedger.get(id);
+      injectionLedger.set(id, { at: now, count: (prev?.count ?? 0) + 1 });
     }
     return { injected: cardIds.filter(Boolean).length, cardIds: cardIds.filter(Boolean) };
   }
 
-  /** 查询注入账本（/memory stats 与 ContextSnapshot 事件可用）。 */
+  /** 查询注入账本：最近注入时间（/memory stats 与 ContextSnapshot 事件可用）。 */
   injectedAtOf(cardId: string): number | undefined {
-    return this.lastInjectedAt.get(cardId);
+    return injectionLedger.get(cardId)?.at;
+  }
+
+  /** 查询注入账本：累计注入次数（进程级，包C 缺陷7 stats 视图用）。 */
+  injectedCountOf(cardId: string): number | undefined {
+    return injectionLedger.get(cardId)?.count;
   }
 
   /**
@@ -529,8 +863,8 @@ export class RefinedMemoryStore {
     // 注意：不能走 save()——mergeAndCap 会把传入卡与已有卡按 count 累加（同一批
     // 对象 → 翻倍）。markVerified 是原位刷新，直写持久化。
     file.meta.lastUpdated = now;
-    writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
-    this.cache = file;
+    atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
+    this.setCache(file);
     this.invalidateProjection();
     return { updated, path: this.filePath };
   }
@@ -564,8 +898,8 @@ export class RefinedMemoryStore {
     const removed = before - existing.cards.length;
     existing.meta.totalCards = existing.cards.length;
     existing.meta.lastUpdated = Date.now();
-    writeFileSync(this.filePath, JSON.stringify(existing, null, 2), 'utf-8');
-    this.cache = existing;
+    atomicWriteFileSync(this.filePath, JSON.stringify(existing, null, 2));
+    this.setCache(existing);
     this.invalidateProjection(); // clear() 写入
     return { removed };
   }
@@ -579,6 +913,10 @@ export class RefinedMemoryStore {
 
   /**
    * 导入
+   * 包C 缺陷10：旧实现把 parsed.cards 原样写盘（非数组/畸形卡直接污染持久化层，
+   * 下游 .map 抛 TypeError）。现校验：形状（复用 load 的 isValidMemoryFile）+
+   * 大小上限（沿用 save 的 200KiB）；不合格 throw（CLI 捕获后显示导入失败），
+   * 盘上文件保持不变。
    */
   import(jsonString: string, merge = true): { imported: number; total: number } {
     let parsed: RefinedMemoryFile;
@@ -587,7 +925,15 @@ export class RefinedMemoryStore {
     } catch {
       return { imported: 0, total: 0 };
     }
-    if (!parsed.cards) return { imported: 0, total: 0 };
+    if (!isValidMemoryFile(parsed)) {
+      throw new Error('✗ 导入被拒绝：文件结构不合格（cards 必须是数组，且每张卡含字符串 id/summary）');
+    }
+    const sizeBytes = Buffer.byteLength(jsonString, 'utf-8');
+    if (sizeBytes > MEMORY_LIMITS.MAX_FILE_SIZE_BYTES) {
+      const sizeKiB = (sizeBytes / 1024).toFixed(1);
+      const capKiB = Math.round(MEMORY_LIMITS.MAX_FILE_SIZE_BYTES / 1024);
+      throw new Error(`✗ 导入被拒绝：文件 ${sizeKiB}KiB 超过上限 ${capKiB}KiB（MEMORY_LIMITS.MAX_FILE_SIZE_BYTES）`);
+    }
 
     if (merge) {
       this.save(parsed.cards);
@@ -596,8 +942,8 @@ export class RefinedMemoryStore {
         meta: { version: parsed.meta?.version ?? '1.0.0', lastUpdated: Date.now(), totalCards: parsed.cards.length },
         cards: parsed.cards,
       };
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
-      this.cache = file;
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
+      this.setCache(file);
       this.invalidateProjection(); // import 写入
     }
 
@@ -742,6 +1088,20 @@ export class RefinedMemoryStore {
    *   推到 900 天（永生霸榜），封顶后半衰期上限 = 基础 ×3。
    */
   private calculateEffectiveWeight(card: RefinedMemoryCard, now: number): number {
+    return this.applyConfidencePenalty(this.calculateEffectiveBase(card, now), card);
+  }
+
+  /** confidence 软惩罚因子：带 confidence 字段 ×(0.5+0.5×confidence)，无字段恒等。 */
+  private applyConfidencePenalty(v: number, card: RefinedMemoryCard): number {
+    const conf = (card as any).confidence;
+    const confMul = typeof conf === 'number' && Number.isFinite(conf)
+      ? 0.5 + 0.5 * Math.min(1, Math.max(0, conf))
+      : 1;
+    return v * confMul;
+  }
+
+  /** 未惩罚有效权重（出局门 / 审计用）：四段阶梯 × kind 基线，pin 冻结 1.0。 */
+  private calculateEffectiveBase(card: RefinedMemoryCard, now: number): number {
     // pin 卡冻结衰减
     if ((card as any).pinned) return 1.0;
     const mc = (card.memoryCategory || 'general') as MemoryCategory;
@@ -752,8 +1112,16 @@ export class RefinedMemoryStore {
     const countMultiplier = Math.min(Math.max(1, card.count ?? 1), 3);
     const halfLife = halfLifeBase * countMultiplier;
     const base = (card as any).decayWeight ?? card.weight ?? 1;
-    // kind 基线（preference 0.6 — 偏好默认低于事实类）
-    const kindBaseline = (card.kind === 'preference' ? 0.6 : 1.0);
+    // kind 基线（preference 0.6 — 偏好默认低于事实类）。
+    // 【4】排序公平性（2026-09-13 迭代包，review 纠正算式）：对卡
+    // （source='dialogue-pair'）恒带 decayWeight 1.0 → base 不走 weight。旧
+    // effBase 新鲜 = 1.0×0.6 = 0.6、两段衰减 ×0.4 = 0.24 < 0.3 出局门硬出局，
+    // 零相关工程卡（eff 2.0，纯词面 1.4）全面压制完美相关对卡。对卡基线提到
+    // 0.85 后两段衰减 1.0×0.4×0.85 = 0.34 ≥ 0.3 入围——这是出局门的真实修复
+    // 载体；写侧 weight 0.5→0.8 不进衰减序（decayWeight 优先），仅容量 tiebreak。
+    // /remember 手工偏好（无 source 字段）维持 0.6。
+    const isDialoguePair = (card as any).source === 'dialogue-pair';
+    const kindBaseline = card.kind === 'preference' ? (isDialoguePair ? 0.85 : 0.6) : 1.0;
     let factor = 1.0;
     if (ageInDays < halfLife * 0.5) factor = 1.0;
     else if (ageInDays < halfLife * 1.0) factor = 0.7;
@@ -816,8 +1184,8 @@ export class RefinedMemoryStore {
     if (removed) {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = Date.now();
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
-      this.cache = file;
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
+      this.setCache(file);
       this.invalidateProjection(); // forget 写入
     }
     return { removed };
@@ -859,8 +1227,8 @@ export class RefinedMemoryStore {
     if (changed) {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = Date.now();
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
-      this.cache = file;
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
+      this.setCache(file);
       this.invalidateProjection(); // refineCompactSignals 写入
     }
     return out;
@@ -880,7 +1248,17 @@ export class RefinedMemoryStore {
     if (candidates.length < 2) return [];
 
     // 2-gram 词元
-    const stopWords = new Set('的了是在与和或及对用要可以中之不有没很也都被把将使如因为但而'.split(''));
+    // 包C 缺陷11：停用词表改 ≥2 字词表——旧单字集合与 w.length>=2 过滤矛盾
+    // （词元恒 ≥2 字，单字词永远匹配不上，恒不过滤的死逻辑）。
+    const stopWords = new Set([
+      // 中文双字虚词（tokenize 以空白切词，中文需成词才可停用）
+      '这个', '那个', '我们', '你们', '他们', '自己', '什么', '一个', '没有',
+      '还是', '只是', '都是', '也是', '就是', '不是', '可以', '以及', '或者',
+      '但是', '所以', '如果', '对于', '之后', '然后',
+      // 英文高频虚词（≥2 字符，可被 length>=2 过滤命中）
+      'the', 'and', 'for', 'with', 'this', 'that', 'was', 'were', 'are',
+      'you', 'your', 'our', 'not', 'but', 'its', 'from',
+    ]);
     const tokenize = (s: string): string[] => {
       const norm = String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
       const words = norm.split(' ').filter(w => w.length >= 2 && !stopWords.has(w));
@@ -923,11 +1301,13 @@ export class RefinedMemoryStore {
         category: 'OTHER',
         memoryCategory: g[0].memoryCategory ?? 'general',
         summary,
-        weight: Math.max(...g.map(c => c.weight)),
+        // 包C 缺陷11：legacy 卡数值字段缺失 → ?? 0 / 回退链，防 Math.min/求和
+        // 产 NaN（合并卡出生即 near-death：effectiveWeight=NaN 永不过注入线）。
+        weight: Math.max(...g.map(c => c.weight ?? 0)),
         taskStyle: 'all',
-        count: g.reduce((a, c) => a + c.count, 0),
+        count: g.reduce((a, c) => a + (c.count ?? 0), 0),
         lastSeen: now,
-        firstSeen: Math.min(...g.map(c => c.firstSeen)),
+        firstSeen: g.reduce((min, c) => Math.min(min, c.firstSeen ?? c.lastSeen ?? now), now),
         applicableTiers: [],
         sourceContext: `合并自 ${sourceIds.join(', ')}`,
         decayWeight: 1.0, // 按 now 起算，不继承源卡衰减
@@ -946,8 +1326,8 @@ export class RefinedMemoryStore {
     if (results.length > 0) {
       file.meta.totalCards = file.cards.length;
       file.meta.lastUpdated = now;
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2), 'utf-8');
-      this.cache = file;
+      atomicWriteFileSync(this.filePath, JSON.stringify(file, null, 2));
+      this.setCache(file);
       this.invalidateProjection(); // 合并后缓存重建
     }
     return results;
@@ -970,21 +1350,68 @@ export class RefinedMemoryStore {
   }
 
   private applyCapacityLimits(cards: RefinedMemoryCard[]): RefinedMemoryCard[] {
-    // 按类别分组，每类别保留最新且权重高的
-    const byCategory = new Map<string, RefinedMemoryCard[]>();
+    // 包C 缺陷1（2026-09-13）：分桶改按 kind 治理。旧实现按 category 分桶各留
+    // MAX_PER_CATEGORY=10，而 success / preference(/remember) / merged / chat-fact
+    // 卡全部 category:'OTHER' → 三类挤一个 10 张桶，第 11 张起静默截断最旧；
+    // chat-fact 的 80 帽（chatFactMemory MAX_TOTAL_CARDS）与全局 200 帽不可达。
+    // 新语义：
+    //   - 每 kind 一桶，桶帽 MEMORY_LIMITS.MAX_PER_KIND
+    //     （failure 40 / success 10 / preference 80——chat-fact 卡 kind 即
+    //      'preference'，其 80 帽以该桶承载；未知 kind 回退 MAX_PER_CATEGORY）；
+    //   - failure 桶内每 category 再细分 MAX_PER_KIND_PER_CATEGORY=10、类总 40；
+    //   - 无 kind 旧卡归 'failure'（对齐 loadFiltered 的归一化）；
+    //   - 桶内排序沿用现有：lastSeen 倒序 + weight 降序；
+    //   - 全局 MAX_TOTAL_CARDS=200 不变。
+    const byKind = new Map<string, RefinedMemoryCard[]>();
     for (const c of cards) {
-      if (!byCategory.has(c.category)) byCategory.set(c.category, []);
-      byCategory.get(c.category)!.push(c);
+      const kind = (c as any).kind ?? 'failure';
+      if (!byKind.has(kind)) byKind.set(kind, []);
+      byKind.get(kind)!.push(c);
     }
+    const capOf = (kind: string): number => MEMORY_LIMITS.MAX_PER_KIND[kind] ?? MEMORY_LIMITS.MAX_PER_CATEGORY;
+    const recencyDesc = (a: RefinedMemoryCard, b: RefinedMemoryCard): number =>
+      (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || (b.weight ?? 0) - (a.weight ?? 0);
+    // 审查 CONCERN-7（2026-09-13）：pinned 卡（/memory remember --pin 的用户显式
+    // 意图）免容量淘汰——preference 桶由 chat-fact 与手工偏好共享，chat 洪流每轮
+    // 刷新 lastSeen，按近期优先淘汰必然把 pinned 偏好挤出。规则：pinned 全保，
+    // 非 pinned 竞争剩余名额（pinned 可超帽——用户显式意图高于容量治理）。
+    const isPinned = (c: RefinedMemoryCard): boolean => (c as any).pinned === true;
+    const keepWithPinned = (arr: RefinedMemoryCard[], cap: number): RefinedMemoryCard[] => {
+      const pinned = arr.filter(isPinned);
+      const rest = arr.filter((c) => !isPinned(c));
+      return [...pinned, ...rest.slice(0, Math.max(0, cap - pinned.length))];
+    };
+
     const limited: RefinedMemoryCard[] = [];
-    for (const [, arr] of byCategory) {
-      arr.sort((a, b) => b.lastSeen - a.lastSeen);
-      limited.push(...arr.slice(0, MEMORY_LIMITS.MAX_PER_CATEGORY));
+    for (const [kind, arr] of byKind) {
+      arr.sort(recencyDesc);
+      const cap = capOf(kind);
+      if (kind === 'failure') {
+        // failure 类内每 category 10 张、类总 40
+        const byCategory = new Map<string, RefinedMemoryCard[]>();
+        for (const c of arr) {
+          const cat = c.category || 'OTHER';
+          if (!byCategory.has(cat)) byCategory.set(cat, []);
+          byCategory.get(cat)!.push(c);
+        }
+        const kept: RefinedMemoryCard[] = [];
+        for (const [, catArr] of byCategory) {
+          catArr.sort(recencyDesc);
+          kept.push(...keepWithPinned(catArr, MEMORY_LIMITS.MAX_PER_KIND_PER_CATEGORY));
+        }
+        kept.sort(recencyDesc);
+        limited.push(...keepWithPinned(kept, cap));
+      } else {
+        arr.sort(recencyDesc);
+        limited.push(...keepWithPinned(arr, cap));
+      }
     }
-    // 全局硬上限
+    // 全局硬上限（pinned 同样免淘汰）
     if (limited.length > MEMORY_LIMITS.MAX_TOTAL_CARDS) {
-      limited.sort((a, b) => b.weight * b.count - a.weight * a.count);
-      return limited.slice(0, MEMORY_LIMITS.MAX_TOTAL_CARDS);
+      const pinned = limited.filter(isPinned);
+      const rest = limited.filter((c) => !isPinned(c));
+      rest.sort((a, b) => (b.weight ?? 0) * (b.count ?? 0) - (a.weight ?? 0) * (a.count ?? 0));
+      return [...pinned, ...rest.slice(0, Math.max(0, MEMORY_LIMITS.MAX_TOTAL_CARDS - pinned.length))];
     }
     return limited;
   }

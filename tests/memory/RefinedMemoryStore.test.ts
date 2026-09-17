@@ -23,6 +23,10 @@ function makeCard(overrides: Partial<RefinedMemoryCard> = {}): RefinedMemoryCard
   const now = Date.now();
   return {
     id: 'card-' + Math.random().toString(36).slice(2),
+    // 包C 缺陷1：容量分桶改按 kind 治理（MAX_PER_KIND）——fixture 显式声明
+    // kind:'failure'（旧 'OTHER' category fixture 语义上等价于 failure 桶，落卡
+    // 缺 kind 时容量归一化也按 failure，见 applyCapacityLimits/loadFiltered）。
+    kind: 'failure',
     category: 'OTHER',
     memoryCategory: 'general',
     summary: 'test',
@@ -52,29 +56,35 @@ describe('P1-C Memory Category + Step Decay (v2)', () => {
     cleanup(tmp);
   });
 
-  it('quick tier sees ONLY failure cards (implementation/insight blocked; architecture always visible per test below)', () => {
-    // M2.5 aligned with implementation semantics (loadFiltered.isVisible):
-    // architecture is ALWAYS visible (test 2), quick blocks everything else
-    // except failure.
-    const arch = makeCard({ memoryCategory: 'architecture', summary: '架构决策' });
-    const impl = makeCard({ memoryCategory: 'implementation', summary: '实现细节' });
-    const fail = makeCard({ memoryCategory: 'failure', summary: '失败教训' });
-    store.save([arch, impl, fail]);
+  it('tier gate uses applicableTiers: empty = all tiers visible; non-empty excludes non-matching tiers', () => {
+    const emptyTiers = makeCard({ memoryCategory: 'implementation', summary: '实现细节（全档可见）' });
+    const onlyMax = makeCard({ memoryCategory: 'failure', summary: '仅 max 档可见', applicableTiers: ['max'] });
+    const onlyHigh = makeCard({ memoryCategory: 'failure', summary: '仅 high 档可见', applicableTiers: ['high'] });
+    store.save([emptyTiers, onlyMax, onlyHigh]);
 
     const quick = store.loadFiltered({ tier: 'quick' });
-    const mc = (c: any) => c.memoryCategory || 'general';
-    assert.ok(quick.some(c => mc(c) === 'architecture'), 'architecture always visible');
-    assert.ok(quick.some(c => mc(c) === 'failure'), 'quick should see failure');
-    assert.ok(!quick.some(c => mc(c) === 'implementation'), 'quick must not see implementation');
+    assert.ok(quick.some(c => c.id === emptyTiers.id), 'empty applicableTiers visible at quick');
+    assert.ok(!quick.some(c => c.id === onlyMax.id), 'onlyMax excluded at quick');
+    assert.ok(!quick.some(c => c.id === onlyHigh.id), 'onlyHigh excluded at quick');
+
+    const max = store.loadFiltered({ tier: 'max' });
+    assert.ok(max.some(c => c.id === emptyTiers.id), 'empty applicableTiers visible at max');
+    assert.ok(max.some(c => c.id === onlyMax.id), 'onlyMax visible at max');
+    assert.ok(!max.some(c => c.id === onlyHigh.id), 'onlyHigh excluded at max');
+
+    // 别名档（strong → max）归一化后与 max 同门禁
+    const viaAlias = store.loadFiltered({ tier: 'strong' });
+    assert.ok(viaAlias.some(c => c.id === onlyMax.id), 'alias strong normalizes to max');
+    assert.ok(!viaAlias.some(c => c.id === onlyHigh.id), 'onlyHigh excluded via alias');
   });
 
-  it('architecture is ALWAYS visible even for quick', () => {
+  it('legacy cards without applicableTiers remain visible at every tier', () => {
     const arch = makeCard({ memoryCategory: 'architecture', summary: '核心架构' });
     store.save([arch]);
 
-    // even for quick, architecture must be visible
+    // quick 下无 applicableTiers 的老卡仍可见（不再按 memoryCategory 阶梯挡卡）
     const quick = store.loadFiltered({ tier: 'quick' });
-    assert.ok(quick.some(c => (c.memoryCategory || 'general') === 'architecture'));
+    assert.ok(quick.some(c => c.id === arch.id));
   });
 
   it('step decay 4 segments are correct (using implementation halfLife=180)', () => {

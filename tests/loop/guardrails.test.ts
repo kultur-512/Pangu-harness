@@ -7,8 +7,13 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ToolCallGuardrailController, toolCallSignature } from '../../src/loop/guardrails.js';
 import { VerifyCritiqueLoop } from '../../src/loop/VerifyCritiqueLoop.js';
+import { createEngineAdapter } from '../../src/tools/engineAdapter.js';
+import { TierRegistry } from '../../src/tiers/TierConfig.js';
 import type { ToolCall } from '../../src/types/toolCall.js';
 
 function call(toolName: string, params: Record<string, string>): ToolCall {
@@ -135,16 +140,22 @@ describe('M2-2 ToolCallGuardrailController 单元', () => {
 });
 
 // ==================== 0.8.1 UX：只读拒绝快速通道（DENIED_READONLY ≥2 阻断） ====================
+// 契约（包A engineAdapter）：聚合文本中对每个 gate readonly 拒绝的调用，在其结果
+// 段落【末尾】追加 `[TOOL_DENIED_READONLY <toolName>]` 标记行。guardrails 侧
+// recordDenied 以分段尾锚定检测该标记行判定（与 classifySignal 同分段方式）。
 
 const RO_DENY = 'TOOL_ERROR: DENIED_READONLY ✗ DENIED (readonly) · 写类工具在只读模式被禁用。当前档位为只读；使用 /approvals default 或切换档位放行';
+
+/** engineAdapter 契约形状：拒绝消息 + 段尾标记行。 */
+const RO_ENGINE_DENY = (tool: string) => `${RO_DENY}\n[TOOL_DENIED_READONLY ${tool}]`;
 
 describe('0.8.1 只读拒绝快速通道（ToolCallGuardrailController）', () => {
   it('readonly 闸：1 次 DENIED_READONLY 不拦，连续 2 次 → beforeCall 阻断并注入强指引', () => {
     const g = new ToolCallGuardrailController();
     const c = call('write_file', { file_path: 'a.txt', content: 'x' });
-    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
     assert.equal(g.beforeCall([c]).blocked, false, '1 次不拦（阈值 2）');
-    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
     const d = g.beforeCall([c]);
     assert.equal(d.blocked, true, '连续 2 次 → 阻断');
     assert.match(d.reason ?? '', /GUARDRAIL_READONLY_DENIED/);
@@ -157,26 +168,123 @@ describe('0.8.1 只读拒绝快速通道（ToolCallGuardrailController）', () =
     const g = new ToolCallGuardrailController();
     const w = call('write_file', { file_path: 'notes.md', content: 'x' });
     const e = call('edit_file', { file_path: 'notes.md', content: 'y' });
-    g.recordDenied('write_file', RO_DENY);
-    g.recordDenied('edit_file', RO_DENY);
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    g.recordDenied('edit_file', RO_ENGINE_DENY('edit_file'));
     // 跨工具总计数 2 → 即使第 3 次换成 edit_file 也阻断（旧分桶实现永不触发）
     const d = g.beforeCall([e]);
     assert.equal(d.blocked, true, '跨工具总数达阈值 → 阻断');
     assert.match(d.reason ?? '', /与具体工具无关/);
   });
 
-  it('readonly 闸：reason 非 DENIED_READONLY / 工具执行成功 → 计数归零', () => {
+  it('readonly 闸：reason 非只读拒绝 / 工具执行成功 → 计数归零', () => {
     const g = new ToolCallGuardrailController();
     const c = call('write_file', { file_path: 'a.txt', content: 'x' });
-    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
     g.recordDenied('write_file', 'TOOL_ERROR: DENIED_BY_USER 用户拒绝'); // 拒绝性质变化 → 归零
-    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
     assert.equal(g.beforeCall([c]).blocked, false, '中间被其它拒绝打断 → 不算连续');
-    g.recordDenied('write_file', RO_DENY);
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
     assert.equal(g.beforeCall([c]).blocked, true);
     // 执行成功（用户已放行）→ 归零
     g.recordResult(c, 'TOOL_OK: write_file\nVERIFICATION: APPLIED', false);
     assert.equal(g.beforeCall([c]).blocked, false, '该工具成功即归零');
+  });
+
+  it('readonly 闸（P1-3 修复）：read_file 成功不得清零跨工具拒绝计数', () => {
+    const g = new ToolCallGuardrailController();
+    const w = call('write_file', { file_path: 'a.txt', content: 'x' });
+    const r = call('read_file', { file_path: 'a.txt' });
+    // 写拒 1 次 → 读成功（旧实现在这里把计数清零，读写交替永久饿死阈值 2）
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    g.recordResult(r, 'TOOL_OK: read_file\nfile content here', false);
+    assert.equal(g.beforeCall([w]).blocked, false, '仅 1 次，未达阈值');
+    // 写拒第 2 次 → 必须立即阻断（证明 read 成功没有清零）
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    assert.equal(g.beforeCall([w]).blocked, true, 'read 成功后计数应保留，第 2 次写拒达阈值 2');
+  });
+});
+
+// ==================== 只读拒绝尾标契约：分段尾锚定检测 [TOOL_DENIED_READONLY <tool>] ====================
+// 【原缺陷】recordDenied 对整段做 includes('DENIED_READONLY')——read_file/grep
+// 结果正文里出现该字面量（如读到守卫源码自身）即被计成只读拒绝，计数虚高 →
+// 假阻断。修复：分段（'\n---\n'）尾锚定检测标记行，段尾不是标记行不计数。
+
+describe('只读拒绝尾标契约（分段尾锚定检测 [TOOL_DENIED_READONLY <tool>]）', () => {
+  it('段落尾部的标记行 → 计数（连续 2 次 → 阻断）', () => {
+    const g = new ToolCallGuardrailController();
+    const c = call('write_file', { file_path: 'a.txt', content: 'x' });
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    assert.equal(g.beforeCall([c]).blocked, false, '1 次不拦');
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    assert.equal(g.beforeCall([c]).blocked, true, '尾标命中 ×2 → 阻断');
+  });
+
+  it('多调用聚合结果：任一分段【末尾】的标记行 → 计数（跨工具累计语义保持）', () => {
+    const g = new ToolCallGuardrailController();
+    const w = call('write_file', { file_path: 'a.txt', content: 'x' });
+    const e = call('edit_file', { file_path: 'a.txt', content: 'y' });
+    const agg = [
+      'TOOL_ERROR: DENIED_READONLY ✗ DENIED (readonly)\n[TOOL_DENIED_READONLY write_file]',
+      'READ_SUCCESS: b.txt\nVERIFICATION: NEUTRAL',
+    ].join('\n---\n');
+    g.recordDenied('write_file', agg);
+    g.recordDenied('edit_file', agg);
+    assert.equal(g.beforeCall([e]).blocked, true, '分段尾锚定命中 → 跨工具计数 2 → 阻断');
+  });
+
+  it('【原缺陷】正文含 DENIED_READONLY 字样但段尾无标记行 → 不计数不误阻断', () => {
+    const g = new ToolCallGuardrailController();
+    const w = call('write_file', { file_path: 'a.txt', content: 'x' });
+    // 一次真实拒绝（带段尾标记）
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    // read_file 结果正文出现 DENIED_READONLY 字样（读到守卫源码自身），
+    // 但段落结尾是 NEUTRAL 尾标——旧 includes 实现把计数抬到 2 → 假阻断
+    const readBody = 'READ_SUCCESS: src/loop/guardrails.ts\nthis file mentions DENIED_READONLY in comments\nVERIFICATION: NEUTRAL';
+    g.recordDenied('read_file', readBody);
+    assert.equal(g.beforeCall([w]).blocked, false, '【原缺陷断言】正文出现字面量不是只读拒绝（旧实现此处误阻断）');
+    // 字面量把计数归零了：需再累积 2 次真实拒绝才达阈值
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    assert.equal(g.beforeCall([w]).blocked, false, '仍只有 1 次真实拒绝 → 不拦');
+    g.recordDenied('write_file', RO_ENGINE_DENY('write_file'));
+    assert.equal(g.beforeCall([w]).blocked, true, '真实第 2 次连续拒绝 → 正常阻断');
+  });
+
+  it('标记行不在段落末尾（后随其它正文）→ 不计数', () => {
+    const g = new ToolCallGuardrailController();
+    const w = call('write_file', { file_path: 'a.txt', content: 'x' });
+    g.recordDenied('write_file', 'READ_SUCCESS: notes.txt\n[TOOL_DENIED_READONLY write_file]\n后续还有正文行\nVERIFICATION: NEUTRAL');
+    g.recordDenied('write_file', 'READ_SUCCESS: notes2.txt\n[TOOL_DENIED_READONLY write_file] 后随同段文字\nVERIFICATION: NEUTRAL');
+    assert.equal(g.beforeCall([w]).blocked, false, '非尾锚定不计数（旧实现两次 includes 均命中 → 误阻断）');
+  });
+
+  it('接缝集成：真实 engineAdapter（readonly）拒绝聚合文本 → recordDenied 2 次后阻断', async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'pangu-ro-seam-'));
+    const adapter = createEngineAdapter({
+      workspaceRoot: ws,
+      tierConfig: TierRegistry.get('standard'),
+      approvalMode: 'readonly',
+    });
+    try {
+      const writeCall = {
+        toolName: 'write_file',
+        params: [{ name: 'file_path', value: 'x.txt' }, { name: 'content', value: 'hi' }],
+        rawBlock: '',
+      } as any;
+      const agg = await adapter.execute([writeCall]);
+      assert.ok(
+        /\[TOOL_DENIED_READONLY write_file\]\s*$/.test(agg),
+        `adapter 聚合文本段尾必须带标记行（跨代理契约）：${agg.slice(-120)}`,
+      );
+      const g = new ToolCallGuardrailController();
+      g.recordDenied('write_file', agg);
+      assert.equal(g.beforeCall([writeCall]).blocked, false, '1 次不拦');
+      g.recordDenied('write_file', agg);
+      const d = g.beforeCall([writeCall]);
+      assert.equal(d.blocked, true, '真实 adapter 输出 2 次 → 阻断');
+      assert.match(d.reason ?? '', /GUARDRAIL_READONLY_DENIED/);
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true });
+    }
   });
 });
 
@@ -184,7 +292,7 @@ describe('0.8.1 只读拒绝快速通道（loop 接入）', () => {
   it('write_file 连续 2 次 DENIED_READONLY → 第 3 步 beforeCall 阻断（不再 execute），强指引回灌后模型 end_turn 报告', async () => {
     const engine = {
       executeCalls: [] as any[],
-      async execute(calls: any[]) { this.executeCalls.push(calls); return RO_DENY; },
+      async execute(calls: any[]) { this.executeCalls.push(calls); return RO_ENGINE_DENY('write_file'); },
     };
     const writeBlock = `
 <thinking>t</thinking>
@@ -225,6 +333,42 @@ describe('0.8.1 只读拒绝快速通道（loop 接入）', () => {
     const out = await loop.run('写一个文件');
     assert.equal(engine.executeCalls.length, 1, '仅 1 次拒绝 → 不阻断');
     assert.ok(!out.steps.some((s) => s.verificationResult.includes('GUARDRAIL')), '未达阈值不注入阻断 reason');
+  });
+
+  it('【原缺陷回归】失败 read 结果正文含 DENIED_READONLY 字样（非只读拒绝）不抬计数', async () => {
+    const writeBlockLocal = `
+<thinking>t</thinking>
+<plan>p</plan>
+<verify>v</verify>
+<>
+  <write_file><file_path>a.txt</file_path><content>x</content></write_file>
+</>
+`;
+    const readBlockLocal = `
+<thinking>t</thinking>
+<plan>p</plan>
+<verify>v</verify>
+<>
+  <read_file><file_path>src/loop/guardrails.ts</file_path></read_file>
+</>
+`;
+    const engine = {
+      executeCalls: [] as any[],
+      async execute(calls: any[]) {
+        // 第 1 步：write 被拒（带段尾标记）；第 2 步起：read_file 失败（FAIL 信号），
+        // 但失败正文里的 DENIED_READONLY 只是字面量（无段尾标记）——不算只读拒绝。
+        this.executeCalls.push(calls);
+        return this.executeCalls.length === 1
+          ? RO_ENGINE_DENY('write_file')
+          : 'TOOL_ERROR: READ_FAILED enoent（stderr 提及 DENIED_READONLY 字样）';
+      },
+    };
+    const model = textModel([writeBlockLocal, readBlockLocal, readBlockLocal, readBlockLocal, '失败与只读拒绝无关，我改变方法后停止。']);
+    const loop = new VerifyCritiqueLoop(model, engine, { practicalMode: true, maxSteps: 10, maxConsecutiveFailures: 99 });
+    const out = await loop.run('先写后读');
+    assert.equal(engine.executeCalls.length, 4, '正文字面量不得触发 readonly 假阻断（旧实现第 3 步即被拦：executeCalls=2）');
+    assert.ok(!out.steps.some((s) => s.verificationResult.includes('GUARDRAIL_READONLY_DENIED')), '无假阻断 reason');
+    assert.equal(out.stopReason, 'answered');
   });
 });
 

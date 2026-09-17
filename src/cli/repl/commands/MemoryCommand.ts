@@ -3,16 +3,16 @@ import type { Command, CommandContext, CommandResult } from '../types.js';
 
 const command: Command = {
   name: 'memory',
-  description: '记忆管理（list/clear/export/import）',
+  description: '记忆管理（list/stats/clear/export/import）',
   category: 'session',
-  usage: 'memory [list|clear|export|import] ...',
+  usage: 'memory [list|stats|clear|export|import] ...',
   async execute(ctx: CommandContext, args: string[]): Promise<CommandResult> {
     const workspace = ctx.session?.workspace || process.cwd();
 
     // 无参数时进入子模式菜单
     if (!args || args.length === 0) {
       ctx.renderer.writeLine('烛龙（Zhulong）Memory Manager');
-      ctx.renderer.writeLine('▸ list / clear / refine / export / import / back');
+      ctx.renderer.writeLine('▸ list / stats / clear / refine / export / import / back');
 
       // eslint-disable-next-line no-constant-condition
       while (true) {

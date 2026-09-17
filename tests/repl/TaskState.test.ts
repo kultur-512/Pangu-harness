@@ -181,6 +181,52 @@ describe('R5 TaskState：foldEvent 单元', () => {
   });
 });
 
+// ==================== 包C 缺陷5：绝对路径直采（env/显式参数） ====================
+// 旧实现一律 join(workspaceRoot, customFilename ?? DEFAULT)——env
+// PANSHA_TASK_STATE_FILE 传绝对路径（runAgentTask.ts / PromptBuilder.ts 原样透传）
+// 时拼成 `<ws>\P:\...` 垃圾路径 → 静默空台账。修复：对齐 RefinedMemoryStore，
+// isAbsolute(resolved) 直接采用。
+
+describe('包C 缺陷5：TaskStateStore 路径解析（绝对路径直采）', () => {
+  afterEach(cleanupAll);
+
+  it('customFilename 传绝对路径 → filePath 即该绝对路径（不被 join 成垃圾路径）', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const abs = path.join(ws, 'nested', 'state.json');
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const store = new TaskStateStore(ws, abs);
+    assert.equal(store.path, abs, '绝对路径原样采用');
+    store.create('t1', '需求');
+    assert.ok(fs.existsSync(abs), '落盘到该绝对路径');
+    const store2 = new TaskStateStore(ws, abs);
+    assert.equal(store2.get('t1')!.originalRequirement, '需求', '新实例可读回');
+  });
+
+  it('传相对名 → join(workspaceRoot, name) 行为不变', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const store = new TaskStateStore(ws, 'custom-state.json');
+    assert.equal(store.path, path.join(ws, 'custom-state.json'));
+    store.create('t1', '需求');
+    assert.ok(fs.existsSync(path.join(ws, 'custom-state.json')));
+  });
+
+  it('env PANSHA_TASK_STATE_FILE 绝对路径直采（runAgentTask/PromptBuilder 透传场景）', () => {
+    makeWs(); cleaners.push(() => fs.rmSync(ws, { recursive: true, force: true }));
+    const abs = path.join(ws, 'env-state.json');
+    const prev = process.env.PANSHA_TASK_STATE_FILE;
+    process.env.PANSHA_TASK_STATE_FILE = abs;
+    try {
+      const store = new TaskStateStore(ws); // 仅 env（显式参数缺省）
+      assert.equal(store.path, abs, 'env 绝对路径不被 join 污染');
+      store.create('t1', '需求');
+      assert.ok(fs.existsSync(abs), 'env 指向的文件真实落盘（旧实现静默空台账）');
+    } finally {
+      if (prev === undefined) delete process.env.PANSHA_TASK_STATE_FILE;
+      else process.env.PANSHA_TASK_STATE_FILE = prev;
+    }
+  });
+});
+
 // ==================== 9/14 接口对齐：TaskState.record* 原语 ====================
 // 语义：显式记录（真实业务节点/CLI 用户声明调用），不猜轨迹。
 // 纪律：全部走 update() → 沿用乐观锁 + originalRequirement 锚定。

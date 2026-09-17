@@ -2,7 +2,7 @@
 
 > 华为命题：基于 openPangu 系列模型，构建具备长程上下文管理能力的记忆增强智能体。
 > 本文档对应命题交付要求：**最终系统架构 / 记忆模块设计 / 训练方案 / 推理流程 / 资源消耗 / 核心创新点**。
-> 状态：架构以现有可运行工程为基（自动化测试以 `npm test` 实际输出为准，当前基线 968 例），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。版本基线 **v0.8.0-rc**。
+> 状态：架构以现有可运行工程为基（自动化测试以 `npm test` 实际输出为准，当前基线 1446 例），标注"已实现 / 规划"；真机 openPangu 验证数据见 [EVALUATION.md](EVALUATION.md)。版本基线 **v0.8.8**。
 
 ---
 
@@ -100,11 +100,11 @@ Panshalach（外部产品名 **烛龙 Zhulong**）是一个 **记忆增强的通
 |---|---|---|
 | `kind` | failure / success / preference | 注入标签（[失败教训]/[成功经验]/[用户偏好]）与衰减基线 |
 | `category` | FailureCategory（幻觉/验证/RBW/命令失败/状态不符…） | 失败模式归因（success/preference 用 OTHER） |
-| `memoryCategory` | architecture / failure / implementation / insight / general | **档位可见性** + 分类半衰期（arch 365d > impl/insight 180d > failure/general 90d） |
+| `memoryCategory` | architecture / failure / implementation / insight / general | 分类半衰期（arch 365d > impl/insight 180d > failure/general 90d） |
 | `summary` | 一句话建设性摘要 | 注入文本（截 120 字符） |
 | `weight/count` | 基础权重 / 触发次数 | 合并去重与升权；count≥2 → 半衰期×count |
 | `lastSeen/firstSeen/lastUsedAt` | 时间戳 | 四段阶梯衰减（1/0.7/0.4/0.1） |
-| `applicableTiers` | 适用档位 | tier 过滤 |
+| `applicableTiers` | 适用档位 | 卡级档位门禁（空=全档可见） |
 | `referencedFiles` | 相关文件路径 | **P2-D 参照文件交集过滤**：只加载"本任务将触碰文件"相关的卡，命中为空回退全量 |
 | `pinned / status / mergedFrom` | 冻结衰减 / 软删除 / 合并溯源 | 偏好 pin、同主题合并可回滚 |
 
