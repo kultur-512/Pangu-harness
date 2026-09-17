@@ -34,11 +34,13 @@ function parseArgs() {
     label: 'baseline',
     model: process.env.PANSHA_MODEL || 'openpangu:openpangu-embedded-1b-i1',
     limit: Infinity,
+    questions: null,
   };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--label') opts.label = args[++i];
     else if (args[i] === '--model') opts.model = args[++i];
     else if (args[i] === '--limit') opts.limit = parseInt(args[++i], 10);
+    else if (args[i] === '--questions') opts.questions = args[++i];
   }
   return opts;
 }
@@ -155,7 +157,8 @@ async function runQA(q, wsDir, model) {
 
 async function main() {
   const opts = parseArgs();
-  const questionsFile = join(DIR, 'questions.jsonl');
+  // --questions 子集覆盖（smoke-90 每题型冒烟用）：相对仓库根解析；缺省用完整题集
+  const questionsFile = opts.questions ? resolve(ROOT, opts.questions) : join(DIR, 'questions.jsonl');
   if (!existsSync(questionsFile)) {
     console.error(`[lme90] 缺 ${questionsFile}——先跑 sample.mjs`);
     process.exit(2);

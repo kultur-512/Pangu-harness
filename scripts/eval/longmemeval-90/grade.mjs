@@ -224,7 +224,7 @@ function main() {
   console.log('Written: graded.jsonl + GRADE.md');
 }
 
-export { normalize, goldCandidates, sentenceSubCandidates, gradeStrict, gradeLenient, extractAnswer };
+export { normalize, goldCandidates, sentenceSubCandidates, gradeStrict, gradeLenient, extractAnswer, loadAnswers };
 
 // 仅当作为入口直接执行时跑 main()；被 import 时（测试场景）跳过。
 // 守卫 import.meta.url 等于当前 argv[1] 路径（对齐 run-eval.mjs 的入口检测惯例）。
