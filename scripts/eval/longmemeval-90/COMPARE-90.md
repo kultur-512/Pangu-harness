@@ -198,3 +198,29 @@ token 估算器口径收口（`9fe0cf9`：文本路径裁剪统一 `estTokens` +
 | **TOTAL** | **27/90** | 31/90 |
 
 −4 主要来自 assistant(−3)/multi-session(−2)，无机制证据指向代码（同批改动在 M3 +6、1B 中性），落在 7B 采样方差带边缘（旧 7B 仅单样本）；3 个 300s 超时为偶发卡顿（重跑 8~98s 全过），非系统性慢。需 7B 双样本才能定「回归 vs 方差」。
+
+---
+
+## 附录（2026-09-18）：本机 LM Studio × openPangu-7B 三轮复现
+
+在 Windows 笔记本以 ZL-product 真实产品管线（`recordChatFact` 在线播种 + 产品检索注入）完成 LongMemEval-90 三个独立重复臂。模型由本机 LM Studio 0.4.24 提供 OpenAI 兼容端点，模型 ID 为 `openpangu7b-with-medusa`；配置为 32K context、K cache 开、V cache 关、Flash Attention 关、GPU offload 24。硬件为 NVIDIA GeForce RTX 5060 Laptop GPU（8 GiB）。
+
+判分使用 `grade.mjs` 的 strict 主口径和 lenient 辅口径；单题预算 600s。三轮原始回答均留在评测机本地，未加入 git（符合 `.gitignore` 和评测产物不入库规则）。
+
+| 重复臂 | strict | lenient | 平均耗时 | timeout |
+|---|---|---|---|---|
+| `zl-7b-r1` | **32/90 (35.6%)** | 27/90 | 174.5s/题 | 0 |
+| `zl-7b-r2` | **33/90 (36.7%)** | 28/90 | 169.8s/题 | 0 |
+| `zl-7b-r3` | **29/90 (32.2%)** | 28/90 | 184.5s/题 | 0 |
+| **三轮聚合** | **31.3/90 (34.8%) ±4.5pp** | - | - | **0/270** |
+
+| 题型（strict） | r1 | r2 | r3 | 均值 |
+|---|---:|---:|---:|---:|
+| knowledge-update | 10/15 | 9/15 | 8/15 | 9.0/15 |
+| single-session-user | 10/15 | 10/15 | 9/15 | 9.7/15 |
+| single-session-assistant | 6/15 | 8/15 | 7/15 | 7.0/15 |
+| temporal-reasoning | 3/15 | 2/15 | 5/15 | 3.3/15 |
+| multi-session | 3/15 | 4/15 | 0/15 | 2.3/15 |
+| single-session-preference | 0/15 | 0/15 | 0/15 | 0.0/15 |
+
+**结论**：本机三轮 strict 均值 31.3/90，与历史 ZL×7B 31/90 基线一致，复现成功；4 分极差（4.5pp）低于 README 所述 5 分端点波动警戒线，且 270 个题目零超时。受 8 GiB 显存与 24 层 GPU offload 限制，本机平均 170–185s/题，显著慢于团队高资源设备的 32–46s/题，但不影响该分数的复现性。preference 三轮均为 0/15，与既有「自由文本偏好题为子串判分盲区」的结论一致，不能据此判断模型的偏好记忆能力。
