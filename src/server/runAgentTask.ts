@@ -66,6 +66,14 @@ export interface RunResult {
   contextOverflowCompacted?: boolean;
   /** 0.8.2 证据链：本任务实际注入的记忆卡号（lastBuildMeta 透出；headless 宿主打印证据行用） */
   injectedCardIds?: string[];
+  /** E2 性能埋点：逐步计时与实测 token（自轨迹步骤透出；headless 宿主打印 [step-meta] 证据行） */
+  stepTimings?: Array<{
+    step: number;
+    ts?: number;
+    ms?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+  }>;
 }
 
 // 窗口解析收口到共享模块 ./cli/repl/tokenEstimate.ts（UI 计量 / loop 预算 /
@@ -334,11 +342,15 @@ export async function runAgentTask(
     // 记忆落定（单一落定点）——仅 completed（真实验证通过）触发
     // refine→save 产卡 + 注入卡∩写集 markVerified。best-effort：记忆失败绝不
     // 影响任务成功返回（本模块 console-silent，错误以事件透出）。
-    try {
-      // 包C 缺陷8：复用作用域内长命实例（markInjected 与 refine/markVerified 同一实例）
-      await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start, auditMemoryStore ?? undefined);
-    } catch (memErr: any) {
-      ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
+    // R-01 评测豁免：PANSHA_EVAL=1 时跳过记忆写入——评测运行不得污染任何
+    // 工作区记忆（历史事故：root memory.json 混入 80 张 LongMemEval 卡）。
+    if (process.env.PANSHA_EVAL !== '1') {
+      try {
+        // 包C 缺陷8：复用作用域内长命实例（markInjected 与 refine/markVerified 同一实例）
+        await finalizeTaskMemory(session, result, injectedCardIds, ctx.onEvent, req.task, start, auditMemoryStore ?? undefined);
+      } catch (memErr: any) {
+        ctx.onEvent({ type: 'memory.finalized', ok: false, error: memErr?.message || String(memErr) });
+      }
     }
 
     // 任务结束、记忆落定后：best-effort 触发任务状态归档（陈旧 >7 天 / 活跃 >200
@@ -353,6 +365,16 @@ export async function runAgentTask(
     const trajSteps = result.bestTrajectory?.steps ?? [];
     const changedFiles = extractChangedFiles(trajSteps);
     const verifyCmd = extractVerifyCommands(trajSteps);
+    // E2 性能埋点：逐步计时/实测 token 提取（可选字段——老轨迹/chat 直答无此字段时为空数组）
+    const stepTimings: NonNullable<RunResult['stepTimings']> = trajSteps
+      .map((s: any) => ({
+        step: s?.stepNumber,
+        ...(typeof s?.ts === 'number' ? { ts: s.ts } : {}),
+        ...(typeof s?.durationMs === 'number' ? { ms: s.durationMs } : {}),
+        ...(typeof s?.promptTokens === 'number' ? { promptTokens: s.promptTokens } : {}),
+        ...(typeof s?.completionTokens === 'number' ? { completionTokens: s.completionTokens } : {}),
+      }))
+      .filter((t: any) => typeof t.ms === 'number' && typeof t.step === 'number');
 
     // aborted 时把已流出正文带给宿主（sseInteractive/Repl 落 turn）
     const partialText = result.bestTrajectory?.partialText as string | undefined;
@@ -382,7 +404,8 @@ export async function runAgentTask(
     // 对话事实记忆（0.8.2）：chat 直答完成后确定性沉淀"用户说了什么 + 答复要点"。
     // 此前产卡门只认 completed（工程任务）——纯对话的事实永远不入记忆，
     // 跨会话个人化（LongMemEval 场景）结构性失忆。best-effort：绝不影响对话。
-    if (intent === 'chat' && answerText) {
+    // R-01 评测豁免：评测 QA 运行的题/答不得沉淀为产品记忆（污染根因路径）。
+    if (intent === 'chat' && answerText && process.env.PANSHA_EVAL !== '1') {
       try {
         const { recordChatFact } = await import('../memory/chatFactMemory.js');
         await recordChatFact(session.workspace, req.task, answerText);
@@ -397,6 +420,7 @@ export async function runAgentTask(
       changedFiles,
       verifyCmd,
       attemptCount: 1,
+      ...(stepTimings.length > 0 ? { stepTimings } : {}),
       ...(partialText ? { partialText } : {}),
       ...(answerText ? { answerText } : {}),
     });
@@ -414,6 +438,7 @@ export async function runAgentTask(
       // 0.8.2 证据链透出：headless/one-shot 宿主（RunCommand/eval runner）可从此
       // 读取逐任务注入账本——此前注入审计只在 rollout context 事件里，stdout 不可见。
       injectedCardIds,
+      ...(stepTimings.length > 0 ? { stepTimings } : {}),
       ...(partialText ? { partialText } : {}),
       ...(answerText ? { answerText } : {}),
     };

@@ -74,6 +74,14 @@ export interface LoopStep {
   result?: string;
   /** 该步 result 是面向用户的正文（空转 answered），区别于工具输出原文 */
   userFacing?: boolean;
+  /** E2 性能埋点：本步模型调用开始时间戳（ms epoch） */
+  ts?: number;
+  /** E2 性能埋点：本步耗时（模型调用+解析+工具执行，ms） */
+  durationMs?: number;
+  /** E2 性能埋点：本步模型调用的实测 prompt tokens（网关 usage；无 usage 时缺省） */
+  promptTokens?: number;
+  /** E2 性能埋点：本步模型调用的实测 completion tokens（网关 usage；无 usage 时缺省） */
+  completionTokens?: number;
 }
 
 export interface VerifyCritiqueLoopOptions {
@@ -657,6 +665,9 @@ export class VerifyCritiqueLoop {
         break;
       }
       stepNum++;
+      // E2 性能埋点：本步起点 + 本步模型调用 usage 累计（onUsage 经 chaser wrapper 链入）
+      const stepStartTs = Date.now();
+      const stepUsage = { prompt: 0, completion: 0 };
       // 空转 answered 步的用户正文（step.result；answerText 带出的数据源）
       let idleAnswerText: string | undefined;
 
@@ -784,10 +795,18 @@ export class VerifyCritiqueLoop {
           ? await this.modelClient.chat(this.messages, {
               ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
               signal: this.signal,
+              onUsage: (u: any) => {
+                if (u && typeof u.prompt === 'number' && u.prompt >= 0) stepUsage.prompt += u.prompt;
+                if (u && typeof u.completion === 'number' && u.completion >= 0) stepUsage.completion += u.completion;
+              },
             })
           : await this.modelClient.complete(prompt, {
               ...(Array.isArray(toolSchemas) && toolSchemas.length > 0 ? { tools: toolSchemas } : {}),
               signal: this.signal,
+              onUsage: (u: any) => {
+                if (u && typeof u.prompt === 'number' && u.prompt >= 0) stepUsage.prompt += u.prompt;
+                if (u && typeof u.completion === 'number' && u.completion >= 0) stepUsage.completion += u.completion;
+              },
             });
       } catch (e: any) {
         if (classifyApiError(e) === 'context_overflow') {
@@ -893,6 +912,10 @@ export class VerifyCritiqueLoop {
             verificationResult: abortedResult,
             verificationSignal: 'FAIL',
             detectedFormat,
+            ts: stepStartTs,
+            durationMs: Date.now() - stepStartTs,
+            ...(stepUsage.prompt > 0 ? { promptTokens: stepUsage.prompt } : {}),
+            ...(stepUsage.completion > 0 ? { completionTokens: stepUsage.completion } : {}),
           });
           if (messagesMode) this.pushToolMessages(toolCalls, wireCalls, abortedResult);
         }
@@ -1092,6 +1115,10 @@ export class VerifyCritiqueLoop {
         detectedFormat,
         didRealVerification: didRealVerificationThisStep,
         readBeforeWriteViolation: this.readBeforeWriteViolations > 0,
+        ts: stepStartTs,
+        durationMs: Date.now() - stepStartTs,
+        ...(stepUsage.prompt > 0 ? { promptTokens: stepUsage.prompt } : {}),
+        ...(stepUsage.completion > 0 ? { completionTokens: stepUsage.completion } : {}),
         ...(idleAnswerText ? { result: idleAnswerText, userFacing: true } : {}),
       };
 

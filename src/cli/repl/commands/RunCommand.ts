@@ -116,6 +116,18 @@ const command: Command = {
         if ((result as any).contextOverflowCompacted) {
           ctx.renderer.writeLine('[ctx] contextOverflowCompacted=1');
         }
+        // E2 性能埋点证据行：逐步计时 + 实测 token——eval runner 抓 stdout 即可
+        // 逐层归因（"损失在哪一层"的机器可读正源）。
+        const st = (result as any).stepTimings;
+        if (Array.isArray(st) && st.length > 0) {
+          for (const t of st) {
+            ctx.renderer.writeLine(
+              `[step-meta] step=${t.step} ms=${t.ms}`
+              + (typeof t.promptTokens === 'number' ? ` promptTokens=${t.promptTokens}` : '')
+              + (typeof t.completionTokens === 'number' ? ` completionTokens=${t.completionTokens}` : '')
+            );
+          }
+        }
       } catch { /* 证据行失败不影响任务结果 */ }
       // 四态文案：completed→已通过验证；answered→已回复；error→执行失败；其余→未通过验证
       const stopReason = result.stopReason;
