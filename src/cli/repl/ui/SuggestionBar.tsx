@@ -4,6 +4,7 @@
 // Zero layout when there are no suggestions.
 
 import type { SuggestionItem } from '../typeahead.js';
+import { visibleWindowStart } from '../typeahead.js';
 
 const TYPE_COLOR: Record<string, string> = {
   command: 'cyan',
@@ -29,9 +30,12 @@ export function SuggestionBar(props: {
   const { suggestions, selectedIndex } = props;
   if (!suggestions || suggestions.length === 0) return null;
 
-  const visible = suggestions.slice(0, MAX_VISIBLE);
+  // 滚动窗口跟随光标（真机缺陷修复：此前固定 slice(0, MAX_VISIBLE)，↓ 移动
+  // 选中项出窗后高亮消失、菜单不滚）。
+  const start = visibleWindowStart(selectedIndex, suggestions.length, MAX_VISIBLE);
+  const visible = suggestions.slice(start, start + MAX_VISIBLE);
   const rows = visible.map((s, i) => {
-    const sel = i === selectedIndex;
+    const sel = start + i === selectedIndex;
     const color = TYPE_COLOR[s.type] || 'white';
     const marker = sel ? '▸ ' : '  ';
     const desc = s.description ? '  ' + s.description : '';

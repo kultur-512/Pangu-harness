@@ -11,6 +11,7 @@ import {
   moveSelection,
   acceptSuggestion,
   doubleEscState,
+  visibleWindowStart,
 } from '../../src/cli/repl/typeahead.js';
 import { PANSHA_COMMANDS } from '../../src/cli/repl/SlashPicker.js';
 
@@ -118,5 +119,37 @@ describe('doubleEscState (T-29)', () => {
     const r1 = doubleEscState(2000, 0);
     const r2 = doubleEscState(2200, r1.nextLastEsc);
     assert.equal(r2.isDouble, true);
+  });
+});
+
+describe('visibleWindowStart（真机缺陷回归：菜单滚动跟随光标）', () => {
+  const MAX = 10;
+
+  it('总数不足一窗 → 起点 0（不滚动）', () => {
+    assert.equal(visibleWindowStart(0, 5, MAX), 0);
+    assert.equal(visibleWindowStart(4, 5, MAX), 0);
+    assert.equal(visibleWindowStart(0, 10, MAX), 0);
+  });
+
+  it('选中项在首窗内 → 起点 0', () => {
+    assert.equal(visibleWindowStart(0, 30, MAX), 0);
+    assert.equal(visibleWindowStart(9, 30, MAX), 0);
+  });
+
+  it('越过窗口下缘 → 选中项贴窗口底（整体平移）', () => {
+    assert.equal(visibleWindowStart(10, 30, MAX), 1);
+    assert.equal(visibleWindowStart(15, 30, MAX), 6);
+    assert.equal(visibleWindowStart(29, 30, MAX), 20);
+  });
+
+  it('上移回窗口内 → 回到起点 0（首窗优先）', () => {
+    assert.equal(visibleWindowStart(8, 30, MAX), 0);
+    assert.equal(visibleWindowStart(0, 30, MAX), 0);
+  });
+
+  it('selectedIndex 越界钳制到合法范围', () => {
+    assert.equal(visibleWindowStart(-3, 30, MAX), 0);
+    assert.equal(visibleWindowStart(99, 30, MAX), 20);
+    assert.equal(visibleWindowStart(99, 5, MAX), 0);
   });
 });

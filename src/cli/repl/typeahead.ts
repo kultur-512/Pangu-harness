@@ -133,6 +133,19 @@ export function moveSelection(index: number, delta: 1 | -1, length: number): num
   return next;
 }
 
+/**
+ * 建议菜单滚动窗口起点：选中项越过可视窗口边缘时整体平移跟随。
+ * 真机 M3 REPL 实测缺陷：菜单固定渲染前 MAX_VISIBLE 项，↓ 移动选中项
+ * 出窗后高亮消失、菜单纹丝不动。
+ * 语义：selectedIndex 在窗口内 → 保持现窗口（最小移动）；越出下缘 →
+ * 选中项贴窗口底；越出上缘 → 贴窗口顶；总数不足一窗 → 0。
+ */
+export function visibleWindowStart(selectedIndex: number, total: number, maxVisible: number): number {
+  if (total <= maxVisible) return 0;
+  const idx = Math.max(0, Math.min(selectedIndex, total - 1));
+  return Math.max(0, Math.min(idx - maxVisible + 1, total - maxVisible));
+}
+
 /** Tab accepts the selected suggestion → replacement for the input. */
 export function acceptSuggestion(_input: string, suggestion: SuggestionItem): string {
   return suggestion.replacement;
